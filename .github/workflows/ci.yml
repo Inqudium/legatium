@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Weekly, so a newly published advisory surfaces even when nothing was
+  # committed - a scan that only runs on changes cannot see the world
+  # changing around unchanged code.
+  schedule:
+    - cron: "17 4 * * 1"
+
+# Least privilege, stated explicitly rather than inherited from the
+# repository default (which an admin setting could widen for a workflow
+# that also runs on fork pull requests).
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to commit SHAs, not to mutable tags: a retagged
+      # or compromised release would otherwise execute here with the
+      # workflow token. Dependabot (github-actions ecosystem) proposes the
+      # bumps and keeps the trailing version comment in sync.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: maven
+
+      - name: Build and test
+        run: mvn --batch-mode --no-transfer-progress verify
+
+      # Repo-local script instead of a third-party reporting action (this
+      # workflow pins actions to SHAs; a summary needs no new supply-chain
+      # surface). Runs on failure too, so a red build still shows which
+      # classes failed without digging through the log.
+      - name: Publish test summary
+        if: always()
+        run: python3 .github/scripts/surefire-summary.py
+
+  dependency-scan:
+    name: Dependency vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: maven
+
+      # An SBOM of the RESOLVED graph, not a scan of pom.xml: most versions
+      # here are managed by the Spring Boot BOM and never appear in pom.xml,
+      # so only the resolved graph states what actually ships. The aggregate
+      # goal folds both modules into one root target/bom.json; test-scoped
+      # dependencies are excluded (they reach no consumer).
+      - name: Generate CycloneDX SBOM of the resolved dependencies
+        run: mvn --batch-mode --no-transfer-progress -DskipTests cyclonedx:makeAggregateBom
+
+      # Fails the job when a dependency is affected by a known advisory.
+      # No API key needed (OSV.dev aggregates GHSA, CVE and friends). If an
+      # advisory is ever unfixable and provably not exploitable here, record
+      # it with a dated rationale in osv-scanner.toml rather than removing
+      # this gate - see CONTRIBUTING.md.
+      - name: Scan the SBOM against the OSV database
+        uses: google/osv-scanner-action/osv-scanner-action@6e4298ebc4db23e847df9b2e2de2939d6f066c67 # v2.5.1
+        with:
+          scan-args: |-
+            --lockfile=./target/bom.json
+
+      # Kept regardless of the scan result, so a red run leaves behind the
+      # exact dependency set it judged.
+      - name: Upload SBOM
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: sbom-cyclonedx
+          path: target/bom.json
+          if-no-files-found: error

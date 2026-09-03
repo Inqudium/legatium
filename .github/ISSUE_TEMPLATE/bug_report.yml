@@ -1,0 +1,52 @@
+name: Bug report
+description: Report a defect in one of the logging filters
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: >
+        What did you observe, and what did you expect instead?
+        Include the emitted endpoint_* log line(s) if relevant -
+        redact sensitive values before posting.
+    validations:
+      required: true
+  - type: dropdown
+    id: module
+    attributes:
+      label: Module
+      options:
+        - legatium-restclient-logging
+        - legatium-webclient-logging
+        - both
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: The relevant client-logging.* properties from your application.yml/properties.
+      render: yaml
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Legatium version
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: "JDK, Spring Boot version, and stack: JDK HttpClient / Apache / Reactor Netty."
+    validations:
+      required: false
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Minimal steps or a small sample project, if possible.
+    validations:
+      required: false

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 160" width="640" height="160" role="img" aria-label="Legatium — one structured client_* line per outbound HTTP exchange">
+  <title>Legatium</title>
+  <rect width="640" height="160" rx="16" fill="#4527A0"/>
+  <g transform="translate(28 32)">
+    <rect x="8" y="10" width="6" height="76" rx="2" fill="#FFB300"/>
+    <path d="M24 48 H70" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"/>
+    <path d="M60 30 L82 48 L60 66" fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="36" cy="48" r="6" fill="#FFB300"/>
+  </g>
+  <text x="150" y="78" font-family="Georgia, 'Times New Roman', serif" font-size="56" font-weight="bold" fill="#FFFFFF">Legatium</text>
+  <text x="152" y="112" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#EDE7F6">one structured client_* line per outbound HTTP exchange</text>
+  <text x="152" y="136" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#B39DDB">the envoy's report — the outbound twin of Limesium</text>
+</svg>

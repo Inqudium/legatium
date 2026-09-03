@@ -1,0 +1,69 @@
+{
+  "template": {
+    "mappings": {
+      "properties": {
+        "client_outcome": {
+          "type": "keyword"
+        },
+        "client_duration_ms": {
+          "type": "long",
+          "meta": {
+            "unit": "ms",
+            "metric_type": "gauge"
+          }
+        },
+        "client_request_method": {
+          "type": "keyword"
+        },
+        "client_response_status_code": {
+          "type": "short"
+        },
+
+        "client_url_host": {
+          "type": "keyword"
+        },
+        "client_url_template": {
+          "type": "keyword"
+        },
+        "client_url_path": {
+          "type": "keyword",
+          "doc_values": false
+        },
+        "client_url_query": {
+          "type": "keyword",
+          "doc_values": false
+        },
+
+        "client_slow": {
+          "type": "boolean"
+        },
+
+        "client_request_headers": {
+          "type": "keyword",
+          "index": false,
+          "doc_values": false
+        },
+        "client_response_headers": {
+          "type": "keyword",
+          "index": false,
+          "doc_values": false
+        },
+        "client_request_body": {
+          "type": "keyword",
+          "index": false,
+          "doc_values": false
+        },
+        "client_response_body": {
+          "type": "keyword",
+          "index": false,
+          "doc_values": false
+        }
+      }
+    }
+  },
+  "_meta": {
+    "description": "Field mappings for the client_* exchange-log fields emitted by the legatium-restclient-logging module (and its WebClient twin). This is the DEFINITION, not an extract: the family is not yet part of any upstream data-stream mapping, and whoever wires the module into a log pipeline composes this template there. The MDC-carried fields (client_request_id, client_method, client_route, traceId, spanId) are deliberately absent - how MDC entries land in the document is the encoder's decision, not this module's.",
+    "source": "docs/elk/README.md",
+    "authority": "legatium-restclient-logging/src/main/kotlin/eu/inqudium/legatium/restclient/logging/ClientLogFields.kt"
+  }
+}

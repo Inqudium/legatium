@@ -1,0 +1,119 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/**
+      - mkdocs.yml
+      - legatium-restclient-logging/**
+      - legatium-webclient-logging/**
+      - pom.xml
+      - .github/workflows/docs.yml
+      - .github/scripts/**
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to commit SHAs, not mutable tags - this workflow runs with
+      # pages: write and id-token: write, so a retagged action release
+      # would be a direct supply-chain path. Dependabot proposes bumps.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: maven
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      # Installed from a fully resolved, hash-pinned requirements file:
+      # a compromised or yanked release cannot silently enter the docs
+      # build, and the published site is reproducible. Regenerate after
+      # changing the doc toolchain with:
+      #   pip-compile --generate-hashes --strip-extras \
+      #     --output-file=.github/docs-requirements.txt <(echo mkdocs-material)
+      # Dependabot keeps the pins current (pip ecosystem, /.github).
+      - name: Install MkDocs Material
+        run: pip install --require-hashes -r .github/docs-requirements.txt
+
+      # Runs the suite so the published test evidence and coverage always
+      # describe the commit being deployed - the site never shows numbers
+      # a human typed. A red suite blocks the docs deploy on purpose:
+      # stale docs beat docs that certify a broken build.
+      # `install`, not `verify`: the per-module dokka:dokka run below resolves
+      # legatium-common as an artifact, which therefore must be in the runner's
+      # local repository (ADR-0003).
+      - name: Run the test suite (Surefire results + JaCoCo report)
+        run: mvn --batch-mode --no-transfer-progress install
+
+      - name: Generate the test-evidence page
+        run: python3 .github/scripts/generate-test-catalog.py
+
+      # Copies the module guides (which live next to their module
+      # sources) into the docs_dir with rewritten links, so the site
+      # renders them instead of linking to GitHub.
+      - name: Generate the guide pages
+        run: python3 .github/scripts/generate-guide-pages.py
+
+      - name: Build site
+        run: mkdocs build --strict
+
+      # Per module: the Dokka Maven plugin has no aggregate mode, so each
+      # module renders its own API reference under /api/<module>/.
+      - name: Build API reference (Dokka)
+        run: mvn --batch-mode --no-transfer-progress -pl legatium-restclient-logging,legatium-webclient-logging dokka:dokka
+
+      - name: Add API references to site
+        run: |
+          mkdir -p site/api
+          cp -r legatium-restclient-logging/target/dokka site/api/legatium-restclient-logging
+          cp -r legatium-webclient-logging/target/dokka site/api/legatium-webclient-logging
+
+      # One JaCoCo report per module plus a combined badge; the small
+      # index page keeps /coverage/ (badge link target) from 404ing.
+      - name: Add coverage reports and badge to site
+        run: |
+          mkdir -p site/coverage
+          cp -r legatium-restclient-logging/target/site/jacoco site/coverage/legatium-restclient-logging
+          cp -r legatium-webclient-logging/target/site/jacoco site/coverage/legatium-webclient-logging
+          python3 .github/scripts/generate-coverage-badge.py site/coverage/badge.svg
+          cat > site/coverage/index.html <<'EOF'
+          <!DOCTYPE html>
+          <html lang="en"><head><meta charset="utf-8"><title>Legatium coverage</title></head>
+          <body><h1>Legatium coverage reports</h1><ul>
+          <li><a href="legatium-restclient-logging/">legatium-restclient-logging</a></li>
+          <li><a href="legatium-webclient-logging/">legatium-webclient-logging</a></li>
+          </ul><p>The badge aggregates instruction coverage across both modules.</p></body></html>
+          EOF
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

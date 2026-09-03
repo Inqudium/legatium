@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>eu.inqudium</groupId>
+        <artifactId>legatium</artifactId>
+        <version>${revision}</version>
+    </parent>
+
+    <artifactId>legatium-webclient-logging</artifactId>
+    <name>legatium-webclient-logging</name>
+    <description>WebClient twin of legatium-restclient-logging: one structured client_* line per outbound HTTP exchange, identical fields and configuration</description>
+
+    <dependencies>
+        <!-- The shared twin code (ADR-0003). Inlined into this jar by the Shade plugin at package
+             time and removed from the published POM (dependency-reduced POM), so consumers still add
+             exactly one artifact. Compiled against with -Xfriend-paths (see the kotlin plugin below),
+             which keeps the shared internals `internal`. -->
+        <dependency>
+            <groupId>eu.inqudium</groupId>
+            <artifactId>legatium-common</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <!-- A library, not an application: only what the auto-configuration and the properties class
+             need - no starter, no logging/YAML transitives forced onto the host. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+        <!-- Used directly (fluent LoggingEventBuilder, MDC), so declared directly rather than inherited
+             from a starter. The binding (Logback) is the host's. -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <!-- ExchangeFilterFunction, ClientRequest/ClientResponse and WebClient live in spring-webflux
+             (the reactive client is part of the WebFlux module); reactor-core supplies the reactive
+             types. The connector (Reactor Netty, JDK HttpClient, ...) is the host's. -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webflux</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+        </dependency>
+        <!-- OPTIONAL by design: Boot's WebClientCustomizer contract, through which the
+             auto-configuration attaches the filter to every Boot-built WebClient (including HTTP
+             service client groups). Absent (a host wiring its clients by hand), the filter bean is
+             still there to be added manually. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-webclient</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.jetbrains.kotlin</groupId>
+            <artifactId>kotlin-stdlib</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Boot's WebClient auto-configuration (builder bean, customizer application, observation) plus
+             a real Reactor Netty connector for the integration tests; the module itself stays a
+             library. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webclient</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Real Micrometer Tracing (Brave bridge) for the tracing integration test: pins the whole
+             convention chain the trace capture rests on - the client observation opens the span and
+             injects the outgoing traceparent BEFORE the filter functions run - so a Boot upgrade that changes
+             it breaks the build instead of silently dropping trace ids from the exchange events. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-micrometer-tracing-brave</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- The Boot module above carries only the auto-configuration; the bridge itself and the
+             ObservationRegistry auto-configuration (which the client observation customizer is
+             conditional on) must come explicitly. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-brave</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-micrometer-observation</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <sourceDirectory>${project.basedir}/src/main/kotlin</sourceDirectory>
+        <testSourceDirectory>${project.basedir}/src/test/kotlin</testSourceDirectory>
+        <!-- The cross-stack contract files (configuration reference, ELK component template) live in
+             the repository-shared /docs; the lockstep tests read them from the TEST CLASSPATH, so the
+             dependency on the shared docs is declared HERE, in the build, rather than hidden in a
+             relative path inside a test. A missing checkout fails at resource processing with a clear
+             message, not as a contract violation. -->
+        <testResources>
+            <testResource>
+                <directory>${project.basedir}/src/test/resources</directory>
+            </testResource>
+            <testResource>
+                <directory>${project.basedir}/../docs</directory>
+                <includes>
+                    <include>client-logging-reference.yml</include>
+                    <include>elk/legatium-restclient-logging-fields.component-template.json</include>
+                </includes>
+            </testResource>
+        </testResources>
+        <plugins>
+            <plugin>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-maven-plugin</artifactId>
+                <version>${kotlin.version}</version>
+                <configuration>
+                    <jvmTarget>${java.version}</jvmTarget>
+                    <javaParameters>true</javaParameters>
+                    <args>
+                        <arg>-Xjsr305=strict</arg>
+                        <!-- Friend access to legatium-common: the shared classes stay `internal`
+                             although they live in another module (ADR-0003). The reactor builds
+                             legatium-common first, so the classes directory exists. Paths are
+                             basedir-relative (not session/execution-root properties): the IDE's
+                             Maven import resolves ${project.basedir} into the Kotlin facet, while
+                             session properties exist only at build time - an unresolved friend
+                             path leaves every shared `internal` red in the editor. -->
+                        <arg>-Xfriend-paths=${project.build.outputDirectory},${project.basedir}/../legatium-common/target/classes,${project.basedir}/../legatium-common/target/legatium-common-${project.version}.jar</arg>
+                    </args>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>compile</id>
+                        <phase>compile</phase>
+                        <goals>
+                            <goal>compile</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>test-compile</id>
+                        <phase>test-compile</phase>
+                        <goals>
+                            <goal>test-compile</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <useModulePath>false</useModulePath>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip> <!-- Skip repackaging - we're a library, not a standalone app -->
+                </configuration>
+            </plugin>
+            <!-- The module page Dokka renders on the API-reference index; version,
+                 sourceLinks and failOnWarning come from the parent's pluginManagement.
+                 No executions: dokka:dokka is invoked on demand by the Docs workflow. -->
+            <plugin>
+                <groupId>org.jetbrains.dokka</groupId>
+                <artifactId>dokka-maven-plugin</artifactId>
+                <configuration>
+                    <includes>
+                        <include>${project.basedir}/docs/api-module.md</include>
+                    </includes>
+                    <!-- The legatium-common sources are documented as part of THIS module: the shaded
+                         jar contains those classes, and the twins' KDoc links to them must resolve
+                         under failOnWarning. Listing sourceDirectories replaces the default, so the
+                         module's own source root is repeated. -->
+                    <sourceDirectories>
+                        <dir>${project.basedir}/src/main/kotlin</dir>
+                        <dir>${project.basedir}/../legatium-common/src/main/kotlin</dir>
+                    </sourceDirectories>
+                    <sourceLinks combine.self="override">
+                        <link>
+                            <path>src/main/kotlin</path>
+                            <url>https://github.com/Inqudium/legatium/tree/main/${project.artifactId}/src/main/kotlin</url>
+                            <lineSuffix>#L</lineSuffix>
+                        </link>
+                        <link>
+                            <path>../legatium-common/src/main/kotlin</path>
+                            <url>https://github.com/Inqudium/legatium/tree/main/legatium-common/src/main/kotlin</url>
+                            <lineSuffix>#L</lineSuffix>
+                        </link>
+                    </sourceLinks>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

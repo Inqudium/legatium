@@ -1,0 +1,532 @@
+package eu.inqudium.legatium.webclient.logging
+
+import ch.qos.logback.classic.Level
+import eu.inqudium.legatium.common.CorrelationIdGenerator
+import eu.inqudium.legatium.common.MdcKeys
+import eu.inqudium.legatium.common.NanoTimeSource
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.catchThrowable
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Nested
+import org.junit.jupiter.api.Test
+import org.slf4j.MDC
+import org.springframework.core.io.buffer.DataBuffer
+import org.springframework.core.io.buffer.DefaultDataBufferFactory
+import org.springframework.http.HttpMethod
+import org.springframework.http.HttpStatus
+import org.springframework.web.reactive.function.client.ClientResponse
+import org.springframework.web.reactive.function.client.ExchangeFunction
+import org.springframework.web.util.pattern.PatternParseException
+import reactor.core.publisher.Flux
+import reactor.core.publisher.Mono
+import reactor.test.StepVerifier
+import java.io.IOException
+import java.time.Duration
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * Core behavior of [ClientRequestLoggingFilter]: the exchange line (IDENTICAL in format to the
+ * RestClient twin's), the level/outcome matrix with the reactive `cancelled` disposition beside
+ * `timeout`, the emission at the body's terminal signal, identity handling (ADR-0002 on the outbound
+ * side) and activation. Deterministic: injected `AtomicLong` time, pinned id generator, hand-built
+ * `ClientRequest`/`ClientResponse`, every signal driven synchronously.
+ */
+class ClientRequestLoggingFilterTest {
+    private val ticker = AtomicLong(0)
+    private val meterRegistry = SimpleMeterRegistry()
+    private val properties =
+        ClientLoggingProperties(
+            loggerName = "http-client-exchange-reactive-core-test",
+            slowRequestThreshold = Duration.ofMillis(200),
+        )
+    private val filter =
+        ClientRequestLoggingFilter(
+            properties,
+            NanoTimeSource { ticker.get() },
+            CorrelationIdGenerator { "generated-42" },
+            meterRegistry,
+        )
+
+    private lateinit var log: CapturedLogger
+
+    @BeforeEach
+    fun setUp() {
+        log = CapturedLogger(properties.loggerName)
+    }
+
+    @AfterEach
+    fun tearDown() {
+        log.detach()
+    }
+
+    private fun filterWith(properties: ClientLoggingProperties) = ClientRequestLoggingFilter(properties, { ticker.get() }, { "generated-42" }, SimpleMeterRegistry())
+
+    /** Runs the call the way `retrieve().bodyToMono(String)` does: exchange, then consume the body. */
+    private fun ClientRequestLoggingFilter.call(
+        request: org.springframework.web.reactive.function.client.ClientRequest,
+        next: ExchangeFunction,
+    ): String? = filter(request, next).flatMap { it.bodyToMono(String::class.java) }.block()
+
+    @Nested
+    inner class `The exchange line` {
+        @Test
+        fun `should log the identical line format of the RestClient twin when the body completes`() {
+            // What is tested: the format contract - message and client_* key-values must be
+            //   indistinguishable from legatium-restclient-logging's output.
+            // Success criteria: the exact message string and the full field family for a successful GET,
+            //   42 ms of measured work between send and the body's completion.
+            // Why it matters: identical logging is this module's core requirement - dashboards must not
+            //   care which client produced an event.
+            // Given: a GET answered 200, the body consumed 42 ms later
+            val next = ExchangeFunction { _ -> ticker.addAndGet(42_000_000).let { answering(body = "ok").exchange(request()) } }
+
+            // When: the response Mono completes and the body is consumed - verified as SIGNALS
+            StepVerifier
+                .create(filter.filter(request(), next).flatMap { it.bodyToMono(String::class.java) })
+                .expectNext("ok")
+                .verifyComplete()
+
+            // Then
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.INFO)
+            assertThat(event.formattedMessage)
+                .isEqualTo("Client http exchange GET https://api.example.com/things -> 200 [client_request_id=generated-42]")
+            assertThat(keyValues(event))
+                .containsEntry("client_outcome", "success")
+                .containsEntry("client_request_method", "GET")
+                .containsEntry("client_url_host", "api.example.com")
+                .containsEntry("client_url_path", "/things")
+                .containsEntry("client_response_status_code", 200)
+                .containsEntry("client_duration_ms", 42L)
+                .doesNotContainKey("client_slow")
+            assertThat(event.mdcPropertyMap)
+                .containsEntry(MdcKeys.REQUEST_ID, "generated-42")
+                .containsEntry(MdcKeys.REQUEST_METHOD, "GET")
+                .containsEntry(MdcKeys.ROUTE, "https://api.example.com/things")
+        }
+
+        @Test
+        fun `should emit only at the body's terminal signal and exactly once`() {
+            // What is tested: the emission point - the response body's completion - and its
+            //   exactly-once guard.
+            // Success criteria: a delivered response logs nothing until its body is consumed; releasing
+            //   the body logs; consuming the body a second time logs nothing more.
+            // Why it matters: emitting when the response Mono completes would log a body of zero bytes
+            //   and a duration without the read; a double subscription must not double the event.
+            // Given: a delivered response, body untouched
+            val response = filter.filter(request(), answering(body = "later")).block()!!
+
+            // When/Then
+            assertThat(log.events).isEmpty()
+            response.releaseBody().block()
+            assertThat(log.events).hasSize(1)
+            response.releaseBody().block()
+            assertThat(log.events).hasSize(1)
+        }
+
+        @Test
+        fun `should log query, port and URI template as their own fields`() {
+            // Given
+            val request =
+                request(uri = "http://localhost:8081/things/7?page=2") {
+                    attribute(ClientRequestLoggingFilter.URI_TEMPLATE_ATTRIBUTE, "http://localhost:8081/things/{id}")
+                }
+
+            // When
+            filter.call(request, answering())
+
+            // Then
+            val event = log.events.single()
+            assertThat(event.formattedMessage).startsWith("Client http exchange GET http://localhost:8081/things/7 -> 200")
+            assertThat(keyValues(event))
+                .containsEntry("client_url_host", "localhost:8081")
+                .containsEntry("client_url_path", "/things/7")
+                .containsEntry("client_url_query", "page=2")
+                .containsEntry("client_url_template", "http://localhost:8081/things/{id}")
+        }
+
+        @Test
+        fun `should log the raw request target so percent-encoded control characters cannot forge log lines`() {
+            // What is tested: the log-injection guard for the raw request target.
+            // Success criteria: path and query appear percent-encoded as sent in every sink; no sink
+            //   contains a line break.
+            // Why it matters: a URL assembled from untrusted input could otherwise forge complete
+            //   exchange lines in every plain-text appender.
+            // Given
+            filter.call(request(uri = "https://api.example.com/th%0Aings?x=%0D%0Ay"), answering())
+
+            // When/Then
+            val event = log.events.single()
+            assertThat(event.formattedMessage)
+                .isEqualTo("Client http exchange GET https://api.example.com/th%0Aings -> 200 [client_request_id=generated-42]")
+            assertThat(keyValues(event)).containsEntry("client_url_path", "/th%0Aings").containsEntry("client_url_query", "x=%0D%0Ay")
+            assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.ROUTE, "https://api.example.com/th%0Aings")
+            assertThat(event.formattedMessage + keyValues(event).values.joinToString() + event.mdcPropertyMap.values.joinToString())
+                .doesNotContain("\n", "\r")
+        }
+
+        @Test
+        fun `should preserve the ambient MDC beside the identity on the emitted event`() {
+            // What is tested: the emission scope is an additive overlay - the completing thread's MDC
+            //   (here: the caller's, since everything runs synchronously) stays visible.
+            // Success criteria: the event carries the seeded key beside client_request_id; afterwards
+            //   the thread has the seeded key and no client key.
+            // Why it matters: the client line must join an inbound request's line by MDC alone.
+            // Given
+            MDC.put("endpoint_request_id", "inbound-7")
+            try {
+                // When
+                filter.call(request(), answering())
+
+                // Then
+                assertThat(log.events.single().mdcPropertyMap)
+                    .containsEntry("endpoint_request_id", "inbound-7")
+                    .containsEntry(MdcKeys.REQUEST_ID, "generated-42")
+                assertThat(MDC.get(MdcKeys.REQUEST_ID)).isNull()
+                assertThat(MDC.get("endpoint_request_id")).isEqualTo("inbound-7")
+            } finally {
+                MDC.clear()
+            }
+        }
+    }
+
+    @Nested
+    inner class `Identity per ADR-0002` {
+        @Test
+        fun `should generate a correlation id and SEND it on a traceless request without one`() {
+            // Given: a next function recording the request it receives
+            var sent: org.springframework.web.reactive.function.client.ClientRequest? = null
+            val next =
+                ExchangeFunction { req ->
+                    sent = req
+                    answering().exchange(req)
+                }
+
+            // When
+            filter.call(request(), next)
+
+            // Then: the connector got the header, the event the same id
+            assertThat(sent!!.headers().getFirst(properties.correlationIdHeader)).isEqualTo("generated-42")
+            assertThat(log.events.single().mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42")
+        }
+
+        @Test
+        fun `should adopt a correlation id already on the request and leave the request untouched`() {
+            // Given
+            var sent: org.springframework.web.reactive.function.client.ClientRequest? = null
+            val original = request { header(properties.correlationIdHeader, "caller-id") }
+
+            // When
+            filter.call(
+                original,
+                ExchangeFunction { req ->
+                    sent = req
+                    answering().exchange(req)
+                },
+            )
+
+            // Then: the very same request object went to the connector
+            assertThat(sent).isSameAs(original)
+            assertThat(log.events.single().formattedMessage).contains("[client_request_id=caller-id]")
+        }
+
+        @Test
+        fun `should use the traceparent trace id as the request id and add no correlation header`() {
+            // What is tested: the identity decision of ADR-0002 on the outbound side.
+            // Success criteria: client_request_id equals the trace id; the connector got the caller's
+            //   request untouched although it carried a correlation header too.
+            // Why it matters: observational neutrality on a traced call.
+            // Given
+            var sent: org.springframework.web.reactive.function.client.ClientRequest? = null
+            val original =
+                request {
+                    header("traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
+                    header(properties.correlationIdHeader, "caller-id")
+                }
+
+            // When
+            filter.call(
+                original,
+                ExchangeFunction { req ->
+                    sent = req
+                    answering().exchange(req)
+                },
+            )
+
+            // Then
+            assertThat(sent).isSameAs(original)
+            val event = log.events.single()
+            assertThat(event.mdcPropertyMap)
+                .containsEntry(MdcKeys.REQUEST_ID, "0af7651916cd43dd8448eb211c80319c")
+                .containsEntry("traceId", "0af7651916cd43dd8448eb211c80319c")
+                .containsEntry("spanId", "b7ad6b7169203331")
+            assertThat(event.formattedMessage)
+                .endsWith("[client_request_id=0af7651916cd43dd8448eb211c80319c traceId=0af7651916cd43dd8448eb211c80319c spanId=b7ad6b7169203331]")
+        }
+
+        @Test
+        fun `should fall back to the correlation contract when the traceparent is not conformant`() {
+            // Given: an all-zero (forbidden) trace id
+            var sent: org.springframework.web.reactive.function.client.ClientRequest? = null
+            val original = request { header("traceparent", "00-00000000000000000000000000000000-b7ad6b7169203331-01") }
+
+            // When
+            filter.call(
+                original,
+                ExchangeFunction { req ->
+                    sent = req
+                    answering().exchange(req)
+                },
+            )
+
+            // Then
+            assertThat(sent!!.headers().getFirst(properties.correlationIdHeader)).isEqualTo("generated-42")
+            assertThat(log.events.single().mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42").doesNotContainKey("traceId")
+        }
+    }
+
+    @Nested
+    inner class `Levels and outcomes` {
+        @Test
+        fun `should escalate to WARN with outcome failure for a 5xx answer`() {
+            // Given/When
+            filter.call(request(), answering(status = HttpStatus.SERVICE_UNAVAILABLE))
+
+            // Then
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.WARN)
+            assertThat(keyValues(event)).containsEntry("client_outcome", "failure").containsEntry("client_response_status_code", 503)
+        }
+
+        @Test
+        fun `should log ERROR with outcome failure and no status when the exchange errors before a response`() {
+            // What is tested: the no-response path - the connector errored before a status line.
+            // Success criteria: the error signal propagates unchanged; one ERROR event with the cause,
+            //   `-> -` and no status field.
+            // Why it matters: a call that never got an answer must still be one truthful line.
+            // Given
+            val boom = IOException("Connection refused")
+
+            // When
+            StepVerifier
+                .create(filter.filter(request(), ExchangeFunction { Mono.error(boom) }))
+                .expectErrorSatisfies { assertThat(it).isSameAs(boom) }
+                .verify()
+
+            // Then
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.ERROR)
+            assertThat(event.formattedMessage).contains("-> - [")
+            assertThat(event.throwableProxy?.message).isEqualTo("Connection refused")
+            assertThat(keyValues(event)).containsEntry("client_outcome", "failure").doesNotContainKey("client_response_status_code")
+        }
+
+        @Test
+        fun `should log WARN with outcome timeout when the connector raises a timeout`() {
+            // Given: a timeout the way a connector raises it - an error signal with a timeout cause
+            val timeout = IllegalStateException("response timed out", TimeoutException("Response timed out after 200 ms"))
+
+            // When
+            StepVerifier.create(filter.filter(request(), ExchangeFunction { Mono.error(timeout) })).expectError().verify()
+
+            // Then
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.WARN)
+            assertThat(keyValues(event)).containsEntry("client_outcome", "timeout").doesNotContainKey("client_response_status_code")
+        }
+
+        @Test
+        fun `should log outcome cancelled with a dash status when the caller cancels before the response`() {
+            // What is tested: the reactive disposition the blocking twin cannot have - a cancelled
+            //   subscription before any response (a downstream timeout operator, a disposed caller).
+            // Success criteria: one WARN event, outcome cancelled, `-> -`, no status field.
+            // Why it matters: a torn-down call must neither log as a success nor invent a status.
+            // Given/When: the subscriber cancels while the connector never answers
+            StepVerifier
+                .create(filter.filter(request(), ExchangeFunction { Mono.never() }))
+                .thenCancel()
+                .verify()
+
+            // Then
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.WARN)
+            assertThat(event.formattedMessage).contains("-> - [")
+            assertThat(keyValues(event)).containsEntry("client_outcome", "cancelled").doesNotContainKey("client_response_status_code")
+        }
+
+        @Test
+        fun `should log outcome cancelled with the received status when the body subscription is cancelled`() {
+            // Given: a response whose body never ends
+            val endless = ClientResponse.create(HttpStatus.OK).body(Flux.concat(Mono.just(buffer("partial")), Flux.never())).build()
+            val response = filter.filter(request(), ExchangeFunction { Mono.just(endless) }).block()!!
+
+            // When: the caller takes one chunk and cancels
+            StepVerifier
+                .create(response.bodyToFlux(DataBuffer::class.java).take(1))
+                .expectNextCount(1)
+                .verifyComplete()
+
+            // Then
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.WARN)
+            assertThat(keyValues(event)).containsEntry("client_outcome", "cancelled").containsEntry("client_response_status_code", 200)
+        }
+
+        @Test
+        fun `should classify a body error with the status already received`() {
+            // What is tested: the read-side failure - the status arrived, the body then errored.
+            // Success criteria: ERROR, outcome failure, WITH the 200 that was received, cause attached.
+            // Why it matters: "200 but failed" is exactly what happened; hiding either half misleads.
+            // Given
+            val broken = ClientResponse.create(HttpStatus.OK).body(Flux.concat(Mono.just(buffer("half")), Flux.error(IOException("reset")))).build()
+
+            // When
+            val thrown = catchThrowable { filter.call(request(), ExchangeFunction { Mono.just(broken) }) }
+
+            // Then
+            assertThat(thrown).hasMessageContaining("reset")
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.ERROR)
+            assertThat(keyValues(event)).containsEntry("client_outcome", "failure").containsEntry("client_response_status_code", 200)
+        }
+
+        @Test
+        fun `should escalate to WARN and flag a slow but successful call`() {
+            // Given
+            val next = ExchangeFunction { req -> ticker.addAndGet(200_000_000).let { answering().exchange(req) } }
+
+            // When
+            filter.call(request(), next)
+
+            // Then
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.WARN)
+            assertThat(keyValues(event)).containsEntry("client_slow", true).containsEntry("client_outcome", "success")
+        }
+
+        @Test
+        fun `should compare the slow threshold at full precision instead of truncated milliseconds`() {
+            // Given
+            val precise = filterWith(properties.copy(slowRequestThreshold = Duration.ofNanos(1_500_000)))
+
+            fun slowFlagAfter(elapsedNanos: Long): Boolean {
+                log.appender.list.clear()
+                precise.call(request(), ExchangeFunction { req -> ticker.addAndGet(elapsedNanos).let { answering().exchange(req) } })
+                return keyValues(log.events.single()).containsKey("client_slow")
+            }
+
+            // When/Then
+            assertThat(slowFlagAfter(1_000_000)).isFalse()
+            assertThat(slowFlagAfter(1_500_000)).isTrue()
+        }
+
+        @Test
+        fun `should turn a downstream filter that throws while assembling into the exchange's error signal`() {
+            // What is tested: the Mono.defer around the exchange call - a filter that THROWS instead of
+            //   returning Mono.error.
+            // Success criteria: the caller sees the error as a signal, one ERROR event, gauge back at 0.
+            // Why it matters: invoked bare, the throw would skip the callbacks and leak the gauge.
+            // Given/When
+            StepVerifier
+                .create(filter.filter(request(), ExchangeFunction { throw IllegalStateException("assembly") }))
+                .expectErrorMessage("assembly")
+                .verify()
+
+            // Then
+            assertThat(keyValues(log.events.single())).containsEntry("client_outcome", "failure")
+            assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+        }
+    }
+
+    @Nested
+    inner class `Activation and start line` {
+        @Test
+        fun `should not log a call to an excluded host at all`() {
+            // Given
+            val excluding = filterWith(properties.copy(excludeHosts = listOf("PushGateway.monitoring.svc")))
+            var sent: org.springframework.web.reactive.function.client.ClientRequest? = null
+            val original = request(uri = "http://pushgateway.monitoring.svc:9091/metrics/job/x")
+
+            // When
+            excluding.call(
+                original,
+                ExchangeFunction { req ->
+                    sent = req
+                    answering().exchange(req)
+                },
+            )
+
+            // Then: passed untouched, nothing logged
+            assertThat(sent).isSameAs(original)
+            assertThat(log.events).isEmpty()
+        }
+
+        @Test
+        fun `should be active only for paths matching an include pattern and let an exclude win`() {
+            // Given
+            val scoped = filterWith(properties.copy(includePathPatterns = listOf("/api/**"), excludePathPrefixes = listOf("/api/internal")))
+
+            // When
+            scoped.call(request(uri = "https://h/api/things"), answering())
+            scoped.call(request(uri = "https://h/static/logo.png"), answering())
+            scoped.call(request(uri = "https://h/api/internal/jobs"), answering())
+
+            // Then
+            assertThat(log.events).hasSize(1)
+            assertThat(keyValues(log.events.single())).containsEntry("client_url_path", "/api/things")
+        }
+
+        @Test
+        fun `should match activation on the decoded path segments so an encoded variant cannot slip past an exclude`() {
+            // Given
+            val scoped = filterWith(properties.copy(includePathPatterns = listOf("/api/**"), excludePathPrefixes = listOf("/actuator/health")))
+
+            // When
+            scoped.call(request(uri = "https://h/%61pi/things"), answering())
+            scoped.call(request(uri = "https://h/api%2Fthings"), answering())
+            scoped.call(request(uri = "https://h/%61ctuator/health"), answering())
+
+            // Then
+            assertThat(log.events).hasSize(1)
+            assertThat(keyValues(log.events.single())).containsEntry("client_url_path", "/%61pi/things")
+        }
+
+        @Test
+        fun `should reject an invalid include pattern at construction time`() {
+            // Given/When
+            val thrown = catchThrowable { filterWith(properties.copy(includePathPatterns = listOf("/api/{unclosed"))) }
+
+            // Then
+            assertThat(thrown).isInstanceOf(PatternParseException::class.java)
+            assertThat((thrown as PatternParseException).toDetailedString()).contains("/api/{unclosed")
+        }
+
+        @Test
+        fun `should announce the call before the exchange when enabled`() {
+            // Given
+            val startLogging = filterWith(properties.copy(logRequestStart = true))
+            var eventsAtCallTime = listOf<String>()
+            val next =
+                ExchangeFunction { req ->
+                    eventsAtCallTime = log.events.map { it.formattedMessage }
+                    answering().exchange(req)
+                }
+
+            // When
+            startLogging.call(request(method = HttpMethod.POST), next)
+
+            // Then
+            assertThat(eventsAtCallTime)
+                .containsExactly("Client http exchange started POST https://api.example.com/things [client_request_id=generated-42]")
+            assertThat(log.events).hasSize(2)
+            assertThat(keyValues(log.events.first())).doesNotContainKey("client_outcome")
+            assertThat(log.events.first().mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42")
+            assertThat(keyValues(log.events.last())).containsEntry("client_outcome", "success")
+        }
+    }
+
+    private fun buffer(text: String): DataBuffer = DefaultDataBufferFactory.sharedInstance.wrap(text.toByteArray())
+}

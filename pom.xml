@@ -1,0 +1,584 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.1.1</version>
+        <relativePath/> <!-- lookup parent from repository -->
+    </parent>
+
+    <groupId>eu.inqudium</groupId>
+    <artifactId>legatium</artifactId>
+    <version>${revision}</version>
+    <packaging>pom</packaging>
+
+    <name>legatium</name>
+    <description>
+        Legatium - one structured client_* log line per outbound HTTP exchange, recorded where the
+        service sends its envoy (the "legatus") to a foreign party. Two paradigm twins with identical
+        fields and configuration: a RestClient/RestTemplate interceptor and a WebClient filter.
+    </description>
+    <url>https://github.com/Inqudium/legatium</url>
+    <inceptionYear>2026</inceptionYear>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>dirkjink</id>
+            <name>Dirk Haase</name>
+            <email>legatium@inqudium.eu</email>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:https://github.com/Inqudium/legatium.git</connection>
+        <developerConnection>scm:git:git@github.com:Inqudium/legatium.git</developerConnection>
+        <url>https://github.com/Inqudium/legatium</url>
+        <tag>HEAD</tag>
+    </scm>
+
+    <issueManagement>
+        <system>GitHub Issues</system>
+        <url>https://github.com/Inqudium/legatium/issues</url>
+    </issueManagement>
+
+    <!--
+        Default deploy target: the GitHub Packages Maven registry, used by
+        the Release workflow's publish job (authenticated with the workflow
+        token via a server entry with id "github"). Maven Central remains
+        the primary release path and is deliberately separate: activate the
+        release profile (-Prelease), which signs and uploads through the
+        Central Portal instead.
+    -->
+    <distributionManagement>
+        <repository>
+            <id>github</id>
+            <name>GitHub Packages</name>
+            <url>https://maven.pkg.github.com/Inqudium/legatium</url>
+        </repository>
+    </distributionManagement>
+
+    <modules>
+        <module>legatium-common</module>
+        <module>legatium-restclient-logging</module>
+        <module>legatium-webclient-logging</module>
+    </modules>
+
+    <properties>
+        <!-- CI-Friendly Version -->
+        <revision>1.0.0-SNAPSHOT</revision>
+
+        <!-- Encoding -->
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <!-- Java Version (Managed by Spring Boot Parent) -->
+        <java.version>21</java.version>
+
+        <!-- Kotlin Version (Override Spring Boot default) -->
+        <kotlin.version>2.4.10</kotlin.version>
+
+        <!-- Third Party Dependencies -->
+        <!-- Fuzzing (test scope): Jazzer's JUnit 5 integration - @FuzzTest
+             methods run as regression tests in every verify and fuzz for
+             real in the scheduled Fuzz workflow (JAZZER_FUZZ=1). -->
+        <jazzer.version>0.30.0</jazzer.version>
+
+        <!-- Plugin Versions -->
+        <flatten-maven-plugin.version>1.8.0</flatten-maven-plugin.version>
+        <ktlint-maven-plugin.version>3.7.1</ktlint-maven-plugin.version>
+        <dokka-maven-plugin.version>2.2.0</dokka-maven-plugin.version>
+        <maven-shade-plugin.version>3.6.2</maven-shade-plugin.version>
+        <jacoco-maven-plugin.version>0.8.15</jacoco-maven-plugin.version>
+        <cyclonedx-maven-plugin.version>2.9.3</cyclonedx-maven-plugin.version>
+        <maven-gpg-plugin.version>3.2.8</maven-gpg-plugin.version>
+        <central-publishing-maven-plugin.version>0.11.0</central-publishing-maven-plugin.version>
+
+        <!--
+            Default for the late-bound @{argLine} reference in the Surefire
+            configuration: JaCoCo's prepare-agent goal overwrites this
+            property with its -javaagent argument. The empty default keeps
+            Surefire working when JaCoCo is skipped (-Djacoco.skip=true).
+        -->
+        <argLine></argLine>
+
+        <!--
+            Extra test-JVM flags, empty by default: the jdk-24-plus profile
+            below fills them so a modern JDK (CI runs 25, see the workflows)
+            does not spam Unsafe/native-access warnings, while an older build
+            JDK would reject the flags and therefore never sees them.
+        -->
+        <surefire.jvmCompatArgs></surefire.jvmCompatArgs>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>6.1.3</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.code-intelligence</groupId>
+                <artifactId>jazzer-junit</artifactId>
+                <version>${jazzer.version}</version>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- Kotlin stdlib for all modules; kotlin-reflect is what @ConfigurationProperties
+             binding of Kotlin classes needs at runtime. -->
+        <dependency>
+            <groupId>org.jetbrains.kotlin</groupId>
+            <artifactId>kotlin-stdlib</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.jetbrains.kotlin</groupId>
+            <artifactId>kotlin-reflect</artifactId>
+            <scope>compile</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <!-- Flatten Plugin (resolves the CI-friendly ${revision} for install/deploy) -->
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>flatten-maven-plugin</artifactId>
+                    <version>${flatten-maven-plugin.version}</version>
+                    <configuration>
+                        <updatePomFile>true</updatePomFile>
+                        <flattenMode>resolveCiFriendliesOnly</flattenMode>
+                        <outputDirectory>${project.build.directory}</outputDirectory>
+                        <flattenedPomFilename>.flattened-pom.xml</flattenedPomFilename>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>flatten</id>
+                            <phase>process-resources</phase>
+                            <goals>
+                                <goal>flatten</goal>
+                            </goals>
+                        </execution>
+                        <execution>
+                            <id>flatten.clean</id>
+                            <phase>clean</phase>
+                            <goals>
+                                <goal>clean</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+
+                <!-- Kotlin Compiler: the spring compiler plugin (all-open) is load-bearing -
+                     without it the @AutoConfiguration/@Configuration classes compile final. -->
+                <plugin>
+                    <groupId>org.jetbrains.kotlin</groupId>
+                    <artifactId>kotlin-maven-plugin</artifactId>
+                    <configuration>
+                        <jvmTarget>${java.version}</jvmTarget>
+                        <args>
+                            <arg>-Xjsr305=strict</arg>
+                            <arg>-Xannotation-default-target=param-property</arg>
+                        </args>
+                        <compilerPlugins>
+                            <plugin>spring</plugin>
+                        </compilerPlugins>
+                    </configuration>
+                    <dependencies>
+                        <dependency>
+                            <groupId>org.jetbrains.kotlin</groupId>
+                            <artifactId>kotlin-maven-allopen</artifactId>
+                            <version>${kotlin.version}</version>
+                        </dependency>
+                    </dependencies>
+                </plugin>
+
+                <!-- Surefire: also pick up Kotlin test classes -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <includes>
+                            <include>**/*Test.java</include>
+                            <include>**/*Test.kt</include>
+                        </includes>
+                    </configuration>
+                </plugin>
+
+                <!--
+                    KDoc API reference, generated on demand with
+                    `mvn -pl <modules> dokka:dokka` (not bound to the default
+                    lifecycle to keep `mvn verify` fast; per module, because the
+                    Dokka Maven plugin has no aggregate mode). The Docs workflow
+                    publishes each module's output under /api/<module>/ on the
+                    documentation site. The module page rendered on the index
+                    (docs/api-module.md) is declared in each module's pom, not
+                    here - the parent has no such file, and its release-profile
+                    javadocJar run must not require one.
+                -->
+                <plugin>
+                    <groupId>org.jetbrains.dokka</groupId>
+                    <artifactId>dokka-maven-plugin</artifactId>
+                    <version>${dokka-maven-plugin.version}</version>
+                    <configuration>
+                        <moduleName>${project.artifactId}</moduleName>
+                        <outputDir>${project.build.directory}/dokka</outputDir>
+                        <!-- Fail on unresolved [Symbol] references (and other
+                             Dokka warnings): KDoc links are only trustworthy
+                             carriers when a red build guards them.
+                             reportUndocumented stays off, so only genuine
+                             reference/markup problems gate. -->
+                        <failOnWarning>true</failOnWarning>
+                        <sourceLinks>
+                            <link>
+                                <path>src/main/kotlin</path>
+                                <url>https://github.com/Inqudium/legatium/tree/main/${project.artifactId}/src/main/kotlin</url>
+                                <lineSuffix>#L</lineSuffix>
+                            </link>
+                        </sourceLinks>
+                        <!--
+                            DO NOT DELETE, even though the IDE flags this
+                            element as illegal: pluginsConfiguration is not a
+                            declared Mojo parameter — the Dokka Maven plugin
+                            reads it out-of-band from the raw configuration
+                            XML (verified against dokka-maven-plugin 2.2.0;
+                            the custom logo demonstrably lands in the output).
+
+                            logo-icon.svg is the magic asset name: it replaces
+                            Dokka's default header logo AND the favicon (the
+                            generated pages link images/logo-icon.svg as icon).
+                            The file is a copy of docs/logo/legatium-icon.svg.
+                            The ../ hop reaches the repo root from the module
+                            directory; Dokka only runs on the two child
+                            modules (-pl), never on this aggregator.
+                        -->
+                        <pluginsConfiguration>
+                            <org.jetbrains.dokka.base.DokkaBase>
+                                <customAssets>
+                                    <asset>${project.basedir}/../docs/logo/logo-icon.svg</asset>
+                                </customAssets>
+                            </org.jetbrains.dokka.base.DokkaBase>
+                        </pluginsConfiguration>
+                    </configuration>
+                </plugin>
+
+                <plugin>
+                    <groupId>com.github.gantsign.maven</groupId>
+                    <artifactId>ktlint-maven-plugin</artifactId>
+                    <version>${ktlint-maven-plugin.version}</version>
+                    <executions>
+                        <execution>
+                            <id>check</id>
+                            <phase>verify</phase>
+                            <goals>
+                                <goal>check</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                    <!-- No sourceRoots configuration: the parameter is read-only in this
+                         plugin version (it warned and was ignored); the defaults already
+                         cover the compile and test source roots. -->
+                </plugin>
+
+                <!-- The fuzz tests are JAVA sources (the OpenSSF Scorecard fuzzing
+                     detector recognizes Jazzer only in *.java files), while
+                     testSourceDirectory points at src/test/kotlin - this adds
+                     src/test/java back as a second test-source root. Managed
+                     here, DECLARED only by the modules that have such sources
+                     (legatium-common, legatium-restclient-logging) - on the others
+                     it would only warn about a missing source root. -->
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>build-helper-maven-plugin</artifactId>
+                    <version>3.6.1</version>
+                    <executions>
+                        <execution>
+                            <id>add-java-fuzz-test-sources</id>
+                            <phase>generate-test-sources</phase>
+                            <goals>
+                                <goal>add-test-source</goal>
+                            </goals>
+                            <configuration>
+                                <sources>
+                                    <source>${project.basedir}/src/test/java</source>
+                                </sources>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+
+                <!--
+                    Inlines the legatium-common classes into each twin's jar
+                    (ADR-0003): consumers keep adding exactly ONE artifact, and
+                    legatium-common itself is never published. No relocation -
+                    relocating rewrites bytecode but not the Kotlin metadata, so
+                    the classes keep their eu.inqudium.legatium.common names;
+                    both twins carry byte-identical copies at the same version.
+                    The dependency-reduced POM (a shade default) removes the
+                    common dependency from the published POM.
+                -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-shade-plugin</artifactId>
+                    <version>${maven-shade-plugin.version}</version>
+                    <executions>
+                        <!-- spring-boot-starter-parent pre-configures an UNNAMED shade
+                             execution (uber-jar transformers, no artifactSet) that would
+                             activate alongside ours and swallow the whole compile
+                             classpath into the jar - unbind it. -->
+                        <execution>
+                            <id>default</id>
+                            <phase>none</phase>
+                        </execution>
+                        <execution>
+                            <id>inline-legatium-common</id>
+                            <phase>package</phase>
+                            <goals>
+                                <goal>shade</goal>
+                            </goals>
+                            <!-- combine.self="override": do NOT merge the starter-parent's
+                                 plugin-level shade configuration (transformers, mainClass,
+                                 keepDependenciesWithProvidedScope=true) into this execution. -->
+                            <configuration combine.self="override">
+                                <artifactSet>
+                                    <includes>
+                                        <include>eu.inqudium:legatium-common</include>
+                                    </includes>
+                                </artifactSet>
+                                <!-- The published POM must not mention the unpublished
+                                     legatium-common at all: false REMOVES the shaded
+                                     dependency instead of demoting it to provided. -->
+                                <keepDependenciesWithProvidedScope>false</keepDependenciesWithProvidedScope>
+                                <dependencyReducedPomLocation>${project.build.directory}/dependency-reduced-pom.xml</dependencyReducedPomLocation>
+                                <!-- The jar carries its own Maven metadata only, not the
+                                     unpublished module's. -->
+                                <filters>
+                                    <filter>
+                                        <artifact>eu.inqudium:legatium-common</artifact>
+                                        <excludes>
+                                            <exclude>META-INF/maven/**</exclude>
+                                            <!-- The twin's own manifest wins; without the
+                                                 exclusion shade warns about the overlap. -->
+                                            <exclude>META-INF/MANIFEST.MF</exclude>
+                                        </excludes>
+                                    </filter>
+                                </filters>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- @{argLine} is resolved LATE (after JaCoCo's prepare-agent
+                         set the property), so the coverage agent and the JVM flags
+                         combine instead of the literal argLine overriding the
+                         agent. The compat property is filled by the jdk-24-plus
+                         profile and stays empty on a pre-24 build JDK. -->
+                    <argLine>
+                        @{argLine}
+                        --add-opens java.base/java.lang=ALL-UNNAMED
+                        -XX:+EnableDynamicAgentLoading
+                        ${surefire.jvmCompatArgs}
+                    </argLine>
+                </configuration>
+            </plugin>
+
+            <!--
+                Test coverage, always on: the agent attaches via the argLine
+                property (merged with the JVM flags in the Surefire config -
+                see the @{argLine} note there) and each module's report is
+                written at verify to target/site/jacoco/ (HTML + XML + CSV).
+                The Docs workflow publishes the HTML reports and derives the
+                combined coverage badge from the CSVs, so the visible numbers
+                are generated, never hand-maintained. Skip locally with
+                -Djacoco.skip=true.
+            -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco-maven-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+                CycloneDX SBOM of the RESOLVED dependency graph, generated on
+                demand with `mvn cyclonedx:makeAggregateBom` (deliberately not
+                bound to a lifecycle phase, so `mvn verify` stays fast). The CI
+                dependency scan consumes the aggregated target/bom.json.
+
+                Why an SBOM rather than scanning pom.xml directly: most versions
+                here are managed by the Spring Boot BOM and therefore do not
+                appear in pom.xml at all. Only the resolved graph states what
+                actually ships - which is exactly what a vulnerability scan has
+                to look at.
+
+                Test-scoped dependencies are excluded (the plugin's default):
+                they never reach a consumer, and an advisory in a test-only
+                library should not gate the build.
+            -->
+            <plugin>
+                <groupId>org.cyclonedx</groupId>
+                <artifactId>cyclonedx-maven-plugin</artifactId>
+                <version>${cyclonedx-maven-plugin.version}</version>
+                <configuration>
+                    <outputFormat>json</outputFormat>
+                    <schemaVersion>1.6</schemaVersion>
+                </configuration>
+                <!-- cyclonedx-core-java >= 13 registers the CycloneDX schema's
+                     meta:enum/deprecated annotation keywords with the JSON-schema
+                     validator (NonValidationKeyword), silencing the two
+                     "Unknown keyword" warnings the plugin's bundled 9.x emitted
+                     on every BOM validation. Remove the override once the plugin
+                     itself ships a >= 13 core. -->
+                <dependencies>
+                    <dependency>
+                        <groupId>org.cyclonedx</groupId>
+                        <artifactId>cyclonedx-core-java</artifactId>
+                        <version>13.2.0</version>
+                    </dependency>
+                    <!-- The plugin used commons-io transitively via the 9.x core;
+                         the 13.x core no longer carries it. -->
+                    <dependency>
+                        <groupId>commons-io</groupId>
+                        <artifactId>commons-io</artifactId>
+                        <version>2.22.0</version>
+                    </dependency>
+                </dependencies>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>flatten-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>com.github.gantsign.maven</groupId>
+                <artifactId>ktlint-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!--
+            JDK 24+ prints warnings when Jazzer's native agent and Netty touch
+            sun.misc.Unsafe / restricted native methods from the test JVM, and
+            the appended JaCoCo agent additionally triggers the CDS sharing
+            warning. These flags acknowledge the accesses; they do not exist
+            before JDK 23/24, hence the activation guard for older build JDKs
+            (CI runs 25). The MAVEN JVM gets the same acknowledgements from
+            .mvn/jvm.config - that silences the embedded Kotlin compiler's
+            Unsafe warning during ktlint/dokka runs.
+        -->
+        <profile>
+            <id>jdk-24-plus-test-jvm</id>
+            <activation>
+                <jdk>[24,)</jdk>
+            </activation>
+            <properties>
+                <surefire.jvmCompatArgs>--sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED -Xshare:off</surefire.jvmCompatArgs>
+            </properties>
+        </profile>
+
+        <!-- Everything Maven Central requires beyond the normal build: source and javadoc jars,
+             GPG signatures, and the upload to the Central Portal. Activate with -Prelease. -->
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <!-- Kotlin sources: the javadoc jar Central requires is generated by Dokka.
+                         Version and shared configuration come from pluginManagement. -->
+                    <plugin>
+                        <groupId>org.jetbrains.dokka</groupId>
+                        <artifactId>dokka-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>attach-javadoc</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>javadocJar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>${maven-gpg-plugin.version}</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <bestPractices>true</bestPractices>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>${central-publishing-maven-plugin.version}</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <!-- Uploads and validates the bundle but waits for a manual "Publish"
+                                 click in the Central Portal; set to true for hands-off releases. -->
+                            <autoPublish>false</autoPublish>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>
