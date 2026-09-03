@@ -382,12 +382,12 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
         }
 
         @Test
-        fun `should treat a 4xx answer as success and withhold the bodies in on-failure mode`() {
-            // What is tested: on-failure follows the outcome vocabulary, not the status class - a 4xx is
-            //   a success outcome (the peer answered; the request was wrong).
-            // Success criteria: outcome success, and neither body on the line.
-            // Why it matters: the gate must be predictable from the documented vocabulary; widening it is a
-            //   change of the vocabulary, not a hidden special case in the body logic.
+        fun `should log both bodies of a 4xx answer although its outcome stays success`() {
+            // What is tested: the gate is wider than the outcome vocabulary by one status class - a 4xx keeps
+            //   its success outcome (the peer answered; the request was wrong) but is exactly the case a body explains.
+            // Success criteria: outcome success, and BOTH bodies on the line.
+            // Why it matters: a validation error\'s response body is the most wanted body of all; hiding it
+            //   behind the outcome vocabulary would make on-failure useless for client errors.
             // Given/When: a 404 with a body
             interceptorWith(onFailure)
                 .intercept(request(method = HttpMethod.POST), "sent".toByteArray(), answering(status = HttpStatus.NOT_FOUND, body = "no such thing"))
@@ -396,7 +396,8 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Then
             assertThat(keyValues(log.events.single()))
                 .containsEntry("client_outcome", "success")
-                .doesNotContainKeys("client_request_body", "client_response_body")
+                .containsEntry("client_request_body", "sent")
+                .containsEntry("client_response_body", "no such thing")
         }
 
         @Test

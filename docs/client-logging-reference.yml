@@ -108,11 +108,13 @@ client-logging:
 
   # Body logging per direction - a MODE, not a switch (ADR-0006): `never` (the default), `on-failure`
   # or `always`. `on-failure` is the volume switch: the body is logged only when `client_outcome` is
-  # not `success` (failure, timeout, cancelled) - orders of magnitude fewer bytes than `always`, on
+  # not `success` (failure, timeout, cancelled) or the status is a 4xx - orders of magnitude fewer bytes
+  # than `always`, on
   # exactly the lines a body is wanted for. The response side decides at emission, when the outcome is
   # final; the request body flows before the outcome is known, so `on-failure` buffers it (up to
   # max-body-bytes) like `always` and drops it on success - the capture is paid, the output is saved.
-  # A 4xx answer is a `success` outcome (the peer answered) and logs no bodies in `on-failure`.
+  # A 4xx answer keeps its `success` outcome (the peer answered) but logs its bodies in `on-failure`:
+  # the client's error is exactly what the body explains.
   # The request body is what the client sends (complete, in memory on the blocking stack; teed as it
   # is written on the reactive one); the response body is TEED as the application reads it - never
   # pre-read, never replayed, so streaming behaviour is untouched and the log shows exactly the bytes

@@ -13,19 +13,19 @@ class BodyLogModeTest {
     }
 
     @Test
-    fun `should log on failure only when the exchange did not succeed`() {
+    fun `should log on failure only when the exchange failed`() {
         // What is tested: the one decision the emitters delegate - on-failure discards a success.
-        // Success criteria: true for a non-success outcome, false for success.
+        // Success criteria: true for a failed exchange (outcome not success, or a 4xx), false otherwise.
         // Why it matters: this single predicate is the volume switch of ADR-0006.
-        assertThat(BodyLogMode.ON_FAILURE.logs(succeeded = true)).isFalse()
-        assertThat(BodyLogMode.ON_FAILURE.logs(succeeded = false)).isTrue()
+        assertThat(BodyLogMode.ON_FAILURE.logs(failed = false)).isFalse()
+        assertThat(BodyLogMode.ON_FAILURE.logs(failed = true)).isTrue()
     }
 
     @Test
     fun `should log always and never regardless of the outcome`() {
-        assertThat(BodyLogMode.ALWAYS.logs(succeeded = true)).isTrue()
-        assertThat(BodyLogMode.ALWAYS.logs(succeeded = false)).isTrue()
-        assertThat(BodyLogMode.NEVER.logs(succeeded = true)).isFalse()
-        assertThat(BodyLogMode.NEVER.logs(succeeded = false)).isFalse()
+        assertThat(BodyLogMode.ALWAYS.logs(failed = false)).isTrue()
+        assertThat(BodyLogMode.ALWAYS.logs(failed = true)).isTrue()
+        assertThat(BodyLogMode.NEVER.logs(failed = false)).isFalse()
+        assertThat(BodyLogMode.NEVER.logs(failed = true)).isFalse()
     }
 }

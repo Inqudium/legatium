@@ -687,8 +687,8 @@ by construction.
 | `slow-request-threshold` | duration | `5s` | At/above this duration an INFO call escalates to WARN and is flagged `client_slow: true`; the outcome stays `success`. Measured as response occupancy ([§6.2](#62-duration-is-response-occupancy)). Must be ≥ 1 ms. |
 | `request-headers.includes` / `.excludes` / `.masked` | lists of header names | `[]` | See [§4.2](#42-header-sections). |
 | `response-headers.includes` / `.excludes` / `.masked` | lists of header names | `[]` | See [§4.2](#42-header-sections). |
-| `log-request-body` | `never` \| `on-failure` \| `always` | `never` | Log the request body the client hands the interceptor into `client_request_body`, up to `max-body-bytes` — on every line (`always`) or only when `client_outcome` is not `success` (`on-failure`, [§4.3](#43-body-logging-and-body-measuring)). |
-| `log-response-body` | `never` \| `on-failure` \| `always` | `never` | Tee the response body into `client_response_body` as the application reads it, up to `max-body-bytes` — on every line or only when the outcome is not `success`. |
+| `log-request-body` | `never` \| `on-failure` \| `always` | `never` | Log the request body the client hands the interceptor into `client_request_body`, up to `max-body-bytes` — on every line (`always`) or only when the outcome is not `success` or the status is a 4xx (`on-failure`, [§4.3](#43-body-logging-and-body-measuring)). |
+| `log-response-body` | `never` \| `on-failure` \| `always` | `never` | Tee the response body into `client_response_body` as the application reads it, up to `max-body-bytes` — on every line or only when the outcome is not `success` or the status is a 4xx. |
 | `measure-request-body-size` | boolean | `false` | Record `client.request.body.size`; independent of `log-request-body`. |
 | `measure-response-body-size` | boolean | `false` | Record `client.response.body.size` and `client.response.body.read`; independent of `log-response-body`. |
 | `max-body-bytes` | int > 0 | `16384` | Capture limit per body. Bounds **memory**, not the exchange: bytes beyond it still flow; the logged value is truncated with a note of the total size. |
@@ -725,7 +725,7 @@ measured — independent of each other:
 |---|---|---|---|---|
 | `never` | off | no | — | request body untouched; response stream passes through (read-failure guard only) |
 | `always` | off | yes, limit `max-body-bytes` | up to the limit | field logged on every line; no size sample |
-| `on-failure` | off | yes, limit `max-body-bytes` | up to the limit | field logged only when `client_outcome` is not `success`; no size sample |
+| `on-failure` | off | yes, limit `max-body-bytes` | up to the limit | field logged only when `client_outcome` is not `success` or the status is a 4xx; no size sample |
 | `never` | on | yes, limit `0` (count-only) | nothing | size sample recorded; no field |
 | `always` / `on-failure` | on | yes, limit `max-body-bytes` | up to the limit | both |
 
@@ -735,9 +735,10 @@ wrong — `failure`, `timeout` — which cuts the volume by orders of magnitude 
 lines a body is wanted for. The response side decides at emission, when the outcome is final. The request
 body flows before the outcome is known, so `on-failure` captures it exactly like `always` does (bounded by
 `max-body-bytes`) and discards it for a success: the capture is paid, the output is saved — and the output
-is what burdens the log pipeline. The gate follows the outcome vocabulary ([§5.3](#53-levels-and-outcomes)),
-not the status class: a `4xx` answer is `success` (the peer answered; the request was wrong) and logs no
-bodies in `on-failure`; a `5xx` is `failure` and does. A slow but healthy call stays `success` as well.
+is what burdens the log pipeline. The gate is wider than the outcome vocabulary ([§5.3](#53-levels-and-outcomes)) by one status
+class: a `4xx` answer keeps its `success` outcome — the peer answered — but its bodies are logged in
+`on-failure`, because the client's error is exactly what the body explains; a `5xx` is `failure` and logs as
+well. A slow but healthy call stays `success` and logs no bodies.
 
 Rules that hold for every combination:
 

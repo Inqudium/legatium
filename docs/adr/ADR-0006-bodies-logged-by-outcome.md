@@ -24,14 +24,17 @@ switch:**
 2. `on-failure` captures the body on every call - bounded by
    `max-body-bytes`, like `always` - and writes it to the line only when
    `client_outcome` is not `success`: `failure`, `timeout`, and on the
-   WebClient twin `cancelled`. The response side decides at emission, when
+   WebClient twin `cancelled`, or when the status is a 4xx. The response side decides at emission, when
    the outcome is final; the request side captures ahead and discards.
 3. `always` captures and logs on every call - the former `true`.
-4. The gate follows the outcome vocabulary, not the status class: a 4xx
-   answer is a `success` outcome (the peer answered; the request was wrong)
-   and logs no bodies; a 5xx is a `failure` and does. A slow but healthy
-   call stays `success`. Changing what counts as a failure is a change of
-   the vocabulary, not of this mode.
+4. The gate is wider than the outcome vocabulary by exactly one status
+   class: a 4xx answer keeps its `success` outcome (the peer answered; the request was wrong) - levels, metrics and dashboards are
+   untouched - but its bodies are logged, because a client's error is
+   exactly the case a body explains. A 5xx is a `failure` and logs as
+   well. A slow but healthy call stays `success` and logs no bodies.
+   *Amended the same day:* the first cut followed the vocabulary strictly
+   and withheld 4xx bodies; that hid validation errors, the bodies most
+   often wanted.
 5. The former booleans are refused at binding time (`true` is not a mode
    name): an operator who believed body logging on must see the migration
    at startup, not discover a silent `never` in production.

@@ -42,7 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([ADR-0006](docs/adr/ADR-0006-bodies-logged-by-outcome.md)):
   `log-request-body` / `log-response-body` take `never` (the default),
   `on-failure` or `always`. `on-failure` writes a body only when
-  `client_outcome` is not `success` - the response side decides at emission,
+  `client_outcome` is not `success` or the status is a 4xx - the response side
+  decides at emission,
   the request body is captured before the outcome is known and discarded on
   success - which keeps body logging affordable outside a debug session.
 - Shared twin core `legatium-common`, inlined by Shade
