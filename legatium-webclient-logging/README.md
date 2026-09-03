@@ -12,9 +12,10 @@ metrics and the stack-specific behaviours — is [`docs/GUIDE.md`](docs/GUIDE.md
 The RestClient module is the reference implementation; its documentation applies here too:
 
 - **Configuration:** the one complete commented reference for both twins is the repository-shared
-  [`/docs/client-logging-reference.yml`](../docs/client-logging-reference.yml) — this module's
-  `ClientLoggingReferenceConfigTest` **binds it against this module's properties class**, so the
-  namespace cannot drift from the code or from its twin.
+  [`/docs/client-logging-reference.yml`](../docs/client-logging-reference.yml) — bound by
+  `ClientLoggingReferenceConfigTest` in `legatium-common` against the one `ClientLoggingProperties`
+  class both twins inline, so the namespace cannot drift from the code, and the twins cannot drift
+  from each other by construction.
 - **Index mapping:** the one component template for both stacks is the repository-shared
   [`/docs/elk/`](../docs/elk/README.md) — bound by `ClientLogFieldTest` in `legatium-common` against
   the one `ClientLogField` enum both twins inline.
@@ -46,8 +47,9 @@ README and guide.
 
 The **byte-identical** part of the twins' shared layer (the `traceparent` parser with its fuzz target,
 the injectable time/id interfaces, the fail-open helpers, the MDC keys and scope, the header sections
-with the masking fingerprint, the timeout classification, and the `client_*` field enum itself) lives in the
-internal `legatium-common` module and is **inlined into this jar** by the Maven Shade plugin
+with the masking fingerprint, the timeout classification, the `client_*` field enum and the
+`client-logging.*` properties class) lives in the internal `legatium-common` module and is **inlined
+into this jar** by the Maven Shade plugin
 ([ADR-0003](../docs/adr/ADR-0003-legatium-common-inlined-by-shade.md)): consumers add exactly one
 artifact, the published POM carries no extra dependency, and `legatium-common` itself is never
 published.
@@ -56,7 +58,7 @@ Everything whose twin copies genuinely differ (metrics with their per-stack outc
 emitters, exchanges, filter vs. interceptor, body capture with its own concurrency design)
 stays **deliberately duplicated**: one twin per client, standalone jars, contract-level code that changes
 rarely. For that remainder every change is a conscious port in both directions; the pins in
-`TwinContractTest` / `ClientLoggingReferenceConfigTest` catch *named* contract
+`TwinContractTest` (and, in `legatium-common`, `ClientLogFieldTest` / `ClientLoggingReferenceConfigTest`) catch *named* contract
 drift (meter names, field names, configuration keys, message text) — not behavioural drift inside
 near-identical code.
 

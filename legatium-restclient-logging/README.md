@@ -73,8 +73,9 @@ component template in [`/docs/elk/`](../docs/elk/README.md), kept in lockstep wi
 
 A complete, commented reference configuration with every property at its default lives in
 [`/docs/client-logging-reference.yml`](../docs/client-logging-reference.yml) — copy the block and change
-only what you need. `ClientLoggingReferenceConfigTest` keeps it in lockstep with the code: every key
-must exist, every value must be the built-in default.
+only what you need. `ClientLoggingReferenceConfigTest` in `legatium-common` keeps it in lockstep with
+the shared `ClientLoggingProperties` class both twins bind: every key must exist, every value must be
+the built-in default.
 
 | Property | Default | Meaning |
 |---|---|---|
@@ -145,8 +146,8 @@ lockstep tests.
 
 The **byte-identical** part of the shared layer (the `traceparent` parser with its fuzz target, the
 injectable time/id interfaces, the fail-open helpers, the MDC keys and scope, the header sections with
-the masking fingerprint, the timeout classification, and the `client_*` field enum itself) lives in the
-internal `legatium-common` module and
+the masking fingerprint, the timeout classification, the `client_*` field enum and the
+`client-logging.*` properties class) lives in the internal `legatium-common` module and
 is **inlined into this jar** by the Maven Shade plugin
 ([ADR-0003](../docs/adr/ADR-0003-legatium-common-inlined-by-shade.md)): consumers add exactly one
 artifact, the published POM carries no extra dependency, and `legatium-common` itself is never
@@ -160,7 +161,8 @@ cross-module tests catch *named* contract drift, not behavioural drift.
 ## Overriding
 
 Define your own bean to replace a default: `NanoTimeSource`, `CorrelationIdGenerator`, or a complete
-`ClientRequestLoggingInterceptor`. A custom interceptor bean takes over the *interceptor*, not the
+`ClientRequestLoggingInterceptor`. The shared types a custom bean touches — `ClientLoggingProperties`,
+`NanoTimeSource`, `CorrelationIdGenerator` — live in the package `eu.inqudium.legatium.common`. A custom interceptor bean takes over the *interceptor*, not the
 wiring: the auto-configured `RestClientCustomizer` and `RestTemplateCustomizer` still attach it to every
 Boot-built client. A host that builds its clients by hand adds the bean itself
 (`builder.requestInterceptor(interceptor)`). Set `client-logging.enabled=false` to remove everything.

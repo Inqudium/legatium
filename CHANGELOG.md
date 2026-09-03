@@ -30,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared twin core `legatium-common`, inlined by Shade
   ([ADR-0003](docs/adr/ADR-0003-legatium-common-inlined-by-shade.md)), including
   the cross-stack timeout classification and - unlike Limesium - the field enum
-  itself (ADR-0003 amendment of 2026-09-03: the twins' copies were byte-identical).
+  and the `client-logging.*` properties class themselves (ADR-0003 amendments of
+  2026-09-03: the twins' copies were byte-identical).
 - Elasticsearch component template for the `client_*` fields, the shared
   configuration reference, and the lockstep tests binding both to both twins.
 - Documentation site (MkDocs Material), test-evidence and coverage pages,

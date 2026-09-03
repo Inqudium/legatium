@@ -1,6 +1,7 @@
 package eu.inqudium.legatium.webclient.logging
 
 import ch.qos.logback.classic.Level
+import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.NanoTimeSource

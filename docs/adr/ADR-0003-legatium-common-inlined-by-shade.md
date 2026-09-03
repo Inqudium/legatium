@@ -24,12 +24,13 @@ each twin inlines it into its own jar with the Maven Shade plugin;
   semantics and the masking fingerprint, with unit test and fuzz target),
   `BodyReadState`/`decodeTruncated`, `Timeouts` (the classification that
   makes `client_outcome=timeout` mean the same thing on both stacks), and -
-  since the amendment below - the `ClientLogField` enum with its builder
-  extensions. Package: `eu.inqudium.legatium.common`.
+  since the amendments below - the `ClientLogField` enum with its builder
+  extensions and the `ClientLoggingProperties` binding. Package:
+  `eu.inqudium.legatium.common`.
 - **What deliberately stays duplicated:** everything whose twin copies
   genuinely differ - the metrics (per-stack outcome vocabulary and meter
   descriptions), the emitters, exchanges,
-  interceptor/filter, properties, and `BoundedBodyCapture` (two different
+  interceptor/filter, and `BoundedBodyCapture` (two different
   concurrency designs: volatile single-writer on the blocking stack, lock
   and freeze on the reactive one). For those the accepted cost is a
   conscious port in both directions; the lockstep tests
@@ -97,3 +98,24 @@ component template against it ONCE there (the template is declared as a
 test resource of `legatium-common`); the twins no longer carry the test or
 the template resource. The ELK template's `authority` points at the new
 location.
+
+## Amendment (2026-09-03, second)
+
+The same review found `ClientLoggingProperties` byte-identical apart from
+KDoc wording (interceptor vs. filter) - the `client-logging.*` namespace is
+one cross-stack contract by design, key for key and default for default,
+and unlike limesium there is no stack-only key (`variant`) to justify two
+classes. The class now lives in `legatium-common` (which therefore depends
+on `spring-boot` for the `@ConfigurationProperties` annotation - no
+autoconfigure, no starter), documented stack-neutrally; both twins'
+auto-configurations enable the same class, and a host carrying both twins
+gets one properties bean (Boot derives the bean name from prefix and class).
+`ClientLoggingPropertiesTest` and `ClientLoggingReferenceConfigTest` moved
+along, so the reference YAML is bound ONCE in `legatium-common` and the
+twins declare no shared-docs test resources any more. NOTE - source-facing
+for hosts that import the class for a custom interceptor/filter bean: the
+package is `eu.inqudium.legatium.common`, decided before the first release.
+The two twins' copies of the test helper `MdcAdapterSwap` were unused (only
+`legatium-common`'s `MdcScopeTest` swaps the adapter) and were deleted; the
+"copies are cheaper than a test-jar" rule applies to helpers a module
+actually uses.

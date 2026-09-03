@@ -168,13 +168,13 @@ reference implementation and owns the cross-stack contract:
 
 | Contract | Owner | Lockstep test in this module |
 |---|---|---|
-| Configuration keys and defaults | [`/docs/client-logging-reference.yml`](../../docs/client-logging-reference.yml) | `ClientLoggingReferenceConfigTest` binds that YAML against this module's `ClientLoggingProperties` |
+| Configuration keys and defaults | [`/docs/client-logging-reference.yml`](../../docs/client-logging-reference.yml) | `ClientLoggingReferenceConfigTest` in `legatium-common` (one `ClientLoggingProperties` class for both twins, bound against the YAML once) |
 | Field family and index mapping | [`/docs/elk/…component-template.json`](../../docs/elk/README.md) | `ClientLogFieldTest` in `legatium-common` (one enum for both twins, locked against the template once) |
 | Message text and meter names | the RestClient module's emitter and metrics | `TwinContractTest` |
 
-The build pulls the reference YAML from the repository-shared `/docs` as a **test resource** (declared
-in this module's `pom.xml`; the template is bound the same way in `legatium-common`), so a missing
-checkout fails at resource processing with a clear message rather than as a silent contract drift. The consequence for a consumer: a dashboard, alert or index mapping written
+`legatium-common` pulls both files from the repository-shared `/docs` as **test resources** (declared
+in its `pom.xml`), so a missing checkout fails at resource processing with a clear message rather than
+as a silent contract drift. The consequence for a consumer: a dashboard, alert or index mapping written
 for one client works unchanged for the other — and an application may carry both modules.
 
 ---
@@ -183,7 +183,7 @@ for one client works unchanged for the other — and an application may carry bo
 
 ### 2.1 Component overview
 
-Seven Kotlin files in one package, `eu.inqudium.legatium.webclient.logging`, plus the shared layer, in
+Six Kotlin files in one package, `eu.inqudium.legatium.webclient.logging`, plus the shared layer, in
 five layers:
 
 ```
@@ -191,7 +191,7 @@ five layers:
 │ Auto-configuration                                                           │
 │   ClientLoggingAutoConfiguration                                             │
 │     └─ WebClientCustomization (WebClientCustomizer, late)                    │
-│   ClientLoggingProperties · HeaderLogProperties                              │
+│   ClientLoggingProperties · HeaderLogProperties (both shared)                │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Client lifecycle                                                             │
 │   ClientRequestLoggingFilter (ExchangeFilterFunction)                        │
@@ -216,7 +216,7 @@ five layers:
 | Class | Responsibility |
 |---|---|
 | `ClientLoggingAutoConfiguration` | Registers the filter bean, the default `NanoTimeSource` / `CorrelationIdGenerator`, and — when Boot's `spring-boot-webclient` is present — a late `WebClientCustomizer` that appends the filter. |
-| `ClientLoggingProperties` | The `client-logging.*` binding, validated in `init`; identical to the twin's key for key. `HeaderLogProperties` (shared, legatium-common - §6.11) is one header section. |
+| `ClientLoggingProperties` | The `client-logging.*` binding, validated in `init` - shared (legatium-common - §6.11), the very class the RestClient twin binds. `HeaderLogProperties` (shared too) is one header section. |
 | `ClientRequestLoggingFilter` | Everything that decides **what** is logged and counted: activation by host and path, fail-open wiring (identity, the rebuilt request with correlation header and body tee), the arrival line, the signal mapping of the response `Mono`, the response mutation with the body hooks, the exactly-once `complete`. |
 | `Exchange` / `ExchangeState` | Per-exchange state between entry and emission; one atomic `OPEN → RESPONDED → COMPLETED` state instead of loose flags. |
 | `ExchangeLogEmitter` | Builds and emits the arrival line and the completion event; freezes the captures first; resolves level and outcome (timeouts via the shared `Timeouts`, `cancelled` on top); records body sizes; opens the emission `MdcScope` with trace ownership. |
@@ -635,11 +635,12 @@ configuration lives.
 
 ## 4. Configuration
 
-All properties live under `client-logging.*`. The namespace is **identical** to the RestClient twin's,
-key for key and default for default. The complete, commented reference with every default is the
-repository-shared [`/docs/client-logging-reference.yml`](../../docs/client-logging-reference.yml);
-`ClientLoggingReferenceConfigTest` binds it against this module's `ClientLoggingProperties` and fails the
-build on any drift.
+All properties live under `client-logging.*`. The namespace is **identical** to the RestClient twin's by
+construction: both twins bind the one shared `ClientLoggingProperties` class. The complete, commented
+reference with every default is the repository-shared
+[`/docs/client-logging-reference.yml`](../../docs/client-logging-reference.yml);
+`ClientLoggingReferenceConfigTest` in `legatium-common` binds it against that class and fails the build
+on any drift.
 
 ### 4.1 Property reference
 
@@ -1025,7 +1026,8 @@ boundary for guessable values; omit such headers from the selection instead.
 The byte-identical part of the twins' shared layer lives in the `legatium-common` module
 ([ADR-0003](../../docs/adr/ADR-0003-legatium-common-inlined-by-shade.md)): the `Traceparent` parser (with
 its tests and fuzz target), `HeaderLogProperties` (with unit test and fuzz target), the `ClientLogField`
-enum with its builder extensions (ADR-0003 amendment), `Timeouts`, `NanoTimeSource`,
+enum with its builder extensions and the `ClientLoggingProperties` binding (ADR-0003 amendments),
+`Timeouts`, `NanoTimeSource`,
 `CorrelationIdGenerator`, `reportQuietly`/`failOpen`, the MDC keys and scope, and
 `BodyReadState`/`decodeTruncated`. The Maven Shade plugin inlines those classes into THIS jar at package
 time, the dependency-reduced POM drops the dependency, and `legatium-common` is never published —
@@ -1045,7 +1047,7 @@ directions; the lockstep tests catch *named* contract drift, not behavioural dri
 
 ```
 legatium-webclient-logging/
-├── pom.xml                                   library deps only; shared docs as test resources
+├── pom.xml                                   library deps only
 ├── README.md                                 module summary and the twin-difference table
 ├── docs/
 │   ├── GUIDE.md                              this document
@@ -1053,16 +1055,15 @@ legatium-webclient-logging/
 └── src/
     ├── main/kotlin/eu/inqudium/legatium/webclient/logging/
     │   ├── ClientLoggingAutoConfiguration.kt      beans, the late WebClientCustomizer
-    │   ├── ClientLoggingProperties.kt             client-logging.* binding, identical to the twin's
     │   ├── ClientRequestLoggingFilter.kt          the filter: activation, wiring, signal mapping, response mutation, complete
     │   ├── Exchange.kt                            per-exchange state, ExchangeState
     │   ├── ExchangeLogEmitter.kt                  arrival line and completion event
     │   ├── ClientLoggingMetrics.kt                the six meters (four outcomes)
     │   ├── CapturingDecorators.kt                 tee(), the request decorator, the inserter wrap
     │   └── BoundedBodyCapture.kt                  bounded, freezable capture target, read state
-    │   (ClientLogFields, Traceparent, Timeouts, Mdc, NanoTimeSource, CorrelationIdGenerator,
-    │    HeaderLogProperties, BodyCapture helpers and the fail-open guards live in
-    │    ../legatium-common - inlined, §6.11)
+    │   (ClientLoggingProperties, ClientLogFields, Traceparent, Timeouts, Mdc, NanoTimeSource,
+    │    CorrelationIdGenerator, HeaderLogProperties, BodyCapture helpers and the fail-open guards
+    │    live in ../legatium-common - inlined, §6.11)
     ├── main/resources/META-INF/spring/…AutoConfiguration.imports
     └── test/kotlin/eu/inqudium/legatium/webclient/logging/  see the suite overview below
 ```
@@ -1072,11 +1073,11 @@ lists every test with its rationale):
 
 | Suite | Scope |
 |---|---|
-| Unit suites (`ClientRequestLoggingFilterTest`, `…BodyAndHeaderTest`, `…MetricsTest`, `BoundedBodyCaptureTest`, `ClientLoggingPropertiesTest`) | hand-built request/response driven, every signal synchronous: line format, identity, levels/outcomes including `cancelled`, emission at the body's terminal signal, activation, tees, meters, fail-open stages |
+| Unit suites (`ClientRequestLoggingFilterTest`, `…BodyAndHeaderTest`, `…MetricsTest`, `BoundedBodyCaptureTest`) | hand-built request/response driven, every signal synchronous: line format, identity, levels/outcomes including `cancelled`, emission at the body's terminal signal, activation, tees, meters, fail-open stages |
 | `ClientLoggingAutoConfigurationTest` | the shipped activation: beans, the customizer attaching the filter to Boot's builder, back-off, the optional-dependency boundary |
 | `ClientRequestLoggingFilterIntegrationTest` | end to end through Boot's `WebClient.Builder` and Reactor Netty against a real HTTP peer: templates, bodies on pooled buffers, the wire correlation header, refused connection, the connector's response timeout, a downstream timeout operator |
 | `ClientRequestLoggingTracingIntegrationTest` | ADR-0002 beside a real Brave bridge: the injected `traceparent`, the log-to-trace join, no correlation header on traced calls, every call traced |
-| Lockstep/contract tests (`TwinContractTest`, `ClientLoggingReferenceConfigTest`, `UriTemplateAttributeTest`) | pin the twin/config contracts and the mirrored `WebClient` attribute; the field/template lockstep (`ClientLogFieldTest`) lives once in legatium-common |
+| Lockstep/contract tests (`TwinContractTest`, `UriTemplateAttributeTest`) | pin the twin contracts and the mirrored `WebClient` attribute; the field/template and configuration/reference lockstep (`ClientLogFieldTest`, `ClientLoggingReferenceConfigTest`, `ClientLoggingPropertiesTest`) lives once in legatium-common |
 
 Fuzzing of the shared `Traceparent` parser and header masking lives in legatium-common; the bounded
 capture's fuzz target lives in the RestClient twin (the reactive capture adds a lock and a freeze around

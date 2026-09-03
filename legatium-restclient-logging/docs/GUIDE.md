@@ -172,7 +172,7 @@ files, and the twin's build binds them:
 
 | Contract | Shipped here | Pinned in the twin by |
 |---|---|---|
-| Configuration keys and defaults | [`/docs/client-logging-reference.yml`](../../docs/client-logging-reference.yml) | `ClientLoggingReferenceConfigTest` (binds this YAML against the twin's properties class) |
+| Configuration keys and defaults | [`/docs/client-logging-reference.yml`](../../docs/client-logging-reference.yml) | `ClientLoggingReferenceConfigTest` in `legatium-common` (one `ClientLoggingProperties` class for both twins, bound against the YAML once) |
 | Field family and index mapping | [`/docs/elk/…component-template.json`](../../docs/elk/README.md) | `ClientLogFieldTest` in `legatium-common` (one enum for both twins, locked against the template once) |
 | Message text and meter names | this module's emitter and metrics | `TwinContractTest` in both modules |
 
@@ -186,7 +186,7 @@ streaming calls) may carry both modules, each logging the client it serves.
 
 ### 2.1 Component overview
 
-Seven Kotlin files in one package, `eu.inqudium.legatium.restclient.logging`, plus the shared layer, in
+Six Kotlin files in one package, `eu.inqudium.legatium.restclient.logging`, plus the shared layer, in
 five layers:
 
 ```
@@ -195,7 +195,7 @@ five layers:
 │   ClientLoggingAutoConfiguration                                             │
 │     ├─ RestClientCustomization   (RestClientCustomizer, late)                │
 │     └─ RestTemplateCustomization (RestTemplateCustomizer, late)              │
-│   ClientLoggingProperties · HeaderLogProperties                              │
+│   ClientLoggingProperties · HeaderLogProperties (both shared)                │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Client lifecycle                                                             │
 │   ClientRequestLoggingInterceptor (ClientHttpRequestInterceptor)             │
@@ -218,7 +218,7 @@ five layers:
 | Class | Responsibility |
 |---|---|
 | `ClientLoggingAutoConfiguration` | Registers the interceptor bean, the default `NanoTimeSource` / `CorrelationIdGenerator`, and — when Boot's `spring-boot-restclient` is present — a late `RestClientCustomizer` and `RestTemplateCustomizer` that append the interceptor. |
-| `ClientLoggingProperties` | The `client-logging.*` binding, validated in `init`. `HeaderLogProperties` (shared, legatium-common - §6.11) is one header section with `includes` / `excludes` / `masked` and the masking fingerprint. |
+| `ClientLoggingProperties` | The `client-logging.*` binding, validated in `init` - shared (legatium-common - §6.11), one class for both twins. `HeaderLogProperties` (shared too) is one header section with `includes` / `excludes` / `masked` and the masking fingerprint. |
 | `ClientRequestLoggingInterceptor` | Owns the **client side**: activation by host and path, fail-open wiring, identity resolution (`traceparent` first, correlation header on traceless calls) with the traceless header, the request-body capture, the call-wide `MdcScope`, the breadcrumb, the no-response path, the handoff to the response wrapper. |
 | `CapturingClientHttpResponse` | The response the client gets back: delegates, tees the body the application reads, reports a read failure, and turns `close()` into the emission point. |
 | `Exchange` | Per-exchange state from entry to emission; the exactly-once guards. |
@@ -655,9 +655,10 @@ composes beside Limesium's `endpoint_*` template without collision.
 
 All properties live under `client-logging.*`. The complete, commented reference with every default is
 [`/docs/client-logging-reference.yml`](../../docs/client-logging-reference.yml);
-`ClientLoggingReferenceConfigTest` binds it against `ClientLoggingProperties` and fails the build on any
-drift — every key must exist, every value must be the built-in default. The WebClient twin binds the
-same file, so the namespace is identical across the stacks.
+`ClientLoggingReferenceConfigTest` (in `legatium-common`) binds it against the shared
+`ClientLoggingProperties` and fails the build on any drift — every key must exist, every value must be
+the built-in default. Both twins bind that one class, so the namespace is identical across the stacks
+by construction.
 
 ### 4.1 Property reference
 
@@ -1080,7 +1081,8 @@ for guessable values; omit such headers from the selection instead.
 The byte-identical part of the twins' shared layer lives in the `legatium-common` module
 ([ADR-0003](../../docs/adr/ADR-0003-legatium-common-inlined-by-shade.md)): the `Traceparent` parser (with
 its tests and fuzz target), `HeaderLogProperties` (selection and masking fingerprint, with unit test and
-fuzz target), the `ClientLogField` enum with its builder extensions (ADR-0003 amendment), `Timeouts`,
+fuzz target), the `ClientLogField` enum with its builder extensions and the `ClientLoggingProperties`
+binding (ADR-0003 amendments), `Timeouts`,
 `NanoTimeSource`, `CorrelationIdGenerator`, `reportQuietly`/`failOpen`, the MDC keys and scope, and
 `BodyReadState`/`decodeTruncated`. The Maven Shade plugin inlines those classes into THIS jar at package
 time, the dependency-reduced POM drops the dependency, and `legatium-common` is never
@@ -1101,7 +1103,7 @@ drift (keys, field names, meter names, message text), not behavioural drift insi
 
 ```
 legatium-restclient-logging/
-├── pom.xml                                   library deps only; shared docs as test resources
+├── pom.xml                                   library deps only
 ├── README.md                                 module summary, field family, property table
 ├── docs/
 │   ├── GUIDE.md                              this document
@@ -1109,16 +1111,15 @@ legatium-restclient-logging/
 └── src/
     ├── main/kotlin/eu/inqudium/legatium/restclient/logging/
     │   ├── ClientLoggingAutoConfiguration.kt      beans, the two late customizers
-    │   ├── ClientLoggingProperties.kt             client-logging.* binding (HeaderLogProperties: §6.11)
     │   ├── ClientRequestLoggingInterceptor.kt     the interceptor: activation, wiring, call scope, no-response path
     │   ├── CapturingClientHttpResponse.kt         response wrapper: body tee, read-failure report, close = emission
     │   ├── Exchange.kt                            per-exchange state and the exactly-once guards
     │   ├── ExchangeLogEmitter.kt                  arrival line and completion event
     │   ├── ClientLoggingMetrics.kt                the six meters
     │   └── BoundedBodyCapture.kt                  bounded capture target, read state
-    │   (ClientLogFields, Traceparent, Timeouts, Mdc, NanoTimeSource, CorrelationIdGenerator,
-    │    HeaderLogProperties, BodyCapture helpers and the fail-open guards live in
-    │    ../legatium-common - inlined, §6.11)
+    │   (ClientLoggingProperties, ClientLogFields, Traceparent, Timeouts, Mdc, NanoTimeSource,
+    │    CorrelationIdGenerator, HeaderLogProperties, BodyCapture helpers and the fail-open guards
+    │    live in ../legatium-common - inlined, §6.11)
     ├── main/resources/META-INF/spring/…AutoConfiguration.imports
     ├── test/java/…/BoundedBodyCaptureFuzzTest.java    Jazzer target (regression mode in every build)
     └── test/kotlin/eu/inqudium/legatium/restclient/logging/  see the suite overview below
@@ -1129,11 +1130,11 @@ lists every test with its rationale):
 
 | Suite | Scope |
 |---|---|
-| Unit suites (`ClientRequestLoggingInterceptorTest`, `…BodyAndHeaderTest`, `…MetricsTest`, `BoundedBodyCaptureTest`, `ClientLoggingPropertiesTest`) | mock request/response driven, deterministic: line format, identity, levels/outcomes, emission at close, activation, tees, meters, fail-open stages |
+| Unit suites (`ClientRequestLoggingInterceptorTest`, `…BodyAndHeaderTest`, `…MetricsTest`, `BoundedBodyCaptureTest`) | mock request/response driven, deterministic: line format, identity, levels/outcomes, emission at close, activation, tees, meters, fail-open stages |
 | `ClientLoggingAutoConfigurationTest` | the shipped activation: beans, customizers attaching the interceptor to Boot's builders, back-off, the optional-dependency boundary |
 | `ClientRequestLoggingInterceptorIntegrationTest` | end to end through Boot's `RestClient.Builder` / `RestTemplateBuilder` and the JDK engine against a real HTTP peer: templates, bodies, the wire correlation header, refused connection, read timeout |
 | `ClientRequestLoggingTracingIntegrationTest` | ADR-0002 beside a real Brave bridge: the injected `traceparent`, the log-to-trace join, no correlation header on traced calls, every call traced |
-| Lockstep/contract tests (`TwinContractTest`, `ClientLoggingReferenceConfigTest`, `UriTemplateAttributeTest`) | pin the twin/config contracts and the mirrored `RestClient` attribute; the field/template lockstep (`ClientLogFieldTest`) lives once in legatium-common |
+| Lockstep/contract tests (`TwinContractTest`, `UriTemplateAttributeTest`) | pin the twin contracts and the mirrored `RestClient` attribute; the field/template and configuration/reference lockstep (`ClientLogFieldTest`, `ClientLoggingReferenceConfigTest`, `ClientLoggingPropertiesTest`) lives once in legatium-common |
 
 Fuzzing of the shared `Traceparent` parser and header masking lives in legatium-common; the bounded
 capture's fuzz target lives here.

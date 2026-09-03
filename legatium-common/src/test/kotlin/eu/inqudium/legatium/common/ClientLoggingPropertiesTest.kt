@@ -1,4 +1,4 @@
-package eu.inqudium.legatium.restclient.logging
+package eu.inqudium.legatium.common
 
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable

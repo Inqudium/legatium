@@ -25,10 +25,17 @@
     </properties>
 
     <dependencies>
-        <!-- MDC is the only runtime surface the shared code touches. -->
+        <!-- MDC and the fluent logging API are the shared code's runtime surface ... -->
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <!-- ... plus the @ConfigurationProperties binding of the shared properties class. spring-boot
+             only (no autoconfigure): the twins bring the rest, and the shaded jars need nothing beyond
+             what they declare themselves. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot</artifactId>
         </dependency>
         <dependency>
             <groupId>org.jetbrains.kotlin</groupId>
@@ -55,10 +62,12 @@
     <build>
         <sourceDirectory>${project.basedir}/src/main/kotlin</sourceDirectory>
         <testSourceDirectory>${project.basedir}/src/test/kotlin</testSourceDirectory>
-        <!-- The ELK component template - the index half of the field contract the shared enum
-             owns - lives in the repository-shared /docs; ClientLogFieldTest reads it from the test
-             classpath, so the dependency is declared here in the build, not hidden in a relative
-             path inside the test. -->
+        <!-- The cross-stack contract files - the ELK component template (the index half of the
+             field contract the shared enum owns) and the configuration reference (bound against the
+             shared properties class) - live in the repository-shared /docs; the lockstep tests read
+             them from the test classpath, so the dependency is declared here in the build, not
+             hidden in a relative path inside a test. A missing checkout fails at resource processing
+             with a clear message, not as a contract violation. -->
         <testResources>
             <testResource>
                 <directory>${project.basedir}/src/test/resources</directory>
@@ -66,6 +75,7 @@
             <testResource>
                 <directory>${project.basedir}/../docs</directory>
                 <includes>
+                    <include>client-logging-reference.yml</include>
                     <include>elk/legatium-restclient-logging-fields.component-template.json</include>
                 </includes>
             </testResource>

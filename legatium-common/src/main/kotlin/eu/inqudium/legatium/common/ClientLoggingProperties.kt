@@ -1,23 +1,25 @@
-package eu.inqudium.legatium.restclient.logging
+package eu.inqudium.legatium.common
 
-import eu.inqudium.legatium.common.HeaderLogProperties
 import org.springframework.boot.context.properties.ConfigurationProperties
 import java.time.Duration
 
 /**
- * Configuration surface of the client-logging interceptor, bound from the `client-logging.*` namespace.
+ * Configuration surface of both client-logging twins, bound from the `client-logging.*` namespace. ONE
+ * class for the RestClient interceptor and the WebClient filter (ADR-0003): the namespace is a
+ * cross-stack contract, key for key and default for default, and the twins' copies were byte-identical.
+ * `ClientLoggingReferenceConfigTest` binds the shared reference YAML against this class once.
  *
  * Everything an operator may tune is a Boot property with a safe default, and everything a host
- * application may want to replace wholesale (time source, id generator, the interceptor itself) is an
- * overridable bean instead of a constructor argument.
- * A many-parameter interceptor constructor is exactly what this design avoids.
+ * application may want to replace wholesale (time source, id generator, the interceptor or filter
+ * itself) is an overridable bean instead of a constructor argument.
+ * A many-parameter constructor is exactly what this design avoids.
  *
  * Body values are logged verbatim. Header values are verbatim too unless a header is listed in its
  * section's [HeaderLogProperties.masked] - then a stable short fingerprint replaces the value.
  */
 @ConfigurationProperties("client-logging")
 data class ClientLoggingProperties(
-    /** Master switch; `false` removes the interceptor and its customizers entirely (auto-configuration backs off). */
+    /** Master switch; `false` removes the interceptor/filter and its customizers entirely (auto-configuration backs off). */
     val enabled: Boolean = true,
     /**
      * Name of the logger the exchange lines are emitted on. The default is a dedicated, stable name,
@@ -43,16 +45,16 @@ data class ClientLoggingProperties(
     val logRequestStart: Boolean = false,
     /**
      * URL patterns (Spring `PathPattern` syntax, e.g. `/api/{*path}`; a trailing double-asterisk wildcard
-     * is supported as well) that determine for which request PATHS the interceptor is active AT ALL,
+     * is supported as well) that determine for which request PATHS the module is active AT ALL,
      * whatever the host. Empty (the default) means every call. A call is logged when it matches ANY
      * include pattern and NO exclude prefix and NO excluded host - an exclude always wins, mirroring the
-     * header sections' rule. Invalid patterns fail the context start (parsed once at interceptor
+     * header sections' rule. Invalid patterns fail the context start (parsed once at interceptor/filter
      * construction).
      */
     val includePathPatterns: List<String> = emptyList(),
     /**
-     * Request-path prefixes that are not logged at all (the interceptor does not even wire an exchange
-     * for them). Prefix match against the DECODED path of the request URI (percent-encoding resolved,
+     * Request-path prefixes that are not logged at all (the module does not even wire an exchange for
+     * them). Prefix match against the DECODED path of the request URI (percent-encoding resolved,
      * path parameters dropped), subtracted from the include set.
      */
     val excludePathPrefixes: List<String> = emptyList(),
@@ -80,8 +82,8 @@ data class ClientLoggingProperties(
      * Whether the request body SIZE is measured (meter `client.request.body.size`, tagged by the URI
      * template and the host). Deliberately independent of [logRequestBody]: a metric must not appear
      * and disappear with a logging flag. Measure-only installs a count-only capture - nothing is
-     * buffered. Recorded at response close, and only for bodies that actually flowed (zero bytes
-     * record no sample).
+     * buffered. Recorded when the exchange completes (response close resp. the body's terminal
+     * signal), and only for bodies that actually flowed (zero bytes record no sample).
      */
     val measureRequestBodySize: Boolean = false,
     /**
@@ -119,9 +121,9 @@ data class ClientLoggingProperties(
     companion object {
         /**
          * RFC 9110 `token` grammar for a field name. The configured name is written onto every traceless
-         * outgoing request; an HTTP engine that validates field names (the JDK client does) would
-         * reject a non-token at runtime on EVERY call - failing the CALL, not merely the log line - so
-         * it is validated at binding time.
+         * outgoing request; an HTTP engine or connector that validates field names (the JDK client does)
+         * would reject a non-token at runtime on EVERY call - failing the CALL, not merely the log line
+         * - so it is validated at binding time.
          */
         private val HTTP_FIELD_NAME = Regex("[!#$%&'*+\\-.^_`|~0-9A-Za-z]+")
     }

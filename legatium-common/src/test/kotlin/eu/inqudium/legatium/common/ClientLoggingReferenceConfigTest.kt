@@ -1,4 +1,4 @@
-package eu.inqudium.legatium.restclient.logging
+package eu.inqudium.legatium.common
 
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -10,16 +10,15 @@ import org.springframework.core.env.PropertySource
 import org.springframework.core.io.ClassPathResource
 
 /**
- * Lockstep between the repository-shared reference configuration and THIS module's
- * [ClientLoggingProperties] - the configuration-identity guarantee of the twins. The file is loaded
- * exactly as Boot would load it (YamlPropertySourceLoader + Binder), so what the docs show is what an
- * application.yml would do; a property added, renamed or re-defaulted without the reference following
- * - or a documented key that does not exist - fails the build. The WebClient twin binds the same file
- * against its own properties class.
+ * Lockstep between the repository-shared reference configuration and the shared
+ * [ClientLoggingProperties] both twins inline - the configuration-identity guarantee of the twins, tested
+ * once (ADR-0003). The file is loaded exactly as Boot would load it (YamlPropertySourceLoader + Binder),
+ * so what the docs show is what an application.yml would do; a property added, renamed or re-defaulted
+ * without the reference following - or a documented key that does not exist - fails the build.
  */
 class ClientLoggingReferenceConfigTest {
     // The shared reference reaches this module's test classpath through the declared test resource
-    // in the POM.
+    // in the POM (the twins declare no docs resources any more).
     private val referenceSources =
         YamlPropertySourceLoader()
             .load("shared-reference", ClassPathResource("client-logging-reference.yml"))
