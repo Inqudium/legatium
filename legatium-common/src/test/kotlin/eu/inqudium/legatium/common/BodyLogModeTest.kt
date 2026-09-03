@@ -15,6 +15,8 @@ class BodyLogModeTest {
     @Test
     fun `should log on failure only when the exchange did not succeed`() {
         // What is tested: the one decision the emitters delegate - on-failure discards a success.
+        // Success criteria: true for a non-success outcome, false for success.
+        // Why it matters: this single predicate is the volume switch of ADR-0006.
         assertThat(BodyLogMode.ON_FAILURE.logs(succeeded = true)).isFalse()
         assertThat(BodyLogMode.ON_FAILURE.logs(succeeded = false)).isTrue()
     }
