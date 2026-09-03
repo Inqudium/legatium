@@ -6,6 +6,8 @@ on:
     paths:
       - docs/**
       - mkdocs.yml
+      # The test-evidence page is generated from EVERY module's tests, the shared core included.
+      - legatium-common/**
       - legatium-restclient-logging/**
       - legatium-webclient-logging/**
       - pom.xml
