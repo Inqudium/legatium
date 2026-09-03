@@ -106,14 +106,20 @@ client-logging:
     unmasked: []
     #  - Content-Type
 
-  # Body capture per direction. The request body is what the client sends (complete, in memory on the
-  # blocking stack; teed as it is written on the reactive one); the response body is TEED as the
-  # application reads it - never pre-read, never replayed, so streaming behaviour is untouched and the
-  # log shows exactly the bytes that actually moved (a response body the application never read is
-  # logged as absent). Fields `client_request_body` / `client_response_body` appear only when bytes
-  # flowed.
-  log-request-body: false
-  log-response-body: false
+  # Body logging per direction - a MODE, not a switch (ADR-0006): `never` (the default), `on-failure`
+  # or `always`. `on-failure` is the volume switch: the body is logged only when `client_outcome` is
+  # not `success` (failure, timeout, cancelled) - orders of magnitude fewer bytes than `always`, on
+  # exactly the lines a body is wanted for. The response side decides at emission, when the outcome is
+  # final; the request body flows before the outcome is known, so `on-failure` buffers it (up to
+  # max-body-bytes) like `always` and drops it on success - the capture is paid, the output is saved.
+  # A 4xx answer is a `success` outcome (the peer answered) and logs no bodies in `on-failure`.
+  # The request body is what the client sends (complete, in memory on the blocking stack; teed as it
+  # is written on the reactive one); the response body is TEED as the application reads it - never
+  # pre-read, never replayed, so streaming behaviour is untouched and the log shows exactly the bytes
+  # that actually moved (a response body the application never read is logged as absent). Fields
+  # `client_request_body` / `client_response_body` appear only when bytes flowed.
+  log-request-body: never
+  log-response-body: never
 
   # Body SIZE measurement per direction (meters `client.request.body.size` / `client.response.body.size`,
   # tagged by the URI template and the peer host). Deliberately independent of the log-*-body flags - a

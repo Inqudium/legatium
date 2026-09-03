@@ -32,10 +32,12 @@ sibling project [Limesium](https://github.com/Inqudium/limesium) records the
   id and goes out untouched; a traceless call gets an `X-Correlation-Id` sent
   along so the peer can quote it. The identity rides the MDC as an additive
   overlay beside an inbound request's own keys.
-- **Passive body capture.** Bodies are captured by a bounded tee as they
-  flow — nothing is buffered, replayed, or withheld from the application;
-  logged header values are masked by default to a stable `length:hash`
-  fingerprint (keyed on request), plaintext being an explicit allowlist.
+- **Passive body capture, logged by outcome.** Bodies are captured by a
+  bounded tee as they flow — nothing is replayed or withheld from the
+  application — and logged `never`, `on-failure` or `always` per direction;
+  `on-failure` keeps the volume at the lines a body is wanted for. Logged
+  header values are masked by default to a stable `length:hash` fingerprint
+  (keyed on request), plaintext being an explicit allowlist.
 - **Twin symmetry as an invariant.** Both modules expose the same fields
   and the same `client-logging.*` properties; the shared reference
   configuration is contract-tested against both twins.

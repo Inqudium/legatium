@@ -221,12 +221,15 @@ internal class ExchangeLogEmitter(
                         headers[name]?.takeIf { it.isNotEmpty() }?.joinToString(", ")
                     }
                 } ?: emptyList()
-            // Body fields only when body LOGGING is on - a capture may also exist in count-only mode for
-            // the size metrics, and its empty buffer must not surface as a truncated-looking field.
+            // Body fields only when the direction's mode admits THIS outcome: `on-failure` captured the
+            // bytes (the outcome is unknown while they flow) and discards them here for a success. A
+            // capture may also exist in count-only mode for the size metrics, and its empty buffer must
+            // not surface as a truncated-looking field.
+            val succeeded = outcome == ClientLoggingMetrics.OUTCOME_SUCCESS
             val requestBody =
-                if (properties.logRequestBody) exchange.requestCapture?.loggedValue(exchange.requestCharset) else null
+                if (properties.logRequestBody.logs(succeeded)) exchange.requestCapture?.loggedValue(exchange.requestCharset) else null
             val responseBody =
-                if (properties.logResponseBody) {
+                if (properties.logResponseBody.logs(succeeded)) {
                     exchange.responseCapture?.loggedValue(response?.headers?.declaredCharsetOrUtf8() ?: StandardCharsets.UTF_8)
                 } else {
                     null

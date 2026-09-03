@@ -267,19 +267,20 @@ class ClientRequestLoggingInterceptor
             }
 
             // The request body is what the client hands the interceptor: complete, in memory, already
-            // final. A capture exists when the body is logged OR measured; measure-only runs the capture in
-            // count-only mode (limit 0: nothing buffered, every byte counted).
+            // final. A capture exists when the body is logged in ANY mode OR measured - `on-failure` needs
+            // the bytes before the outcome is known and the emitter drops them on success; measure-only
+            // runs the capture in count-only mode (limit 0: nothing buffered, every byte counted).
             val requestCapture =
-                if (properties.logRequestBody || properties.measureRequestBodySize) {
-                    BoundedBodyCapture(if (properties.logRequestBody) properties.maxBodyBytes else 0).also {
+                if (properties.logRequestBody.captures || properties.measureRequestBodySize) {
+                    BoundedBodyCapture(if (properties.logRequestBody.captures) properties.maxBodyBytes else 0).also {
                         it.capture(body, 0, body.size)
                     }
                 } else {
                     null
                 }
             val responseCapture =
-                if (properties.logResponseBody || properties.measureResponseBodySize) {
-                    BoundedBodyCapture(if (properties.logResponseBody) properties.maxBodyBytes else 0)
+                if (properties.logResponseBody.captures || properties.measureResponseBodySize) {
+                    BoundedBodyCapture(if (properties.logResponseBody.captures) properties.maxBodyBytes else 0)
                 } else {
                     null
                 }

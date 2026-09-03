@@ -335,7 +335,7 @@ counter, and a `frozen` flag — all under one uncontended `ReentrantLock`. With
 **count-only** mode for the body-size meters: nothing is buffered, every byte is counted, `tee` copies
 nothing.
 
-The captures exist only when a body is logged **or** measured; without either, the request goes to the
+The captures exist only when a body is logged (in any mode — `on-failure` needs the bytes before the outcome is known, [§4.3](#43-body-logging-and-body-measuring)) **or** measured; without either, the request goes to the
 connector as the caller built it (unless a correlation header had to be added), and the response body is
 mutated for the terminal hooks only.
 
@@ -669,8 +669,8 @@ on any drift.
 | `slow-request-threshold` | duration | `5s` | At/above this duration an INFO call escalates to WARN and is flagged `client_slow: true`; the outcome stays `success`. Measured until the body's terminal signal. Must be ≥ 1 ms. |
 | `request-headers.includes` / `.excludes` / `.masked` | lists of header names | `[]` | See [§4.2](#42-header-sections). |
 | `response-headers.includes` / `.excludes` / `.masked` | lists of header names | `[]` | See [§4.2](#42-header-sections). |
-| `log-request-body` | boolean | `false` | Tee the request body into `client_request_body` as the inserter writes it, up to `max-body-bytes`. |
-| `log-response-body` | boolean | `false` | Tee the response body into `client_response_body` as the application reads it, up to `max-body-bytes`. |
+| `log-request-body` | `never` \| `on-failure` \| `always` | `never` | Tee the request body into `client_request_body` as the inserter writes it, up to `max-body-bytes` — on every line (`always`) or only when `client_outcome` is not `success` (`on-failure`, [§4.3](#43-body-logging-and-body-measuring)). |
+| `log-response-body` | `never` \| `on-failure` \| `always` | `never` | Tee the response body into `client_response_body` as the application reads it, up to `max-body-bytes` — on every line or only when the outcome is not `success`. |
 | `measure-request-body-size` | boolean | `false` | Record `client.request.body.size`; independent of `log-request-body`. |
 | `measure-response-body-size` | boolean | `false` | Record `client.response.body.size` and `client.response.body.read`; independent of `log-response-body`. |
 | `max-body-bytes` | int > 0 | `16384` | Capture limit per body. Bounds **memory** — and the tee's transient copy per buffer — not the exchange: bytes beyond it still flow; the logged value is truncated with a note of the total size. |
@@ -700,14 +700,26 @@ header was added — so a selected `X-Correlation-Id` shows what actually went o
 
 ### 4.3 Body logging and body measuring
 
-Four independent flags, two per direction:
+Per direction, a **mode** decides whether a body is logged and a **flag** decides whether its size is
+measured — independent of each other:
 
 | `log-*-body` | `measure-*-body-size` | Capture installed | Buffered | Effect |
 |---|---|---|---|---|
-| off | off | no | — | request untouched (unless a correlation header is added); response body mutated for the terminal hooks only |
-| on | off | yes, limit `max-body-bytes` | up to the limit | field logged; no size sample |
-| off | on | yes, limit `0` (count-only) | nothing | size sample recorded; no field; `tee` copies nothing |
-| on | on | yes, limit `max-body-bytes` | up to the limit | both |
+| `never` | off | no | — | request untouched (unless a correlation header is added); response body mutated for the terminal hooks only |
+| `always` | off | yes, limit `max-body-bytes` | up to the limit | field logged on every line; no size sample |
+| `on-failure` | off | yes, limit `max-body-bytes` | up to the limit | field logged only when `client_outcome` is not `success`; no size sample |
+| `never` | on | yes, limit `0` (count-only) | nothing | size sample recorded; no field; `tee` copies nothing |
+| `always` / `on-failure` | on | yes, limit `max-body-bytes` | up to the limit | both |
+
+**`on-failure` is the volume switch** ([ADR-0006](../../docs/adr/ADR-0006-bodies-logged-by-outcome.md)).
+`always` means every body of every call; what is nearly always wanted is bodies for the calls that went
+wrong — `failure`, `timeout`, and `cancelled` — which cuts the volume by orders of magnitude and hits exactly the
+lines a body is wanted for. The response side decides at emission, when the outcome is final. The request
+body flows before the outcome is known, so `on-failure` tees it exactly like `always` does (bounded by
+`max-body-bytes`) and discards it for a success: the capture is paid, the output is saved — and the output
+is what burdens the log pipeline. The gate follows the outcome vocabulary ([§5.3](#53-levels-and-outcomes)),
+not the status class: a `4xx` answer is `success` (the peer answered; the request was wrong) and logs no
+bodies in `on-failure`; a `5xx` is `failure` and does. A slow but healthy call stays `success` as well.
 
 Rules that hold for every combination:
 
@@ -786,8 +798,8 @@ logging:
 ```yaml
 client-logging:
   log-request-start: true
-  log-request-body: true
-  log-response-body: true
+  log-request-body: always
+  log-response-body: always
   request-headers:
     includes: ["*"]
     excludes: [Cookie]
@@ -795,6 +807,16 @@ client-logging:
   response-headers:
     includes: [Content-Type, Content-Length, Retry-After]
     unmasked: [Content-Type, Content-Length, Retry-After]
+```
+
+**Production profile with bodies** — bodies only for the calls that went wrong; the request body is
+teed up to `max-body-bytes` per call and dropped on success:
+
+```yaml
+client-logging:
+  log-request-body: on-failure
+  log-response-body: on-failure
+  max-body-bytes: 4096
 ```
 
 **Metrics without log volume** — body sizes and consumption measured, only failures logged:
@@ -831,8 +853,8 @@ component template; `ClientLogFieldTest` in `legatium-common` keeps the shared e
 | `client_slow` | boolean | yes | on | only when the threshold was reached | absence means fast |
 | `client_request_headers` | keyword | **no** | off | when selected headers are present | display only |
 | `client_response_headers` | keyword | **no** | off | when selected headers are present | display only |
-| `client_request_body` | keyword | **no** | off | when `log-request-body` is on and bytes were written | display only, bounded |
-| `client_response_body` | keyword | **no** | off | when `log-response-body` is on and bytes were read | display only, bounded |
+| `client_request_body` | keyword | **no** | off | when `log-request-body` admits the outcome and bytes were written | display only, bounded |
+| `client_response_body` | keyword | **no** | off | when `log-response-body` admits the outcome and bytes were read | display only, bounded |
 
 Each field asserts the exact JVM type of its value (`ClientLogField.format`): a wrongly typed value
 drops **that field** with a warning, never the event. The throwable of an errored exchange is attached
@@ -1119,5 +1141,5 @@ the same arithmetic).
   configuration reference, bound by both twins.
 - [`/docs/elk/README.md`](../../docs/elk/README.md) — the Elasticsearch component template for the
   `client_*` fields.
-- [`/docs/adr/`](../../docs/adr/) — the decision records.
+- [`/docs/adr/`](../../docs/adr/) — the decision records, among them the outcome gate on bodies (ADR-0006).
 - [Limesium](https://github.com/Inqudium/limesium) — the inbound sibling.

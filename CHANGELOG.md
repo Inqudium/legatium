@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead; the properties decide which values are masked, the bean decides how.
   `client-logging.masking-key` keys the built-in fingerprint (HMAC-SHA256) without
   a bean: same shape and stability, guess-proof without the key.
+- Body logging is a mode per direction, not a switch
+  ([ADR-0006](docs/adr/ADR-0006-bodies-logged-by-outcome.md)):
+  `log-request-body` / `log-response-body` take `never` (the default),
+  `on-failure` or `always`. `on-failure` writes a body only when
+  `client_outcome` is not `success` - the response side decides at emission,
+  the request body is captured before the outcome is known and discarded on
+  success - which keeps body logging affordable outside a debug session.
 - Shared twin core `legatium-common`, inlined by Shade
   ([ADR-0003](docs/adr/ADR-0003-legatium-common-inlined-by-shade.md)), including
   the cross-stack timeout classification and - unlike Limesium - the field enum

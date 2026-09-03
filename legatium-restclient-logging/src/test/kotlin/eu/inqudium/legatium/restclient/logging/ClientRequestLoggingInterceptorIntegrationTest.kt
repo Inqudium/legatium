@@ -32,8 +32,8 @@ import java.time.Duration
     classes = [IntegrationApp::class],
     webEnvironment = SpringBootTest.WebEnvironment.NONE,
     properties = [
-        "client-logging.log-request-body=true",
-        "client-logging.log-response-body=true",
+        "client-logging.log-request-body=always",
+        "client-logging.log-response-body=always",
         "client-logging.response-headers.includes=Content-Type",
         "client-logging.response-headers.unmasked=Content-Type",
         "client-logging.request-headers.includes=X-Correlation-Id",

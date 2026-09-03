@@ -1,5 +1,6 @@
 package eu.inqudium.legatium.webclient.logging
 
+import eu.inqudium.legatium.common.BodyLogMode
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.HeaderLogProperties
@@ -7,6 +8,7 @@ import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.NanoTimeSource
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
@@ -22,8 +24,10 @@ import org.springframework.web.reactive.function.client.ClientRequest
 import org.springframework.web.reactive.function.client.ClientResponse
 import org.springframework.web.reactive.function.client.ExchangeFunction
 import org.springframework.web.reactive.function.client.ExchangeStrategies
+import reactor.core.Exceptions
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
+import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicLong
 
@@ -177,7 +181,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             // Success criteria: the mock connector request holds the body; the event logs it.
             // Why it matters: the tee must be a passive copy at the one place every encoder passes.
             // Given
-            val filter = filterWith(base.copy(logRequestBody = true))
+            val filter = filterWith(base.copy(logRequestBody = BodyLogMode.ALWAYS))
             var written: String? = null
             val request =
                 request(method = HttpMethod.POST) {
@@ -196,7 +200,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
         @Test
         fun `should truncate the logged request body at the capture limit and say so`() {
             // Given
-            val filter = filterWith(base.copy(logRequestBody = true, maxBodyBytes = 4))
+            val filter = filterWith(base.copy(logRequestBody = BodyLogMode.ALWAYS, maxBodyBytes = 4))
             val request = request(method = HttpMethod.POST) { body(BodyInserters.fromValue("0123456789")) }
 
             // When
@@ -209,7 +213,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
         @Test
         fun `should omit the request body key for a bodiless request`() {
             // Given/When
-            filterWith(base.copy(logRequestBody = true)).call(request(), writingThenAnswering())
+            filterWith(base.copy(logRequestBody = BodyLogMode.ALWAYS)).call(request(), writingThenAnswering())
 
             // Then
             assertThat(keyValues(log.events.single())).doesNotContainKey("client_request_body")
@@ -221,7 +225,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
         @Test
         fun `should log the response body the application consumed and deliver identical content`() {
             // Given
-            val filter = filterWith(base.copy(logResponseBody = true))
+            val filter = filterWith(base.copy(logResponseBody = BodyLogMode.ALWAYS))
 
             // When
             val body = filter.call(request(), answering(body = "hello"))
@@ -270,7 +274,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
         @Test
         fun `should truncate the logged response body at the capture limit and keep the exact total`() {
             // Given
-            val filter = filterWith(base.copy(logResponseBody = true, maxBodyBytes = 4))
+            val filter = filterWith(base.copy(logResponseBody = BodyLogMode.ALWAYS, maxBodyBytes = 4))
 
             // When
             filter.call(request(), answering(body = "0123456789"))
@@ -282,7 +286,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
         @Test
         fun `should decode the response body with the charset the peer declared`() {
             // Given
-            val filter = filterWith(base.copy(logResponseBody = true))
+            val filter = filterWith(base.copy(logResponseBody = BodyLogMode.ALWAYS))
             val latin =
                 ClientResponse
                     .create(HttpStatus.OK)
@@ -300,7 +304,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
         @Test
         fun `should omit the response body key when no bytes flowed`() {
             // Given/When: a bodiless answer, released
-            filterWith(base.copy(logResponseBody = true)).call(request(), answering())
+            filterWith(base.copy(logResponseBody = BodyLogMode.ALWAYS)).call(request(), answering())
 
             // Then
             assertThat(keyValues(log.events.single())).doesNotContainKey("client_response_body")
@@ -340,6 +344,94 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
                     .counter()
                     .count(),
             ).isEqualTo(1.0)
+        }
+    }
+
+    @Nested
+    inner class `Outcome-gated bodies` {
+        private val onFailure = base.copy(logRequestBody = BodyLogMode.ON_FAILURE, logResponseBody = BodyLogMode.ON_FAILURE)
+
+        private fun posting(text: String) = request(method = HttpMethod.POST) { body(BodyInserters.fromValue(text)) }
+
+        private fun answer(
+            status: HttpStatus,
+            body: String,
+        ): ClientResponse = ClientResponse.create(status).body(body).build()
+
+        @Test
+        fun `should withhold both bodies from a successful exchange in on-failure mode`() {
+            // What is tested: the volume switch - on-failure tees the request body (the outcome is unknown
+            //   while it is written) and discards both captures at emission when the outcome is success.
+            // Success criteria: the application receives the response body; the line carries neither body.
+            // Why it matters: this is the mode that keeps body logging affordable outside a debug session.
+            // Given/When
+            val body = filterWith(onFailure).call(posting("sent"), writingThenAnswering(answer(HttpStatus.OK, "received")))
+
+            // Then
+            assertThat(body).isEqualTo("received")
+            assertThat(keyValues(log.events.single()))
+                .containsEntry("client_outcome", "success")
+                .doesNotContainKeys("client_request_body", "client_response_body")
+        }
+
+        @Test
+        fun `should log both bodies of a 5xx answer in on-failure mode`() {
+            // Given/When: a failure outcome without an error signal
+            filterWith(onFailure).call(posting("sent"), writingThenAnswering(answer(HttpStatus.BAD_GATEWAY, "upstream down")))
+
+            // Then
+            assertThat(keyValues(log.events.single()))
+                .containsEntry("client_outcome", "failure")
+                .containsEntry("client_request_body", "sent")
+                .containsEntry("client_response_body", "upstream down")
+        }
+
+        @Test
+        fun `should log the teed request body of a call that failed after sending it`() {
+            // Given: a connector that takes the body and then fails without a response
+            val refused =
+                ExchangeFunction { request ->
+                    request
+                        .writeTo(MockClientHttpRequest(request.method(), request.url()), ExchangeStrategies.withDefaults())
+                        .then(Mono.error<ClientResponse>(IOException("Connection refused")))
+                }
+
+            // When
+            val thrown = catchThrowable { filterWith(onFailure).filter(posting("sent"), refused).block() }
+
+            // Then: the request body that was captured before the outcome was known is on the line
+            assertThat(Exceptions.unwrap(thrown)).isInstanceOf(IOException::class.java)
+            assertThat(keyValues(log.events.single()))
+                .containsEntry("client_outcome", "failure")
+                .containsEntry("client_request_body", "sent")
+                .doesNotContainKey("client_response_body")
+        }
+
+        @Test
+        fun `should treat a 4xx answer as success and withhold the bodies in on-failure mode`() {
+            // What is tested: on-failure follows the outcome vocabulary, not the status class - a 4xx is
+            //   a success outcome (the peer answered; the request was wrong).
+            // Given/When
+            filterWith(onFailure).call(posting("sent"), writingThenAnswering(answer(HttpStatus.NOT_FOUND, "no such thing")))
+
+            // Then
+            assertThat(keyValues(log.events.single()))
+                .containsEntry("client_outcome", "success")
+                .doesNotContainKeys("client_request_body", "client_response_body")
+        }
+
+        @Test
+        fun `should still measure the size of a body it withholds`() {
+            // Given: on-failure plus measuring, on an own registry
+            val registry = SimpleMeterRegistry()
+            val measuring = ClientRequestLoggingFilter(onFailure.copy(measureRequestBodySize = true), { ticker.get() }, { "g" }, registry)
+
+            // When: a successful call with a 4-byte request body
+            measuring.call(posting("four"), writingThenAnswering())
+
+            // Then: the sample is recorded, the field is not
+            assertThat(registry.get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).summary().totalAmount()).isEqualTo(4.0)
+            assertThat(keyValues(log.events.single())).doesNotContainKey("client_request_body")
         }
     }
 

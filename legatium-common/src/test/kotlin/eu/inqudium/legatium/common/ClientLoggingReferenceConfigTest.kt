@@ -1,11 +1,14 @@
 package eu.inqudium.legatium.common
 
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
+import org.springframework.boot.context.properties.bind.BindException
 import org.springframework.boot.context.properties.bind.Binder
 import org.springframework.boot.context.properties.source.ConfigurationPropertySources
 import org.springframework.boot.env.YamlPropertySourceLoader
 import org.springframework.core.env.EnumerablePropertySource
+import org.springframework.core.env.MapPropertySource
 import org.springframework.core.env.PropertySource
 import org.springframework.core.io.ClassPathResource
 
@@ -86,5 +89,27 @@ class ClientLoggingReferenceConfigTest {
 
         // When/Then
         assertThat(documentedKeys(referenceSources)).isEqualTo(knownKeys)
+    }
+
+    @Test
+    fun `should bind the body modes by their kebab-case names and refuse the former booleans`() {
+        // What is tested: the documented spellings `never` / `on-failure` / `always` bind (Boot's lenient
+        //   enum conversion), and a leftover `true` from the boolean era fails the binding loudly.
+        // Success criteria: the two modes bound; `true` raises a BindException.
+        // Why it matters: a silently ignored `true` would switch body logging OFF for an operator who
+        //   believed it on - the migration must be visible at startup.
+        // Given
+        fun bind(vararg pairs: Pair<String, String>) =
+            Binder(ConfigurationPropertySources.from(listOf(MapPropertySource("test", pairs.toMap()))))
+                .bind("client-logging", ClientLoggingProperties::class.java)
+                .get()
+
+        // When
+        val bound = bind("client-logging.log-request-body" to "on-failure", "client-logging.log-response-body" to "always")
+
+        // Then
+        assertThat(bound.logRequestBody).isEqualTo(BodyLogMode.ON_FAILURE)
+        assertThat(bound.logResponseBody).isEqualTo(BodyLogMode.ALWAYS)
+        assertThatThrownBy { bind("client-logging.log-response-body" to "true") }.isInstanceOf(BindException::class.java)
     }
 }
