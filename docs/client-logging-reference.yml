@@ -84,8 +84,8 @@ client-logging:
     # Names whose VALUE is replaced by the HeaderValueMasker bean's rendering - by default a stable short
     # fingerprint (length:hex-hash, e.g. "18:a8b3c4d5"): non-reversible, but identical values yield
     # identical fingerprints, so a masked token can still be correlated across events without exposing
-    # the secret. A host that needs a different shape (a keyed HMAC, a fixed "***") pins its own
-    # HeaderValueMasker bean; the properties decide WHICH values are masked, the bean decides HOW. "*"
+    # the secret. Key the fingerprint with `masking-key` below (guess-proof, still stable), or pin an own
+    # HeaderValueMasker bean for any other shape; the properties decide WHICH values are masked. "*"
     # masks every logged header. Masking only affects headers that are logged at all - listing a name
     # here does not include it.
     masked: []
@@ -121,6 +121,15 @@ client-logging:
   # reach the peer respectively the application unchanged - only the logged value is truncated, with an
   # explicit note of the total size.
   max-body-bytes: 16384
+
+  # Keys the masking fingerprint. Empty (the default) keeps the unkeyed length:hash fingerprint; any
+  # other value turns it into an HMAC-SHA256 under this key - same shape, same stability under the
+  # same key (so correlation across events, twins and the inbound sibling holds as long as they share
+  # it), but a log reader without the key can no longer confirm a guessed value by hashing it. A
+  # SECRET: supply it like one (environment variable, vault-backed property), never as a literal in a
+  # checked-in file; the properties' toString redacts it. Ignored when a host pins its own
+  # HeaderValueMasker bean.
+  masking-key: ""
 
 logging:
   level:

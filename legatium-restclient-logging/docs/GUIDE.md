@@ -692,6 +692,7 @@ by construction.
 | `measure-request-body-size` | boolean | `false` | Record `client.request.body.size`; independent of `log-request-body`. |
 | `measure-response-body-size` | boolean | `false` | Record `client.response.body.size` and `client.response.body.read`; independent of `log-response-body`. |
 | `max-body-bytes` | int > 0 | `16384` | Capture limit per body. Bounds **memory**, not the exchange: bytes beyond it still flow; the logged value is truncated with a note of the total size. |
+| `masking-key` | string | *(empty)* | Keys the masking fingerprint: empty keeps the unkeyed `length:hash`, any other value turns it into an HMAC-SHA256 under the key — same shape, same stability under the same key, guess-proof without it. A **secret**: supply it like one; the properties' `toString` redacts it. Ignored when a host pins its own `HeaderValueMasker` bean. |
 
 ### 4.2 Header sections
 
@@ -789,6 +790,7 @@ it — except `client.logging.events`, which by definition counts emitted events
   engine that validates field names — the JDK client does — would reject a non-token per call, failing
   the CALL, not merely the log line);
 - `max-body-bytes` ≤ 0;
+- a blank (whitespace-only) `masking-key` - empty means unkeyed, whitespace is a worthless secret;
 - `slow-request-threshold` < 1 ms (the logged duration has millisecond resolution);
 - blank entries in any list (`exclude-hosts` included);
 - `*` in an `excludes` list;
@@ -1087,9 +1089,11 @@ scheme), and a 64-bit cryptographic prefix makes accidental collisions negligibl
 unkeyed**: it prevents plaintext exposure, not offline guessing. A reader with a candidate list
 (usernames, tenant names, short API keys) can confirm a candidate by hashing it. Do not treat the
 default as a security boundary for guessable values; omit such headers from the selection instead — or
-replace the rendering: the masker is the `HeaderValueMasker` bean ([§2.8](#28-injectable-collaborators)),
-so a host pins a keyed HMAC (guess-proof, still stable) or a fixed `***` (no correlation, no exposure)
-once, and both twins mask with it. The contract a replacement must keep: never return the plaintext.
+**key** it: `client-logging.masking-key` turns the fingerprint into an HMAC-SHA256 under the key, same
+shape and stability, guess-proof without the key (a secret — supply it as one). For any other shape the
+masker is the `HeaderValueMasker` bean ([§2.8](#28-injectable-collaborators)): a host pins its own (a
+fixed `***` for no correlation at all) once, and both twins mask with it. The contract a replacement
+must keep: never return the plaintext.
 
 ### 6.11 Shared code: legatium-common, inlined by Shade
 

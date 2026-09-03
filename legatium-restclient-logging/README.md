@@ -93,6 +93,7 @@ the built-in default.
 | `log-request-body` / `log-response-body` | `false` | Capture bodies (the request body as handed over; the response body as the application reads it) |
 | `max-body-bytes` | `16384` | Capture limit per body; beyond it the log truncates (and says so), the exchange is untouched |
 | `measure-request-body-size` / `measure-response-body-size` | `false` | Count body bytes for the size meters (`client.request/response.body.size`) and the response read-state counter without logging content |
+| `masking-key` | *(empty)* | Keys the masking fingerprint (HMAC-SHA256): same shape and stability, guess-proof without the key. A secret — supply it as one; empty keeps the unkeyed fingerprint |
 
 Levels carry severity only (`client_outcome` carries the semantic): ERROR when the call threw (no
 response, or the body read failed — the exception is rethrown unchanged), WARN for a timeout (its own

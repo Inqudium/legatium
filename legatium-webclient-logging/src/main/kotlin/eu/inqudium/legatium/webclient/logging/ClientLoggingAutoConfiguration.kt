@@ -48,7 +48,7 @@ class ClientLoggingAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    fun clientLoggingHeaderValueMasker(): HeaderValueMasker = HeaderValueMasker.DEFAULT
+    fun clientLoggingHeaderValueMasker(properties: ClientLoggingProperties): HeaderValueMasker = HeaderValueMasker.forKey(properties.maskingKey)
 
     /** The filter as its own bean, so a host can replace it while keeping the customizer below. */
     @Bean

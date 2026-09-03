@@ -97,6 +97,14 @@ data class ClientLoggingProperties(
      * peer respectively the application unchanged, only the log line is truncated (and says so).
      */
     val maxBodyBytes: Int = 16384,
+    /**
+     * Keys the masking fingerprint: empty (the default) keeps the unkeyed `length:hash` fingerprint,
+     * any other value turns it into an HMAC-SHA256 under this key - same shape, same stability under
+     * the same key, but guess-proof for a log reader without the key. A SECRET: supply it like one
+     * (an environment variable, a vault-backed property), never as a checked-in literal; the
+     * properties' `toString` redacts it. Ignored when a host pins its own [HeaderValueMasker] bean.
+     */
+    val maskingKey: String = "",
 ) {
     init {
         require(loggerName.isNotBlank()) { "loggerName must not be blank" }
@@ -105,6 +113,7 @@ data class ClientLoggingProperties(
             "correlationIdHeader must be a valid HTTP field name (RFC 9110 token), got: '$correlationIdHeader'"
         }
         require(maxBodyBytes > 0) { "maxBodyBytes must be positive, got: $maxBodyBytes" }
+        require(maskingKey.isEmpty() || maskingKey.isNotBlank()) { "maskingKey must not be blank (leave it empty for the unkeyed fingerprint)" }
         require(slowRequestThreshold.toMillis() >= 1) {
             "slowRequestThreshold must be at least 1 millisecond, got: $slowRequestThreshold"
         }
@@ -118,6 +127,17 @@ data class ClientLoggingProperties(
             "excludeHosts contains blank entries: $excludeHosts"
         }
     }
+
+    /** The data-class rendering minus the secret: a properties dump must never print the masking key. */
+    override fun toString(): String = copy(maskingKey = if (maskingKey.isEmpty()) "" else "<redacted>").dataClassToString()
+
+    private fun dataClassToString(): String =
+        "ClientLoggingProperties(enabled=$enabled, loggerName=$loggerName, correlationIdHeader=$correlationIdHeader, " +
+            "includeQueryString=$includeQueryString, logRequestStart=$logRequestStart, includePathPatterns=$includePathPatterns, " +
+            "excludePathPrefixes=$excludePathPrefixes, excludeHosts=$excludeHosts, slowRequestThreshold=$slowRequestThreshold, " +
+            "requestHeaders=$requestHeaders, responseHeaders=$responseHeaders, logRequestBody=$logRequestBody, " +
+            "logResponseBody=$logResponseBody, measureRequestBodySize=$measureRequestBodySize, " +
+            "measureResponseBodySize=$measureResponseBodySize, maxBodyBytes=$maxBodyBytes, maskingKey=$maskingKey)"
 
     companion object {
         /**

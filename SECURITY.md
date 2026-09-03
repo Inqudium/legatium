@@ -33,8 +33,9 @@ Measures already in place, so you know what is expected behaviour:
 
 - **Headers are logged by allowlist only.** Nothing is logged unless named in
   `includes`; values in the `masked` list are reduced to a stable
-  `length:hash` fingerprint instead of the cleartext value - or to whatever a
-  host-provided `HeaderValueMasker` bean renders (a keyed HMAC, a fixed `***`).
+  `length:hash` fingerprint instead of the cleartext value - keyed (HMAC-SHA256)
+  as soon as `masking-key` is set, so a log reader cannot confirm a guessed
+  value - or to whatever a host-provided `HeaderValueMasker` bean renders.
 - **Bodies are captured passively and bounded.** The tee never buffers,
   replays, or withholds the exchange; `max-body-bytes` caps what can reach
   the log.

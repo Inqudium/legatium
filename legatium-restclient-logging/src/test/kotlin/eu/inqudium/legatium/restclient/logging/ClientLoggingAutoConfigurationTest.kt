@@ -73,6 +73,20 @@ class ClientLoggingAutoConfigurationTest {
     }
 
     @Test
+    fun `should key the default masker from the masking-key property`() {
+        // What is tested: the property path to a guess-proof fingerprint - no host bean needed.
+        // Success criteria: with masking-key set, the masker bean renders the keyed fingerprint, not the
+        //   unkeyed default.
+        // Why it matters: keying is the documented answer to "masked is not a security boundary for
+        //   guessable values"; it must be reachable from application.yml alone.
+        // Given/When
+        contextRunner.withPropertyValues("client-logging.masking-key=k").run { context ->
+            // Then
+            assertThat(context.getBean(HeaderValueMasker::class.java).mask("secret-token")).isEqualTo("12:18da04f7cd594ea3")
+        }
+    }
+
+    @Test
     fun `should back off entirely when disabled by the property`() {
         // Given/When
         contextRunner.withPropertyValues("client-logging.enabled=false").run { context ->

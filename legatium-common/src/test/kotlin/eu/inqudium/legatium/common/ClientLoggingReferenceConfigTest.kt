@@ -79,6 +79,7 @@ class ClientLoggingReferenceConfigTest {
                 "measure-request-body-size",
                 "measure-response-body-size",
                 "max-body-bytes",
+                "masking-key",
             )
 
         // When/Then

@@ -3,6 +3,8 @@ package eu.inqudium.legatium.common
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.HexFormat
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * Redacts the VALUE of a header listed in a section's [HeaderLogProperties.masked] before it reaches the
@@ -11,6 +13,10 @@ import java.util.HexFormat
  * unkeyed hashes, a fixed `***` for a host that wants no correlation at all - and both twins take the
  * bean through their auto-configuration (`@ConditionalOnMissingBean`), so one host bean masks the
  * RestClient line and the WebClient line alike.
+ *
+ * Two built-ins cover the common cases without a bean of the host's own: [DEFAULT], the unkeyed
+ * fingerprint, and [keyed], the same fingerprint over an HMAC - which is what the `masking-key`
+ * property selects ([forKey]). A host with a stricter policy still pins its own bean.
  *
  * The contract is the same as the built-in default's: the returned string replaces the value on the
  * line and MUST NOT contain the plaintext. Whether it is stable (equal values, equal output) is the
@@ -32,19 +38,56 @@ fun interface HeaderValueMasker {
          * offline guessing. A log reader with a candidate list (low-entropy values: usernames, tenant
          * names, short API keys) can confirm a candidate by hashing it. Do not treat `masked` as a
          * security boundary for guessable values; omit such headers from the selection instead - or
-         * pin a keyed masker bean.
+         * key the fingerprint ([keyed], the `masking-key` property).
          */
-        val DEFAULT: HeaderValueMasker = FingerprintHeaderValueMasker
+        val DEFAULT: HeaderValueMasker = FingerprintHeaderValueMasker(null)
 
-        private object FingerprintHeaderValueMasker : HeaderValueMasker {
-            private val hex = HexFormat.of()
-            private const val FINGERPRINT_BYTES = 8
+        /**
+         * The keyed variant of [DEFAULT]: the same `length:hex` shape, but the 64 bits come from an
+         * HMAC-SHA256 over the value under [key] (UTF-8) instead of a bare digest. Same stability -
+         * identical values under the same key render identically, so correlation across events, twins
+         * and the inbound sibling holds as long as they share the key - but a log reader without the
+         * key can no longer confirm a guessed value by hashing it: the fingerprint is guess-proof to
+         * the strength of the key. An HMAC rather than a concatenated salt, because that is the
+         * construction with the proof; the key is a secret and must be treated as one (a Boot secret,
+         * never a checked-in literal). [key] must not be blank; an empty key means unkeyed - see
+         * [forKey].
+         */
+        fun keyed(key: String): HeaderValueMasker {
+            require(key.isNotBlank()) { "masking key must not be blank" }
+            return FingerprintHeaderValueMasker(key)
+        }
+
+        /**
+         * The masker the `masking-key` property selects: [DEFAULT] for the empty string (the property's
+         * default - unkeyed), [keyed] otherwise. The auto-configurations build their default bean from
+         * this, so keying the fingerprint needs no bean of the host's own.
+         */
+        fun forKey(key: String): HeaderValueMasker = if (key.isEmpty()) DEFAULT else keyed(key)
+
+        private class FingerprintHeaderValueMasker(
+            key: String?,
+        ) : HeaderValueMasker {
+            private val secret: SecretKeySpec? = key?.let { SecretKeySpec(it.toByteArray(StandardCharsets.UTF_8), HMAC) }
 
             override fun mask(value: String): String {
-                val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(StandardCharsets.UTF_8))
-                // HexFormat instead of a per-byte "%02x".format: byte-identical output at a fraction
-                // of the allocation.
-                return "${value.length}:${hex.formatHex(digest, 0, FINGERPRINT_BYTES)}"
+                val bytes = value.toByteArray(StandardCharsets.UTF_8)
+                // A Mac instance is not thread-safe; one per call is the correct trade for a path that
+                // runs once per masked header. HexFormat instead of a per-byte "%02x".format:
+                // byte-identical output at a fraction of the allocation.
+                val digest =
+                    if (secret == null) {
+                        MessageDigest.getInstance("SHA-256").digest(bytes)
+                    } else {
+                        Mac.getInstance(HMAC).apply { init(secret) }.doFinal(bytes)
+                    }
+                return "${value.length}:${HEX.formatHex(digest, 0, FINGERPRINT_BYTES)}"
+            }
+
+            private companion object {
+                private const val HMAC = "HmacSHA256"
+                private const val FINGERPRINT_BYTES = 8
+                private val HEX = HexFormat.of()
             }
         }
     }

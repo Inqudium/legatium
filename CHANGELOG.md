@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `@ConditionalOnMissingBean` bean shared by both twins - the built-in default is
   the stable `length:hash` fingerprint, a host pins a keyed or fixed masker
   instead; the properties decide which values are masked, the bean decides how.
+  `client-logging.masking-key` keys the built-in fingerprint (HMAC-SHA256) without
+  a bean: same shape and stability, guess-proof without the key.
 - Shared twin core `legatium-common`, inlined by Shade
   ([ADR-0003](docs/adr/ADR-0003-legatium-common-inlined-by-shade.md)), including
   the cross-stack timeout classification and - unlike Limesium - the field enum
