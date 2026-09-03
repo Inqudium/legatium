@@ -385,7 +385,10 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
         fun `should treat a 4xx answer as success and withhold the bodies in on-failure mode`() {
             // What is tested: on-failure follows the outcome vocabulary, not the status class - a 4xx is
             //   a success outcome (the peer answered; the request was wrong).
-            // Given/When
+            // Success criteria: outcome success, and neither body on the line.
+            // Why it matters: the gate must be predictable from the documented vocabulary; widening it is a
+            //   change of the vocabulary, not a hidden special case in the body logic.
+            // Given/When: a 404 with a body
             interceptorWith(onFailure)
                 .intercept(request(method = HttpMethod.POST), "sent".toByteArray(), answering(status = HttpStatus.NOT_FOUND, body = "no such thing"))
                 .consumeAndClose()
