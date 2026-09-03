@@ -19,6 +19,7 @@ import org.springframework.http.client.JdkClientHttpRequestFactory
 import org.springframework.web.client.HttpServerErrorException
 import org.springframework.web.client.ResourceAccessException
 import org.springframework.web.client.RestClient
+import org.springframework.web.util.DefaultUriBuilderFactory
 import java.time.Duration
 
 /**
@@ -192,8 +193,9 @@ class ClientRequestLoggingInterceptorIntegrationTest {
 
     @Test
     fun `should log a RestTemplate call through the same interceptor without a template`() {
-        // Given: RestTemplate records no URI template attribute
-        val restTemplate = restTemplateBuilder.rootUri(peer.baseUrl).build()
+        // Given: RestTemplate records no URI template attribute (the base URL goes in through the
+        //   template handler - Boot 4 deprecated rootUri in favour of it)
+        val restTemplate = restTemplateBuilder.uriTemplateHandler(DefaultUriBuilderFactory(peer.baseUrl)).build()
 
         // When
         val body = restTemplate.getForObject("/things/{id}", String::class.java, 9)
