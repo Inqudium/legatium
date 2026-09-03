@@ -1,12 +1,16 @@
 package eu.inqudium.legatium.webclient.logging
 
+import eu.inqudium.legatium.common.ClientLogField
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.MdcScope
 import eu.inqudium.legatium.common.NanoTimeSource
 import eu.inqudium.legatium.common.Timeouts
 import eu.inqudium.legatium.common.TraceMdcKeys
+import eu.inqudium.legatium.common.addKeyValue
+import eu.inqudium.legatium.common.addKeyValueIfPresent
 import eu.inqudium.legatium.common.failOpen
 import eu.inqudium.legatium.common.reportQuietly
+import eu.inqudium.legatium.common.setCauseIfPresent
 import org.slf4j.LoggerFactory
 import org.slf4j.event.Level
 import org.springframework.http.HttpHeaders

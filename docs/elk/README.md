@@ -17,9 +17,11 @@ curl -X PUT "$ES/_component_template/legatium-restclient-logging-fields" \
      --data-binary @legatium-restclient-logging-fields.component-template.json
 ```
 
-[`ClientLogFieldTest`](https://github.com/Inqudium/legatium/blob/main/legatium-restclient-logging/src/test/kotlin/eu/inqudium/legatium/restclient/logging/ClientLogFieldTest.kt)
-(and its WebClient twin) compares this template's field set against `ClientLogField.entries` at build time and fails in both
+[`ClientLogFieldTest`](https://github.com/Inqudium/legatium/blob/main/legatium-common/src/test/kotlin/eu/inqudium/legatium/common/ClientLogFieldTest.kt)
+compares this template's field set against `ClientLogField.entries` at build time and fails in both
 directions — a field added to the enum without a mapping, and a mapping left behind for a removed field.
+The enum is ONE for both twins (it lives in `legatium-common` and is inlined into each module jar,
+ADR-0003), so one test is the lockstep for both.
 
 ## The mapping, and the access pattern each line follows
 
@@ -40,7 +42,7 @@ directions — a field added to the enum without a mapping, and a mapping left b
 | `client_response_body` | `keyword` | **false** | off | display only — bounded tee capture |
 
 The per-field rationale sits next to each constant as an `ELK:` line in
-[`ClientLogFields.kt`](https://github.com/Inqudium/legatium/blob/main/legatium-restclient-logging/src/main/kotlin/eu/inqudium/legatium/restclient/logging/ClientLogFields.kt); the two
+[`ClientLogFields.kt`](https://github.com/Inqudium/legatium/blob/main/legatium-common/src/main/kotlin/eu/inqudium/legatium/common/ClientLogFields.kt); the two
 decisions most easily undone by accident — `index: false` on payload fields (sensitivity precedes
 analytics) and `doc_values: false` on the high-cardinality path pair half (repetition factor) — each have their own explicit assertion in the lockstep test.
 

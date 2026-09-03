@@ -16,8 +16,8 @@ The RestClient module is the reference implementation; its documentation applies
   `ClientLoggingReferenceConfigTest` **binds it against this module's properties class**, so the
   namespace cannot drift from the code or from its twin.
 - **Index mapping:** the one component template for both stacks is the repository-shared
-  [`/docs/elk/`](../docs/elk/README.md) — this module's `ClientLogFieldTest` locks this module's field
-  enum against that same template across the reactor.
+  [`/docs/elk/`](../docs/elk/README.md) — bound by `ClientLogFieldTest` in `legatium-common` against
+  the one `ClientLogField` enum both twins inline.
 - **Metrics:** the same six meters (`client.logging.failopen`, `client.logging.events`,
   `client.logging.exchanges.open`, `client.logging.correlation.id`, `client.request/response.body.size`,
   `client.response.body.read`), consumed from the host's `MeterRegistry`, never exported.
@@ -46,17 +46,17 @@ README and guide.
 
 The **byte-identical** part of the twins' shared layer (the `traceparent` parser with its fuzz target,
 the injectable time/id interfaces, the fail-open helpers, the MDC keys and scope, the header sections
-with the masking fingerprint, the timeout classification) lives in the internal `legatium-common` module
-and is **inlined into this jar** by the Maven Shade plugin
+with the masking fingerprint, the timeout classification, and the `client_*` field enum itself) lives in the
+internal `legatium-common` module and is **inlined into this jar** by the Maven Shade plugin
 ([ADR-0003](../docs/adr/ADR-0003-legatium-common-inlined-by-shade.md)): consumers add exactly one
 artifact, the published POM carries no extra dependency, and `legatium-common` itself is never
 published.
 
-Everything whose twin copies genuinely differ (field enum and metrics with their per-stack outcome
-vocabulary, emitters, exchanges, filter vs. interceptor, body capture with its own concurrency design)
+Everything whose twin copies genuinely differ (metrics with their per-stack outcome vocabulary,
+emitters, exchanges, filter vs. interceptor, body capture with its own concurrency design)
 stays **deliberately duplicated**: one twin per client, standalone jars, contract-level code that changes
 rarely. For that remainder every change is a conscious port in both directions; the pins in
-`TwinContractTest` / `ClientLogFieldTest` / `ClientLoggingReferenceConfigTest` catch *named* contract
+`TwinContractTest` / `ClientLoggingReferenceConfigTest` catch *named* contract
 drift (meter names, field names, configuration keys, message text) — not behavioural drift inside
 near-identical code.
 

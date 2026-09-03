@@ -5,7 +5,7 @@ import org.slf4j.MDC
 /**
  * MDC keys the twins maintain around an outbound call. The values carry the module's `client_` prefix,
  * so an encoder that emits MDC entries as fields lands them in the same namespace as the
- * `ClientLogField` family each twin owns - and beside, never instead of, whatever identity the
+ * [ClientLogField] family both twins share - and beside, never instead of, whatever identity the
  * AMBIENT MDC already carries (an inbound request's `endpoint_request_id` from the sibling project
  * limesium, a tracing bridge's keys): the scope is an additive overlay. [ROUTE] carries the request
  * TARGET (`scheme://host[:port]/path`, query excluded): for an outbound call the host is as much part

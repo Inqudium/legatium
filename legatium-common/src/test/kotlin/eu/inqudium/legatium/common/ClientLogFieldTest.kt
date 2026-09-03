@@ -1,4 +1,4 @@
-package eu.inqudium.legatium.webclient.logging
+package eu.inqudium.legatium.common
 
 import ch.qos.logback.classic.Level
 import ch.qos.logback.classic.Logger
@@ -18,12 +18,13 @@ import java.nio.charset.StandardCharsets
 /**
  * Contract of the [ClientLogField] family: the wire names (a contract with the log index), the per-field
  * type guarantee, the drop-the-field-not-the-event semantics of the [addKeyValue] overload, and the
- * lockstep with the repository-shared component template (the one index contract both stacks share).
+ * lockstep with the repository-shared component template (the one index contract both stacks share) -
+ * tested once, in the module both twins inline (ADR-0003).
  */
 class ClientLogFieldTest {
     // The ONE template for both stacks lives in the repository-shared /docs and reaches this module's
-    // test classpath through the declared test resource in the POM - the drift guard of the
-    // duplication: both enums must stay in lockstep with the same index contract.
+    // test classpath through the declared test resource in the POM. Enum and template are the two
+    // halves of the index contract every twin ships; testing them once here IS the lockstep.
     private val template: String by lazy {
         val resource = ClassPathResource("elk/legatium-restclient-logging-fields.component-template.json")
         assertThat(resource.exists())

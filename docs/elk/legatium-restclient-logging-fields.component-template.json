@@ -62,8 +62,8 @@
     }
   },
   "_meta": {
-    "description": "Field mappings for the client_* exchange-log fields emitted by the legatium-restclient-logging module (and its WebClient twin). This is the DEFINITION, not an extract: the family is not yet part of any upstream data-stream mapping, and whoever wires the module into a log pipeline composes this template there. The MDC-carried fields (client_request_id, client_method, client_route, traceId, spanId) are deliberately absent - how MDC entries land in the document is the encoder's decision, not this module's.",
+    "description": "Field mappings for the client_* exchange-log fields emitted by the legatium-restclient-logging and legatium-webclient-logging modules (one shared field enum, inlined into both). This is the DEFINITION, not an extract: the family is not yet part of any upstream data-stream mapping, and whoever wires the module into a log pipeline composes this template there. The MDC-carried fields (client_request_id, client_method, client_route, traceId, spanId) are deliberately absent - how MDC entries land in the document is the encoder's decision, not this module's.",
     "source": "docs/elk/README.md",
-    "authority": "legatium-restclient-logging/src/main/kotlin/eu/inqudium/legatium/restclient/logging/ClientLogFields.kt"
+    "authority": "legatium-common/src/main/kotlin/eu/inqudium/legatium/common/ClientLogFields.kt"
   }
 }

@@ -22,12 +22,13 @@ each twin inlines it into its own jar with the Maven Shade plugin;
   the counting default, ADR-0004), `reportQuietly`/`failOpen`, `Mdc.kt`
   (`MdcKeys`/`TraceMdcKeys`/`MdcScope`), `HeaderLogProperties` (selection
   semantics and the masking fingerprint, with unit test and fuzz target),
-  `BodyReadState`/`decodeTruncated`, and - new here - `Timeouts`, the
-  classification that makes `client_outcome=timeout` mean the same thing
-  on both stacks. Package: `eu.inqudium.legatium.common`.
+  `BodyReadState`/`decodeTruncated`, `Timeouts` (the classification that
+  makes `client_outcome=timeout` mean the same thing on both stacks), and -
+  since the amendment below - the `ClientLogField` enum with its builder
+  extensions. Package: `eu.inqudium.legatium.common`.
 - **What deliberately stays duplicated:** everything whose twin copies
-  genuinely differ - the field enum and metrics (per-stack outcome
-  vocabulary and meter descriptions), the emitters, exchanges,
+  genuinely differ - the metrics (per-stack outcome vocabulary and meter
+  descriptions), the emitters, exchanges,
   interceptor/filter, properties, and `BoundedBodyCapture` (two different
   concurrency designs: volatile single-writer on the blocking stack, lock
   and freeze on the reactive one). For those the accepted cost is a
@@ -80,3 +81,19 @@ each twin inlines it into its own jar with the Maven Shade plugin;
   widely for test friendship, but not a documented contract; a Kotlin
   upgrade that changes it surfaces as a loud compile error, never as
   silent misbehaviour.
+
+## Amendment (2026-09-03)
+
+The `ClientLogField` enum (wire names, per-field type guarantee, the
+`addKeyValue`/`addKeyValueIfPresent`/`setCauseIfPresent` builder
+extensions) was listed above as deliberately duplicated, by analogy with
+limesium, whose twin enums genuinely differ (`endpoint_async` exists on
+one stack only). Here the two copies were byte-identical apart from KDoc
+prose: the field family is one cross-stack contract, and the only
+stack-specific fact - the reactive `cancelled` outcome - is a VALUE of
+`client_outcome`, not a field. The enum now lives in `legatium-common`,
+documented stack-neutrally, and `ClientLogFieldTest` binds the ELK
+component template against it ONCE there (the template is declared as a
+test resource of `legatium-common`); the twins no longer carry the test or
+the template resource. The ELK template's `authority` points at the new
+location.

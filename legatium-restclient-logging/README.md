@@ -49,10 +49,11 @@ Client http exchange GET https://api.example.com/things/42 -> 200 [client_reques
 ```
 
 plus the structured `client_*` key-values: the wire names are a contract with the log index, each field
-owns its JSON shape (`ClientLogFields.kt`), a badly typed value drops that field with a warning but never
-the event, and the request id rides the MDC (plus the message suffix for plain-text appenders) rather
-than a key-value. The index-side mapping ships as a component template in
-[`/docs/elk/`](../docs/elk/README.md), kept in lockstep with the enum by `ClientLogFieldTest`.
+owns its JSON shape (`ClientLogFields.kt`, one enum for both twins in `legatium-common`), a badly typed
+value drops that field with a warning but never the event, and the request id rides the MDC (plus the
+message suffix for plain-text appenders) rather than a key-value. The index-side mapping ships as a
+component template in [`/docs/elk/`](../docs/elk/README.md), kept in lockstep with the enum by
+`ClientLogFieldTest` in `legatium-common`.
 
 | Field | Shape | When |
 |---|---|---|
@@ -144,15 +145,15 @@ lockstep tests.
 
 The **byte-identical** part of the shared layer (the `traceparent` parser with its fuzz target, the
 injectable time/id interfaces, the fail-open helpers, the MDC keys and scope, the header sections with
-the masking fingerprint, the timeout classification) lives in the internal `legatium-common` module and
+the masking fingerprint, the timeout classification, and the `client_*` field enum itself) lives in the
+internal `legatium-common` module and
 is **inlined into this jar** by the Maven Shade plugin
 ([ADR-0003](../docs/adr/ADR-0003-legatium-common-inlined-by-shade.md)): consumers add exactly one
 artifact, the published POM carries no extra dependency, and `legatium-common` itself is never
 published.
 
-Everything whose twin copies genuinely differ (field enum and metrics with their per-stack outcome
-vocabulary, emitters, exchanges, interceptor vs. filter, body capture) stays **deliberately
-duplicated**: one twin per client, standalone jars, contract-level code that changes rarely. For that
+Everything whose twin copies genuinely differ (metrics with their per-stack outcome vocabulary,
+emitters, exchanges, interceptor vs. filter, body capture) stays **deliberately duplicated**: one twin per client, standalone jars, contract-level code that changes rarely. For that
 remainder every change is a conscious port in *both* directions; the pins in `TwinContractTest` and the
 cross-module tests catch *named* contract drift, not behavioural drift.
 

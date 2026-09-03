@@ -1,19 +1,22 @@
-package eu.inqudium.legatium.restclient.logging
+package eu.inqudium.legatium.common
 
-import eu.inqudium.legatium.common.NanoTimeSource
 import org.slf4j.LoggerFactory
 import org.slf4j.spi.LoggingEventBuilder
 import kotlin.reflect.KClass
 
 /**
  * The structured log fields of an OUTBOUND HTTP exchange: their wire names, and the one rendering each
- * name is allowed to carry.
+ * name is allowed to carry. ONE enum for both twins (ADR-0003): the family is a cross-stack contract,
+ * and the twins' copies were byte-identical - the RestClient interceptor and the WebClient filter emit
+ * the same thirteen fields under the same names with the same shapes; only the VALUE vocabulary of
+ * [OUTCOME] is wider on the reactive stack (`cancelled`), which is a property of the value, not of the
+ * field.
  *
  * These names are a CONTRACT with the log index, not local identifiers: renaming a constant below is free,
  * changing a [wireName] breaks every dashboard, saved search and alert rule keying on it. The mapping is
  * shipped as the repository-shared `/docs/elk/legatium-restclient-logging-fields.component-template.json` -
  * the DEFINITION of the family (no upstream data-stream mapping exists yet), composed into the log pipeline
- * by whoever wires the module in; `ClientLogFieldTest` keeps enum and template in lockstep, build-breaking
+ * by whoever wires a module in; `ClientLogFieldTest` keeps enum and template in lockstep, build-breaking
  * in both directions.
  *
  * **Why an enum rather than string literals.** A literal repeated across call sites is a typo away from a
@@ -42,9 +45,10 @@ internal enum class ClientLogField(
     private val type: KClass<out Any>,
 ) {
     /**
-     * ELK: `keyword`, index true, doc_values ON - aggregate. Three values on this stack (`success`,
-     * `failure`, `timeout`), and the field a dashboard splits by - deliberately NOT the log level: a
-     * 5xx answer logs at WARN while a call that threw logs at ERROR, yet both carry `failure`. Panels
+     * ELK: `keyword`, index true, doc_values ON - aggregate. `success`, `failure` and `timeout` on both
+     * stacks, plus `cancelled` on the reactive one (a cancelled subscription is the reactive reality a
+     * blocking call cannot have), and the field a dashboard splits by - deliberately NOT the log level:
+     * a 5xx answer logs at WARN while a call that threw logs at ERROR, yet both carry `failure`. Panels
      * key off this field, the level only carries severity.
      */
     OUTCOME("client_outcome", String::class),
@@ -52,8 +56,8 @@ internal enum class ClientLogField(
     /**
      * ELK: `long`, index true, doc_values ON - compute (percentiles). Milliseconds, with the unit in the
      * name; measured from the injected monotonic [NanoTimeSource], so it is a duration, never a timestamp.
-     * Measured until the response is CLOSED - response occupancy including the body read, not bare
-     * round-trip time.
+     * Measured until the exchange is truly over - the response closed (RestClient) or its body's terminal
+     * signal (WebClient): response occupancy including the body read, not bare round-trip time.
      */
     DURATION_MS("client_duration_ms", Long::class),
 
@@ -69,7 +73,8 @@ internal enum class ClientLogField(
      * and never averages. `short` is safe because HTTP status codes are three digits.
      *
      * ABSENT when the call produced no response at all (connection refused, a timeout before the status
-     * line) - the message then shows `-> -`, and [OUTCOME] is the authoritative disposition.
+     * line, a cancellation before the response arrived) - the message then shows `-> -`, and [OUTCOME]
+     * is the authoritative disposition.
      */
     RESPONSE_STATUS_CODE("client_response_status_code", Int::class),
 

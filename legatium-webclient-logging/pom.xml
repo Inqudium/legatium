@@ -110,11 +110,11 @@
     <build>
         <sourceDirectory>${project.basedir}/src/main/kotlin</sourceDirectory>
         <testSourceDirectory>${project.basedir}/src/test/kotlin</testSourceDirectory>
-        <!-- The cross-stack contract files (configuration reference, ELK component template) live in
-             the repository-shared /docs; the lockstep tests read them from the TEST CLASSPATH, so the
-             dependency on the shared docs is declared HERE, in the build, rather than hidden in a
-             relative path inside a test. A missing checkout fails at resource processing with a clear
-             message, not as a contract violation. -->
+        <!-- The cross-stack configuration reference lives in the repository-shared /docs; the lockstep
+             test reads it from the TEST CLASSPATH, so the dependency on the shared docs is declared
+             HERE, in the build, rather than hidden in a relative path inside a test. A missing checkout
+             fails at resource processing with a clear message, not as a contract violation. (The ELK
+             template is bound once, in legatium-common, where the shared field enum lives.) -->
         <testResources>
             <testResource>
                 <directory>${project.basedir}/src/test/resources</directory>
@@ -123,7 +123,6 @@
                 <directory>${project.basedir}/../docs</directory>
                 <includes>
                     <include>client-logging-reference.yml</include>
-                    <include>elk/legatium-restclient-logging-fields.component-template.json</include>
                 </includes>
             </testResource>
         </testResources>

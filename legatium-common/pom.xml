@@ -55,6 +55,21 @@
     <build>
         <sourceDirectory>${project.basedir}/src/main/kotlin</sourceDirectory>
         <testSourceDirectory>${project.basedir}/src/test/kotlin</testSourceDirectory>
+        <!-- The ELK component template - the index half of the field contract the shared enum
+             owns - lives in the repository-shared /docs; ClientLogFieldTest reads it from the test
+             classpath, so the dependency is declared here in the build, not hidden in a relative
+             path inside the test. -->
+        <testResources>
+            <testResource>
+                <directory>${project.basedir}/src/test/resources</directory>
+            </testResource>
+            <testResource>
+                <directory>${project.basedir}/../docs</directory>
+                <includes>
+                    <include>elk/legatium-restclient-logging-fields.component-template.json</include>
+                </includes>
+            </testResource>
+        </testResources>
         <plugins>
             <plugin>
                 <groupId>org.jetbrains.kotlin</groupId>
