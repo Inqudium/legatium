@@ -678,13 +678,17 @@ on any drift.
 
 ### 4.2 Header sections
 
-Each direction has one section with three lists; matching is case-insensitive throughout.
+Each direction has one section with four lists; matching is case-insensitive throughout. The section
+is **masked by default** (ADR-0005): whatever it logs is rendered as a fingerprint unless the name is
+explicitly allowed in plaintext, so the debugging move `includes: ["*"]` costs readability, never
+confidentiality.
 
 | List | Semantics |
 |---|---|
 | `includes` | Names to log. **Empty logs nothing** (the safe default). The entry `*` logs every header the message carries, deduplicated case-insensitively. |
 | `excludes` | Names removed from the included set — meaningful mainly with `*`. An exclude always wins. `*` is rejected here at binding time. |
-| `masked` | Names whose **value** is replaced by what the `HeaderValueMasker` bean renders — by default a fingerprint `length:hex`, the character length plus the first 64 bits of the SHA-256 of the UTF-8 value. `*` masks every logged header. Masking affects only headers that are logged. |
+| `masked` | Names whose **value** is replaced by what the `HeaderValueMasker` bean renders — by default a fingerprint `length:hex`, the character length plus the first 64 bits of the SHA-256 of the UTF-8 value (a **pseudonym**, not anonymisation; key it with `masking-key` to stop guess confirmation). **Default `["*"]`: every logged header is masked** (ADR-0005). Narrow it to names, or empty it to switch masking off — a visible decision. Masking affects only headers that are logged. |
+| `unmasked` | Names that appear in **plaintext** although `masked` covers them — the explicit allowlist of harmless names. An unmasked name always wins over a masked one. `*` is rejected here: the plaintext set is a list of names by design; to log everything in plaintext, empty `masked` instead. |
 
 Multi-valued headers are joined with `, `. The selected pairs are rendered into one display-only field
 per direction as `[Name:"value", Name2:"value2"]`; nothing is emitted when the selection is empty or no
@@ -759,7 +763,7 @@ it — except `client.logging.events`, which by definition counts emitted events
 - a blank (whitespace-only) `masking-key` - empty means unkeyed, whitespace is a worthless secret;
 - `slow-request-threshold` < 1 ms;
 - blank entries in any list (`exclude-hosts` included);
-- `*` in an `excludes` list;
+- `*` in an `excludes` or an `unmasked` list;
 - an unparsable `include-path-patterns` entry (parsed once at filter construction).
 
 ### 4.7 Example configurations
@@ -787,9 +791,10 @@ client-logging:
   request-headers:
     includes: ["*"]
     excludes: [Cookie]
-    masked: [Authorization, X-Api-Key]
+    unmasked: [Accept, Content-Type, X-Correlation-Id]   # everything else stays a fingerprint
   response-headers:
     includes: [Content-Type, Content-Length, Retry-After]
+    unmasked: [Content-Type, Content-Length, Retry-After]
 ```
 
 **Metrics without log volume** — body sizes and consumption measured, only failures logged:

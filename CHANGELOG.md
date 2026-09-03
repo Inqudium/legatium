@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   outgoing `traceparent`'s trace id is the request id and the call goes out
   untouched; a traceless call gets a generated `X-Correlation-Id` sent along.
   Counting correlation id generator ([ADR-0004](docs/adr/ADR-0004-counting-correlation-id-default.md)).
+- Header values are masked by default
+  ([ADR-0005](docs/adr/ADR-0005-headers-masked-by-default.md)): `masked`
+  defaults to `["*"]`, and the new `unmasked` list names the headers that may
+  appear in plaintext (no wildcard) - so `includes: ["*"]` costs readability,
+  not confidentiality. Emptying `masked` switches masking off, visibly.
 - Injectable `HeaderValueMasker`: the rendering of masked header values is a
   `@ConditionalOnMissingBean` bean shared by both twins - the built-in default is
   the stable `length:hash` fingerprint, a host pins a keyed or fixed masker

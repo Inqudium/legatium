@@ -7,8 +7,10 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * Redacts the VALUE of a header listed in a section's [HeaderLogProperties.masked] before it reaches the
- * log line. Injectable for the same reason as [NanoTimeSource] and [CorrelationIdGenerator]: the
+ * Redacts the VALUE of a logged header - every one, by default (ADR-0005), unless a section's
+ * [HeaderLogProperties.unmasked] allows the name in plaintext - before it reaches the log line. The
+ * rendering is a stable PSEUDONYM, not anonymisation: equal values stay recognisable as equal, which is
+ * the point (correlation) and the limit (a keyed masker is what stops a reader from confirming a guess). Injectable for the same reason as [NanoTimeSource] and [CorrelationIdGenerator]: the
  * fingerprint's shape is a policy the host may own - a keyed HMAC for a compliance regime that forbids
  * unkeyed hashes, a fixed `***` for a host that wants no correlation at all - and both twins take the
  * bean through their auto-configuration (`@ConditionalOnMissingBean`), so one host bean masks the

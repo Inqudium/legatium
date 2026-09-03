@@ -129,8 +129,13 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
         @Test
         fun `should log the selected response headers as the peer sent them`() {
-            // Given
-            val filter = filterWith(base.copy(responseHeaders = HeaderLogProperties(includes = listOf("*"), excludes = listOf("Set-Cookie"))))
+            // Given: a wildcard include with one exclusion and one name allowed in plaintext
+            val filter =
+                filterWith(
+                    base.copy(
+                        responseHeaders = HeaderLogProperties(includes = listOf("*"), excludes = listOf("Set-Cookie"), unmasked = listOf("Content-Type")),
+                    ),
+                )
 
             // When
             filter.call(request(), answering(body = "ok", headers = mapOf("Content-Type" to "text/plain", "Set-Cookie" to "session=1")))
@@ -139,6 +144,27 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             val rendered = keyValues(log.events.single())["client_response_headers"].toString()
             assertThat(rendered).contains("Content-Type:\"text/plain\"")
             assertThat(rendered).doesNotContain("Set-Cookie")
+        }
+    }
+
+    @Nested
+    inner class `Mask by default` {
+        @Test
+        fun `should mask every selected header by default so a wildcard include never leaks plaintext`() {
+            // What is tested: ADR-0005 at the filter - `includes: ["*"]` with nothing said about masking.
+            // Success criteria: every logged request header is a fingerprint; the secret appears nowhere.
+            // Why it matters: with masking as a second, empty list the same configuration logged
+            //   everything in plaintext - the unsafe combination was the convenient one.
+            // Given
+            val filter = filterWith(base.copy(requestHeaders = HeaderLogProperties(includes = listOf("*"))))
+
+            // When
+            filter.call(request { header("Authorization", "Bearer secret-token") }, answering())
+
+            // Then
+            val rendered = keyValues(log.events.single())["client_request_headers"].toString()
+            assertThat(rendered).contains("Authorization:\"${HeaderValueMasker.DEFAULT.mask("Bearer secret-token")}\"")
+            assertThat(rendered).doesNotContain("secret-token")
         }
     }
 

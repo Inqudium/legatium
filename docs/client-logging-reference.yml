@@ -70,7 +70,9 @@ client-logging:
 
   # Header logging, one section per direction, rendered into one display-only field each
   # (`client_request_headers` / `client_response_headers`). Matching is case-insensitive throughout,
-  # as header names are.
+  # as header names are. MASKED BY DEFAULT (ADR-0005): whatever the selection logs is rendered as a
+  # fingerprint unless its name is explicitly allowed in plaintext - so the debugging move
+  # `includes: ["*"]` costs readability, never confidentiality.
   request-headers:
     # Names to log. Empty (the default) logs NOTHING; the entry "*" logs every header the request
     # carries.
@@ -82,20 +84,27 @@ client-logging:
     excludes: []
     #  - Cookie
     # Names whose VALUE is replaced by the HeaderValueMasker bean's rendering - by default a stable short
-    # fingerprint (length:hex-hash, e.g. "18:a8b3c4d5"): non-reversible, but identical values yield
-    # identical fingerprints, so a masked token can still be correlated across events without exposing
-    # the secret. Key the fingerprint with `masking-key` below (guess-proof, still stable), or pin an own
-    # HeaderValueMasker bean for any other shape; the properties decide WHICH values are masked. "*"
-    # masks every logged header. Masking only affects headers that are logged at all - listing a name
-    # here does not include it.
-    masked: []
-    #  - Authorization
+    # fingerprint (length:hex-hash, e.g. "18:a8b3c4d5"): a PSEUDONYM, not anonymisation - identical
+    # values yield identical fingerprints, so a masked token can still be correlated across events
+    # without exposing the secret, and a reader can still confirm a guessed value unless the fingerprint
+    # is keyed with `masking-key` below. The default "*" masks every logged header; narrow it to names,
+    # or empty it to switch masking off - a visible decision, never the side effect of another list.
+    # Masking only affects headers that are logged at all - listing a name here does not include it.
+    masked: ["*"]
+    # Names that appear in PLAINTEXT although `masked` covers them - the allowlist of harmless names.
+    # An unmasked name always wins over a masked one. No "*" here: the plaintext set is an explicit list
+    # by design (to log everything in plaintext, empty `masked` instead).
+    unmasked: []
+    #  - Accept
+    #  - X-Correlation-Id
   response-headers:
     # Same contract as request-headers, applied to the response.
     includes: []
     #  - Content-Type
     excludes: []
-    masked: []
+    masked: ["*"]
+    unmasked: []
+    #  - Content-Type
 
   # Body capture per direction. The request body is what the client sends (complete, in memory on the
   # blocking stack; teed as it is written on the reactive one); the response body is TEED as the

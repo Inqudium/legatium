@@ -24,8 +24,9 @@ Design in brief:
   overlay — an inbound request's `endpoint_*` keys (Limesium) or a bridge's trace keys stay in place.
 
 Deliberately **out of scope**: body masking transformers, retries, and per-key response sampling.
-(Header masking exists as the `masked` list per header section; an optional arrival line can announce
-the call before the wire; a retrying interceptor outside this one simply yields one line per attempt.)
+(Logged header values are masked by default, with `unmasked` as the explicit plaintext allowlist; an
+optional arrival line can announce the call before the wire; a retrying interceptor outside this one
+simply yields one line per attempt.)
 
 The long-form guide — introduction, architecture, integration into a foreign project, configuration,
 metrics and the stack-specific behaviours — is [`docs/GUIDE.md`](docs/GUIDE.md).
@@ -89,7 +90,7 @@ the built-in default.
 | `exclude-path-prefixes` | *(empty)* | Request-path prefixes that are not logged at all |
 | `exclude-hosts` | *(empty)* | Peer hosts (case-insensitive, without port) that are not logged at all — a metrics gateway, a config server |
 | `slow-request-threshold` | `5s` | At/above this duration the line escalates to WARN and is flagged `slow` |
-| `request-headers.*` / `response-headers.*` | *(empty)* | Per-direction sections with `includes` (names or `*`), `excludes`, and `masked` — masked values are rendered by the `HeaderValueMasker` bean, by default a stable `length:hash` fingerprint (equal values, equal fingerprint) |
+| `request-headers.*` / `response-headers.*` | `masked: ["*"]`, the rest empty | Per-direction sections with `includes` (names or `*`), `excludes`, `masked` (default `*`: every logged value is rendered by the `HeaderValueMasker` bean, a stable `length:hash` pseudonym) and `unmasked` (the explicit names allowed in plaintext, no wildcard). Masked by default, so `includes: ["*"]` costs readability, not confidentiality (ADR-0005) |
 | `log-request-body` / `log-response-body` | `false` | Capture bodies (the request body as handed over; the response body as the application reads it) |
 | `max-body-bytes` | `16384` | Capture limit per body; beyond it the log truncates (and says so), the exchange is untouched |
 | `measure-request-body-size` / `measure-response-body-size` | `false` | Count body bytes for the size meters (`client.request/response.body.size`) and the response read-state counter without logging content |

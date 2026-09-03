@@ -15,9 +15,9 @@ import java.util.regex.Pattern;
  * against arbitrary header names and values.
  *
  * Invariants under test: construction rejects only its documented cases
- * (blank entries, wildcard exclude) and select() never throws; a value
- * configured as masked never appears in the output in plaintext but always as
- * the stable length:hash fingerprint; the default masker is deterministic and matches its
+ * (blank entries, wildcard exclude or unmasked) and select() never throws; a
+ * value configured as masked and not unmasked never appears in the output in
+ * plaintext but always as the stable length:hash fingerprint; the default masker is deterministic and matches its
  * documented shape.
  *
  * Runs as a regression test (checked-in inputs plus the empty input) in every
@@ -31,12 +31,13 @@ class HeaderMaskingFuzzTest {
         List<String> includes = consumeNames(data);
         List<String> excludes = consumeNames(data);
         List<String> masked = consumeNames(data);
+        List<String> unmasked = consumeNames(data);
 
         HeaderLogProperties properties;
         try {
-            properties = new HeaderLogProperties(includes, excludes, masked);
+            properties = new HeaderLogProperties(includes, excludes, masked, unmasked);
         } catch (IllegalArgumentException expected) {
-            // Documented rejection: blank entries, or the '*' wildcard in excludes.
+            // Documented rejection: blank entries, or the '*' wildcard in excludes or unmasked.
             return;
         }
 
@@ -62,11 +63,15 @@ class HeaderMaskingFuzzTest {
             String original = lookupIgnoreCase(headers, name);
             // Locale.ROOT mirrors Kotlin's lowercase(), which the library uses -
             // the oracle must speak the library's dialect.
+            boolean unmaskedName =
+                    unmasked.stream()
+                            .anyMatch(u -> u.toLowerCase(Locale.ROOT).equals(name.toLowerCase(Locale.ROOT)));
             boolean shouldMask =
-                    maskAll
-                            || masked.stream()
-                                    .anyMatch(m ->
-                                            m.toLowerCase(Locale.ROOT).equals(name.toLowerCase(Locale.ROOT)));
+                    !unmaskedName
+                            && (maskAll
+                                    || masked.stream()
+                                            .anyMatch(m ->
+                                                    m.toLowerCase(Locale.ROOT).equals(name.toLowerCase(Locale.ROOT))));
             if (shouldMask) {
                 if (!FINGERPRINT.matcher(value).matches()) {
                     throw new IllegalStateException("masked value is not a fingerprint: " + name + "=" + value);

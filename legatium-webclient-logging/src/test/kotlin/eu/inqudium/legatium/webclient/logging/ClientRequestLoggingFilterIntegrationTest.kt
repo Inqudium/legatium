@@ -38,7 +38,9 @@ import java.util.concurrent.TimeoutException
         "client-logging.log-request-body=true",
         "client-logging.log-response-body=true",
         "client-logging.response-headers.includes=Content-Type",
+        "client-logging.response-headers.unmasked=Content-Type",
         "client-logging.request-headers.includes=X-Correlation-Id",
+        "client-logging.request-headers.unmasked=X-Correlation-Id",
         // The tracing bridge is on this test classpath for the tracing suite; excluded here, so the
         // calls are TRACELESS (an active bridge injects a traceparent into EVERY call, sampled or not)
         // and the correlation contract is what goes on the wire.

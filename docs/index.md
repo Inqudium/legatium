@@ -34,7 +34,8 @@ sibling project [Limesium](https://github.com/Inqudium/limesium) records the
   overlay beside an inbound request's own keys.
 - **Passive body capture.** Bodies are captured by a bounded tee as they
   flow — nothing is buffered, replayed, or withheld from the application;
-  header values can be masked to a stable `length:hash` fingerprint.
+  logged header values are masked by default to a stable `length:hash`
+  fingerprint (keyed on request), plaintext being an explicit allowlist.
 - **Twin symmetry as an invariant.** Both modules expose the same fields
   and the same `client-logging.*` properties; the shared reference
   configuration is contract-tested against both twins.

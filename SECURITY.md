@@ -31,11 +31,14 @@ addition (the correlation header on traceless calls).
 
 Measures already in place, so you know what is expected behaviour:
 
-- **Headers are logged by allowlist only.** Nothing is logged unless named in
-  `includes`; values in the `masked` list are reduced to a stable
-  `length:hash` fingerprint instead of the cleartext value - keyed (HMAC-SHA256)
-  as soon as `masking-key` is set, so a log reader cannot confirm a guessed
-  value - or to whatever a host-provided `HeaderValueMasker` bean renders.
+- **Headers are logged by allowlist, and masked by default.** Nothing is
+  logged unless named in `includes`; whatever is logged is reduced to a stable
+  `length:hash` fingerprint unless its name is explicitly allowed in plaintext
+  through `unmasked` (ADR-0005). The fingerprint is a pseudonym, not
+  anonymisation: equal values stay recognisable as equal, and a reader can
+  confirm a guessed value unless the fingerprint is keyed (HMAC-SHA256 via
+  `masking-key`) - or replaced by whatever a host-provided `HeaderValueMasker`
+  bean renders.
 - **Bodies are captured passively and bounded.** The tee never buffers,
   replays, or withholds the exchange; `max-body-bytes` caps what can reach
   the log.

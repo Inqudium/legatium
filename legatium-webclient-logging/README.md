@@ -37,8 +37,9 @@ The RestClient module is the reference implementation; its documentation applies
 | Body tee concurrency | volatile single-writer capture | lock-guarded, **frozen at emission**: a body chunk still in flight after a cancellation cannot move the logged text or the size sample |
 
 Everything else — fail-open including the wiring (`stage=wiring` degrades to pass-through), the
-level/outcome decoupling, slow escalation, header sections with `includes`/`excludes`/`masked` and the
-injectable `HeaderValueMasker` (default: the stable fingerprint), the arrival line (`log-request-start`), count-only body measuring, activation
+level/outcome decoupling, slow escalation, header sections with `includes`/`excludes`/`masked`/`unmasked`
+(masked by default, ADR-0005) and the injectable `HeaderValueMasker` (default: the stable fingerprint),
+the arrival line (`log-request-start`), count-only body measuring, activation
 by host and path, the identity contract of ADR-0002 (trace id is the request id; the correlation header
 is sent only on traceless calls without one) — behaves exactly as documented in the RestClient twin's
 README and guide.
