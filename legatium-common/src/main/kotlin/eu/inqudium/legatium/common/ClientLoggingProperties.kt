@@ -15,7 +15,8 @@ import java.time.Duration
  * A many-parameter constructor is exactly what this design avoids.
  *
  * Body values are logged verbatim. Header values are verbatim too unless a header is listed in its
- * section's [HeaderLogProperties.masked] - then a stable short fingerprint replaces the value.
+ * section's [HeaderLogProperties.masked] - then the [HeaderValueMasker] bean's rendering replaces the
+ * value (by default a stable short fingerprint).
  */
 @ConfigurationProperties("client-logging")
 data class ClientLoggingProperties(

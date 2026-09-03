@@ -2,6 +2,7 @@ package eu.inqudium.legatium.restclient.logging
 
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
+import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.MdcScope
 import eu.inqudium.legatium.common.NanoTimeSource
@@ -75,275 +76,279 @@ import java.net.URI
  * report totals ACROSS those interceptors, not per interceptor. The auto-configuration wires exactly
  * one interceptor per context, where the distinction never shows.
  */
-class ClientRequestLoggingInterceptor(
-    private val properties: ClientLoggingProperties,
-    private val nanoTime: NanoTimeSource,
-    private val correlationIds: CorrelationIdGenerator,
-    meterRegistry: MeterRegistry,
-) : ClientHttpRequestInterceptor {
-    private val metrics = ClientLoggingMetrics.forRegistry(meterRegistry)
-    private val emitter = ExchangeLogEmitter(properties, nanoTime, metrics)
+class ClientRequestLoggingInterceptor
+    @JvmOverloads
+    constructor(
+        private val properties: ClientLoggingProperties,
+        private val nanoTime: NanoTimeSource,
+        private val correlationIds: CorrelationIdGenerator,
+        meterRegistry: MeterRegistry,
+        /** How masked header values render; the auto-configuration passes the host's bean, [HeaderValueMasker.DEFAULT] otherwise. */
+        private val masker: HeaderValueMasker = HeaderValueMasker.DEFAULT,
+    ) : ClientHttpRequestInterceptor {
+        private val metrics = ClientLoggingMetrics.forRegistry(meterRegistry)
+        private val emitter = ExchangeLogEmitter(properties, nanoTime, metrics, masker)
 
-    // Parsed ONCE at construction: an invalid pattern is a configuration error and fails the context
-    // start with the parser's message, instead of failing per call.
-    private val includePathPatterns: List<PathPattern> =
-        properties.includePathPatterns.map { PathPatternParser.defaultInstance.parse(it) }
-    private val excludedHosts: Set<String> = properties.excludeHosts.map { it.lowercase() }.toSet()
+        // Parsed ONCE at construction: an invalid pattern is a configuration error and fails the context
+        // start with the parser's message, instead of failing per call.
+        private val includePathPatterns: List<PathPattern> =
+            properties.includePathPatterns.map { PathPatternParser.defaultInstance.parse(it) }
+        private val excludedHosts: Set<String> = properties.excludeHosts.map { it.lowercase() }.toSet()
 
-    /**
-     * The interceptor is active for a call when its host is not excluded, its path matches ANY include
-     * pattern (empty includes = every call) and NO exclude prefix - an exclude always wins. Path
-     * matching runs on the raw request path parsed into segments that DECODE for matching, the exclude
-     * prefixes compare against the decoded path rebuilt from those segments (path parameters dropped) -
-     * so a percent-encoded variant cannot slip past an exclude, identical in semantics with the
-     * WebClient twin.
-     */
-    internal fun shouldNotFilter(uri: URI): Boolean {
-        if (excludedHosts.isNotEmpty() && uri.host?.lowercase() in excludedHosts) {
-            return true
-        }
-        // Nothing configured to match (the shipped default): active for every call, so the answer
-        // needs no PathContainer.
-        if (includePathPatterns.isEmpty() && properties.excludePathPrefixes.isEmpty()) {
-            return false
-        }
-        val container = PathContainer.parsePath(uri.rawPath ?: "")
-        if (includePathPatterns.isNotEmpty() && includePathPatterns.none { it.matches(container) }) {
-            return true
-        }
-        if (properties.excludePathPrefixes.isEmpty()) {
-            return false
-        }
-        val decodedPath =
-            container.elements().joinToString("") { element ->
-                if (element is PathContainer.PathSegment) element.valueToMatch() else element.value()
-            }
-        return properties.excludePathPrefixes.any { decodedPath.startsWith(it) }
-    }
-
-    override fun intercept(
-        request: HttpRequest,
-        body: ByteArray,
-        execution: ClientHttpRequestExecution,
-    ): ClientHttpResponse {
-        if (shouldNotFilter(request.uri)) {
-            return execution.execute(request, body)
-        }
-        // The WIRING is fail-open too, not only the emission: identity resolution and the time source
-        // are host-provided beans, and header selection touches the request's header map - an exception
-        // in any of them must degrade this interceptor to a plain pass-through, never fail the call.
-        val exchange: Exchange? =
-            try {
-                wireExchange(request, body)
-            } catch (e: Exception) {
-                reportQuietly {
-                    metrics.wiringFailure()
-                    internalLog.error(
-                        "Client logging could not be wired for {} {} - continuing without logging: {}",
-                        request.method,
-                        request.uri,
-                        e.toString(),
-                        e,
-                    )
-                }
-                null
-            }
-        if (exchange == null) {
-            return execution.execute(request, body)
-        }
-        // The call-wide MDC scope is logging-owned work and therefore fail-open too: a throwing MDC
-        // adapter degrades the identity feature, never the call. MdcScope itself rolls back a partial
-        // install before rethrowing, so the calling thread never keeps half an identity.
-        val mdcScope: MdcScope? =
-            try {
-                MdcScope(exchange.requestId, exchange.method, exchange.target)
-            } catch (e: Exception) {
-                reportQuietly {
-                    metrics.wiringFailure()
-                    internalLog.error(
-                        "MDC scope could not be opened for {} {} - continuing without call MDC: {}",
-                        exchange.method,
-                        exchange.target,
-                        e.toString(),
-                        e,
-                    )
-                }
-                null
-            }
-        // The optional arrival line, before the call and OUTSIDE the try below: a failure in it must be
-        // confined (it is, see the emitter - including the level gate), never misattributed as a call
-        // failure.
-        if (properties.logRequestStart) {
-            emitter.logRequestStart(exchange)
-        }
-        try {
-            val response = execution.execute(request, body)
-            exchange.response = response
-            // Pure object construction, no host call - nothing here can fail and strand the response.
-            return CapturingClientHttpResponse(
-                delegate = response,
-                capture = exchange.responseCapture,
-                onReadFailure = { e -> exchange.failure = e },
-                onClose = { completeExchange(exchange) },
-            )
-        } catch (e: Exception) {
-            // No response: the exchange ends here. Breadcrumb first (a host-backend call, guarded so a
-            // throwing backend cannot REPLACE the client's exception), then the event, then the
-            // unchanged rethrow - IOException for the client to map, or whatever else the engine threw.
-            exchange.failure = e
-            reportQuietly {
-                internalLog.warn(
-                    "Client http exchange failed: {} {} - {} [{}={}]",
-                    exchange.method,
-                    exchange.target,
-                    e.toString(),
-                    MdcKeys.REQUEST_ID,
-                    exchange.requestId,
-                )
-            }
-            completeExchange(exchange)
-            throw e
-        } finally {
-            // Restoration is guarded separately: a throwing MDC adapter here must neither fail the call
-            // nor MASK an exception already propagating out of it - it costs the restoration, counted
-            // as stage=wiring.
-            try {
-                mdcScope?.close()
-            } catch (e: Exception) {
-                reportQuietly {
-                    metrics.wiringFailure()
-                    internalLog.warn(
-                        "MDC restoration failed for {} {} - the calling thread may carry stale client keys: {}",
-                        exchange.method,
-                        exchange.target,
-                        e.toString(),
-                        e,
-                    )
-                }
-            }
-        }
-    }
-
-    /**
-     * Everything that must exist before the wire call runs: identity resolution and the traceless
-     * correlation header, the captures, the eagerly captured request-side coordinates and the gauge.
-     * Called exclusively from the fail-open block in [intercept] - anything thrown here is confined
-     * there and degrades the interceptor to a pass-through.
-     */
-    private fun wireExchange(
-        request: HttpRequest,
-        body: ByteArray,
-    ): Exchange {
-        val headers = request.headers
-        // The exchange identity, resolved per ADR-0002: a conformant traceparent's trace id IS the
-        // request id (a correlation header the caller put on the request is ignored on such calls -
-        // the distributed identity outranks the private one); only a traceless call accepts the
-        // correlation header already on the request or generates a fresh id, and only a traceless
-        // call without one gets the header ADDED - a traced call goes out observationally untouched.
-        val trace = Traceparent.parse(headers.getFirst(Traceparent.HEADER))
-        val headerCorrelationId =
-            if (trace == null) {
-                headers.getFirst(properties.correlationIdHeader)?.takeUnless { it.isBlank() }
-            } else {
-                null
-            }
-        val requestId = trace?.first ?: headerCorrelationId ?: correlationIds.nextCorrelationId()
-        // Guarded inside the metrics: a throwing host counter must not turn the call into an unlogged
-        // pass-through.
-        metrics.requestId(
-            when {
-                trace != null -> ClientLoggingMetrics.REQUEST_ID_SOURCE_TRACE
-                headerCorrelationId != null -> ClientLoggingMetrics.REQUEST_ID_SOURCE_HEADER
-                else -> ClientLoggingMetrics.REQUEST_ID_SOURCE_GENERATED
-            },
-        )
-        if (trace == null && headerCorrelationId == null) {
-            headers.set(properties.correlationIdHeader, requestId)
-        }
-
-        // The request body is what the client hands the interceptor: complete, in memory, already
-        // final. A capture exists when the body is logged OR measured; measure-only runs the capture in
-        // count-only mode (limit 0: nothing buffered, every byte counted).
-        val requestCapture =
-            if (properties.logRequestBody || properties.measureRequestBodySize) {
-                BoundedBodyCapture(if (properties.logRequestBody) properties.maxBodyBytes else 0).also {
-                    it.capture(body, 0, body.size)
-                }
-            } else {
-                null
-            }
-        val responseCapture =
-            if (properties.logResponseBody || properties.measureResponseBodySize) {
-                BoundedBodyCapture(if (properties.logResponseBody) properties.maxBodyBytes else 0)
-            } else {
-                null
-            }
-
-        // RAW (still percent-encoded) path and query, as they go on the wire - twin parity with the
-        // WebClient module, and the log-injection guard: java.net.URI's decoded getPath()/getQuery()
-        // turn `%0A`/`%0D` into real line breaks that would forge lines in every plain-text sink
-        // (message, MDC client_route, fields). Activation matching keeps the decoded path (the
-        // representation a server router would match).
-        val uri = request.uri
-        val host = uri.host?.let { if (uri.port != -1) "$it:${uri.port}" else it }
-        val path = uri.rawPath?.takeIf { it.isNotEmpty() } ?: "/"
-        val target =
-            buildString {
-                uri.scheme?.let { append(it).append("://") }
-                host?.let { append(it) }
-                append(path)
-            }
-        val exchange =
-            Exchange(
-                method = request.method.name(),
-                target = target,
-                host = host,
-                path = path,
-                query = if (properties.includeQueryString) uri.rawQuery else null,
-                requestId = requestId,
-                // Multi-value resolution, natively from HttpHeaders - AFTER the correlation header was
-                // added, so a selected correlation header shows what actually went out.
-                requestHeaders =
-                    properties.requestHeaders.select(headers.headerNames()) { name ->
-                        headers[name]?.takeIf { it.isNotEmpty() }?.joinToString(", ")
-                    },
-                uriTemplate = request.attributes[URI_TEMPLATE_ATTRIBUTE] as? String,
-                requestCapture = requestCapture,
-                responseCapture = responseCapture,
-                requestCharset = headers.declaredCharsetOrUtf8(),
-                startNanos = nanoTime.nanoTime(),
-                traceId = trace?.first,
-                spanId = trace?.second,
-            )
-        metrics.exchangeOpened()
-        return exchange
-    }
-
-    /**
-     * The exactly-once end of an exchange - gauge close plus emission - guarded by [Exchange.completed]:
-     * the response close (possibly twice) and the no-response failure path all arrive here; whichever
-     * wins the CAS completes, the rest are no-ops.
-     */
-    private fun completeExchange(exchange: Exchange) {
-        if (!exchange.completed.compareAndSet(false, true)) {
-            return
-        }
-        metrics.exchangeCompleted()
-        emitter.logExchange(exchange)
-    }
-
-    companion object {
         /**
-         * Request attribute under which `RestClient` records the URI template of a call made through the
-         * template form of `uri(...)`. Mirrors `DefaultRestClient.URI_TEMPLATE_ATTRIBUTE`
-         * (`RestClient.class.getName() + ".uriTemplate"`), which is package-private - derived the same
-         * way instead, so it matches the value the client sets (pinned by `UriTemplateAttributeTest`)
-         * and stays null for an expanded `URI` and for `RestTemplate`, which records no such attribute.
+         * The interceptor is active for a call when its host is not excluded, its path matches ANY include
+         * pattern (empty includes = every call) and NO exclude prefix - an exclude always wins. Path
+         * matching runs on the raw request path parsed into segments that DECODE for matching, the exclude
+         * prefixes compare against the decoded path rebuilt from those segments (path parameters dropped) -
+         * so a percent-encoded variant cannot slip past an exclude, identical in semantics with the
+         * WebClient twin.
          */
-        const val URI_TEMPLATE_ATTRIBUTE = "org.springframework.web.client.RestClient.uriTemplate"
+        internal fun shouldNotFilter(uri: URI): Boolean {
+            if (excludedHosts.isNotEmpty() && uri.host?.lowercase() in excludedHosts) {
+                return true
+            }
+            // Nothing configured to match (the shipped default): active for every call, so the answer
+            // needs no PathContainer.
+            if (includePathPatterns.isEmpty() && properties.excludePathPrefixes.isEmpty()) {
+                return false
+            }
+            val container = PathContainer.parsePath(uri.rawPath ?: "")
+            if (includePathPatterns.isNotEmpty() && includePathPatterns.none { it.matches(container) }) {
+                return true
+            }
+            if (properties.excludePathPrefixes.isEmpty()) {
+                return false
+            }
+            val decodedPath =
+                container.elements().joinToString("") { element ->
+                    if (element is PathContainer.PathSegment) element.valueToMatch() else element.value()
+                }
+            return properties.excludePathPrefixes.any { decodedPath.startsWith(it) }
+        }
 
-        // The breadcrumb and wiring failures go to the module's own logger, never onto the exchange
-        // logger - the exchange log stream stays parseable.
-        private val internalLog = LoggerFactory.getLogger(ClientRequestLoggingInterceptor::class.java)
+        override fun intercept(
+            request: HttpRequest,
+            body: ByteArray,
+            execution: ClientHttpRequestExecution,
+        ): ClientHttpResponse {
+            if (shouldNotFilter(request.uri)) {
+                return execution.execute(request, body)
+            }
+            // The WIRING is fail-open too, not only the emission: identity resolution and the time source
+            // are host-provided beans, and header selection touches the request's header map - an exception
+            // in any of them must degrade this interceptor to a plain pass-through, never fail the call.
+            val exchange: Exchange? =
+                try {
+                    wireExchange(request, body)
+                } catch (e: Exception) {
+                    reportQuietly {
+                        metrics.wiringFailure()
+                        internalLog.error(
+                            "Client logging could not be wired for {} {} - continuing without logging: {}",
+                            request.method,
+                            request.uri,
+                            e.toString(),
+                            e,
+                        )
+                    }
+                    null
+                }
+            if (exchange == null) {
+                return execution.execute(request, body)
+            }
+            // The call-wide MDC scope is logging-owned work and therefore fail-open too: a throwing MDC
+            // adapter degrades the identity feature, never the call. MdcScope itself rolls back a partial
+            // install before rethrowing, so the calling thread never keeps half an identity.
+            val mdcScope: MdcScope? =
+                try {
+                    MdcScope(exchange.requestId, exchange.method, exchange.target)
+                } catch (e: Exception) {
+                    reportQuietly {
+                        metrics.wiringFailure()
+                        internalLog.error(
+                            "MDC scope could not be opened for {} {} - continuing without call MDC: {}",
+                            exchange.method,
+                            exchange.target,
+                            e.toString(),
+                            e,
+                        )
+                    }
+                    null
+                }
+            // The optional arrival line, before the call and OUTSIDE the try below: a failure in it must be
+            // confined (it is, see the emitter - including the level gate), never misattributed as a call
+            // failure.
+            if (properties.logRequestStart) {
+                emitter.logRequestStart(exchange)
+            }
+            try {
+                val response = execution.execute(request, body)
+                exchange.response = response
+                // Pure object construction, no host call - nothing here can fail and strand the response.
+                return CapturingClientHttpResponse(
+                    delegate = response,
+                    capture = exchange.responseCapture,
+                    onReadFailure = { e -> exchange.failure = e },
+                    onClose = { completeExchange(exchange) },
+                )
+            } catch (e: Exception) {
+                // No response: the exchange ends here. Breadcrumb first (a host-backend call, guarded so a
+                // throwing backend cannot REPLACE the client's exception), then the event, then the
+                // unchanged rethrow - IOException for the client to map, or whatever else the engine threw.
+                exchange.failure = e
+                reportQuietly {
+                    internalLog.warn(
+                        "Client http exchange failed: {} {} - {} [{}={}]",
+                        exchange.method,
+                        exchange.target,
+                        e.toString(),
+                        MdcKeys.REQUEST_ID,
+                        exchange.requestId,
+                    )
+                }
+                completeExchange(exchange)
+                throw e
+            } finally {
+                // Restoration is guarded separately: a throwing MDC adapter here must neither fail the call
+                // nor MASK an exception already propagating out of it - it costs the restoration, counted
+                // as stage=wiring.
+                try {
+                    mdcScope?.close()
+                } catch (e: Exception) {
+                    reportQuietly {
+                        metrics.wiringFailure()
+                        internalLog.warn(
+                            "MDC restoration failed for {} {} - the calling thread may carry stale client keys: {}",
+                            exchange.method,
+                            exchange.target,
+                            e.toString(),
+                            e,
+                        )
+                    }
+                }
+            }
+        }
+
+        /**
+         * Everything that must exist before the wire call runs: identity resolution and the traceless
+         * correlation header, the captures, the eagerly captured request-side coordinates and the gauge.
+         * Called exclusively from the fail-open block in [intercept] - anything thrown here is confined
+         * there and degrades the interceptor to a pass-through.
+         */
+        private fun wireExchange(
+            request: HttpRequest,
+            body: ByteArray,
+        ): Exchange {
+            val headers = request.headers
+            // The exchange identity, resolved per ADR-0002: a conformant traceparent's trace id IS the
+            // request id (a correlation header the caller put on the request is ignored on such calls -
+            // the distributed identity outranks the private one); only a traceless call accepts the
+            // correlation header already on the request or generates a fresh id, and only a traceless
+            // call without one gets the header ADDED - a traced call goes out observationally untouched.
+            val trace = Traceparent.parse(headers.getFirst(Traceparent.HEADER))
+            val headerCorrelationId =
+                if (trace == null) {
+                    headers.getFirst(properties.correlationIdHeader)?.takeUnless { it.isBlank() }
+                } else {
+                    null
+                }
+            val requestId = trace?.first ?: headerCorrelationId ?: correlationIds.nextCorrelationId()
+            // Guarded inside the metrics: a throwing host counter must not turn the call into an unlogged
+            // pass-through.
+            metrics.requestId(
+                when {
+                    trace != null -> ClientLoggingMetrics.REQUEST_ID_SOURCE_TRACE
+                    headerCorrelationId != null -> ClientLoggingMetrics.REQUEST_ID_SOURCE_HEADER
+                    else -> ClientLoggingMetrics.REQUEST_ID_SOURCE_GENERATED
+                },
+            )
+            if (trace == null && headerCorrelationId == null) {
+                headers.set(properties.correlationIdHeader, requestId)
+            }
+
+            // The request body is what the client hands the interceptor: complete, in memory, already
+            // final. A capture exists when the body is logged OR measured; measure-only runs the capture in
+            // count-only mode (limit 0: nothing buffered, every byte counted).
+            val requestCapture =
+                if (properties.logRequestBody || properties.measureRequestBodySize) {
+                    BoundedBodyCapture(if (properties.logRequestBody) properties.maxBodyBytes else 0).also {
+                        it.capture(body, 0, body.size)
+                    }
+                } else {
+                    null
+                }
+            val responseCapture =
+                if (properties.logResponseBody || properties.measureResponseBodySize) {
+                    BoundedBodyCapture(if (properties.logResponseBody) properties.maxBodyBytes else 0)
+                } else {
+                    null
+                }
+
+            // RAW (still percent-encoded) path and query, as they go on the wire - twin parity with the
+            // WebClient module, and the log-injection guard: java.net.URI's decoded getPath()/getQuery()
+            // turn `%0A`/`%0D` into real line breaks that would forge lines in every plain-text sink
+            // (message, MDC client_route, fields). Activation matching keeps the decoded path (the
+            // representation a server router would match).
+            val uri = request.uri
+            val host = uri.host?.let { if (uri.port != -1) "$it:${uri.port}" else it }
+            val path = uri.rawPath?.takeIf { it.isNotEmpty() } ?: "/"
+            val target =
+                buildString {
+                    uri.scheme?.let { append(it).append("://") }
+                    host?.let { append(it) }
+                    append(path)
+                }
+            val exchange =
+                Exchange(
+                    method = request.method.name(),
+                    target = target,
+                    host = host,
+                    path = path,
+                    query = if (properties.includeQueryString) uri.rawQuery else null,
+                    requestId = requestId,
+                    // Multi-value resolution, natively from HttpHeaders - AFTER the correlation header was
+                    // added, so a selected correlation header shows what actually went out.
+                    requestHeaders =
+                        properties.requestHeaders.select(headers.headerNames(), masker) { name ->
+                            headers[name]?.takeIf { it.isNotEmpty() }?.joinToString(", ")
+                        },
+                    uriTemplate = request.attributes[URI_TEMPLATE_ATTRIBUTE] as? String,
+                    requestCapture = requestCapture,
+                    responseCapture = responseCapture,
+                    requestCharset = headers.declaredCharsetOrUtf8(),
+                    startNanos = nanoTime.nanoTime(),
+                    traceId = trace?.first,
+                    spanId = trace?.second,
+                )
+            metrics.exchangeOpened()
+            return exchange
+        }
+
+        /**
+         * The exactly-once end of an exchange - gauge close plus emission - guarded by [Exchange.completed]:
+         * the response close (possibly twice) and the no-response failure path all arrive here; whichever
+         * wins the CAS completes, the rest are no-ops.
+         */
+        private fun completeExchange(exchange: Exchange) {
+            if (!exchange.completed.compareAndSet(false, true)) {
+                return
+            }
+            metrics.exchangeCompleted()
+            emitter.logExchange(exchange)
+        }
+
+        companion object {
+            /**
+             * Request attribute under which `RestClient` records the URI template of a call made through the
+             * template form of `uri(...)`. Mirrors `DefaultRestClient.URI_TEMPLATE_ATTRIBUTE`
+             * (`RestClient.class.getName() + ".uriTemplate"`), which is package-private - derived the same
+             * way instead, so it matches the value the client sets (pinned by `UriTemplateAttributeTest`)
+             * and stays null for an expanded `URI` and for `RestTemplate`, which records no such attribute.
+             */
+            const val URI_TEMPLATE_ATTRIBUTE = "org.springframework.web.client.RestClient.uriTemplate"
+
+            // The breadcrumb and wiring failures go to the module's own logger, never onto the exchange
+            // logger - the exchange log stream stays parseable.
+            private val internalLog = LoggerFactory.getLogger(ClientRequestLoggingInterceptor::class.java)
+        }
     }
-}

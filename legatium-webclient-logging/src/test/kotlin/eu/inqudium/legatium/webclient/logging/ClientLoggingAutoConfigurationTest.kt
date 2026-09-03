@@ -2,6 +2,7 @@ package eu.inqudium.legatium.webclient.logging
 
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
+import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.NanoTimeSource
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
@@ -35,6 +36,7 @@ class ClientLoggingAutoConfigurationTest {
             assertThat(context).hasSingleBean(ClientRequestLoggingFilter::class.java)
             assertThat(context).hasSingleBean(NanoTimeSource::class.java)
             assertThat(context).hasSingleBean(CorrelationIdGenerator::class.java)
+            assertThat(context).hasSingleBean(HeaderValueMasker::class.java)
             assertThat(context).hasBean("clientLoggingWebClientCustomizer")
         }
     }
@@ -63,6 +65,7 @@ class ClientLoggingAutoConfigurationTest {
             // Then
             assertThat(context).doesNotHaveBean(ClientRequestLoggingFilter::class.java)
             assertThat(context).doesNotHaveBean(NanoTimeSource::class.java)
+            assertThat(context).doesNotHaveBean(HeaderValueMasker::class.java)
             assertThat(context).doesNotHaveBean(ClientLoggingProperties::class.java)
             assertThat(context).doesNotHaveBean("clientLoggingWebClientCustomizer")
         }
@@ -99,6 +102,9 @@ class ClientLoggingAutoConfigurationTest {
             assertThat(filters.last()).isSameAs(context.getBean("hostFilter"))
             val registry = context.getBean(MeterRegistry::class.java)
             assertThat(registry.find(ClientLoggingMetrics.FAIL_OPEN_METER).counters()).hasSize(3)
+            // And: the host's masker backed the default off
+            assertThat(context).hasSingleBean(HeaderValueMasker::class.java)
+            assertThat(context.getBean(HeaderValueMasker::class.java).mask("x")).isEqualTo("***")
         }
     }
 
@@ -138,6 +144,9 @@ class ClientLoggingAutoConfigurationTest {
 private class HostConfig {
     @Bean
     fun hostMeterRegistry(): MeterRegistry = SimpleMeterRegistry()
+
+    @Bean
+    fun hostMasker(): HeaderValueMasker = HeaderValueMasker { "***" }
 
     @Bean
     fun hostFilter(

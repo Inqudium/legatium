@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   outgoing `traceparent`'s trace id is the request id and the call goes out
   untouched; a traceless call gets a generated `X-Correlation-Id` sent along.
   Counting correlation id generator ([ADR-0004](docs/adr/ADR-0004-counting-correlation-id-default.md)).
+- Injectable `HeaderValueMasker`: the rendering of masked header values is a
+  `@ConditionalOnMissingBean` bean shared by both twins - the built-in default is
+  the stable `length:hash` fingerprint, a host pins a keyed or fixed masker
+  instead; the properties decide which values are masked, the bean decides how.
 - Shared twin core `legatium-common`, inlined by Shade
   ([ADR-0003](docs/adr/ADR-0003-legatium-common-inlined-by-shade.md)), including
   the cross-stack timeout classification and - unlike Limesium - the field enum

@@ -32,7 +32,28 @@ class HeaderLogPropertiesTest {
         val section = HeaderLogProperties(includes = listOf("*"), masked = listOf("*"))
 
         // Then: constructed fine, and selection masks everything it includes
-        val selected = section.select(listOf("Accept")) { "text/plain" }
-        assertThat(selected).containsExactly("Accept" to HeaderLogProperties.mask("text/plain"))
+        val selected = section.select(listOf("Accept"), HeaderValueMasker.DEFAULT) { "text/plain" }
+        assertThat(selected).containsExactly("Accept" to HeaderValueMasker.DEFAULT.mask("text/plain"))
+    }
+
+    @Test
+    fun `should mask through the masker handed to select so a host bean decides the shape`() {
+        // What is tested: the masker is an injected collaborator of the selection, not a hard-wired
+        //   fingerprint - the shape of a masked value is the host's policy.
+        // Success criteria: a section with a masked name renders the masker's output for that header
+        //   and the plain value for every other; the plaintext of the masked header never appears.
+        // Why it matters: a compliance regime may forbid unkeyed hashes; the bean is the one place to
+        //   satisfy it for both twins at once.
+        // Given: a keyed stand-in masker
+        val section = HeaderLogProperties(includes = listOf("Authorization", "Accept"), masked = listOf("Authorization"))
+        val keyed = HeaderValueMasker { "hmac:${it.length}" }
+        val values = mapOf("Authorization" to "Bearer secret", "Accept" to "text/plain")
+
+        // When
+        val selected = section.select(values.keys, keyed) { values[it] }
+
+        // Then
+        assertThat(selected).containsExactly("Authorization" to "hmac:13", "Accept" to "text/plain")
+        assertThat(selected.map { it.second }).doesNotContain("Bearer secret")
     }
 }

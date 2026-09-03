@@ -2,7 +2,7 @@ package eu.inqudium.legatium.restclient.logging
 
 import eu.inqudium.legatium.common.BodyReadState
 import eu.inqudium.legatium.common.ClientLoggingProperties
-import eu.inqudium.legatium.common.HeaderLogProperties
+import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.TraceMdcKeys
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
@@ -60,7 +60,7 @@ class TwinContractTest {
         //   bytes are stable across JVMs - and identical to limesium's, so a masked token correlates
         //   across the server line and the client line.
         // Given/When/Then
-        assertThat(HeaderLogProperties.mask("secret-token")).isEqualTo("12:930bbdc51b6aed5c")
+        assertThat(HeaderValueMasker.DEFAULT.mask("secret-token")).isEqualTo("12:930bbdc51b6aed5c")
     }
 
     @Test

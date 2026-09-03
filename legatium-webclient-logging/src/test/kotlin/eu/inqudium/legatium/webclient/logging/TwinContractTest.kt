@@ -2,7 +2,7 @@ package eu.inqudium.legatium.webclient.logging
 
 import eu.inqudium.legatium.common.BodyReadState
 import eu.inqudium.legatium.common.ClientLoggingProperties
-import eu.inqudium.legatium.common.HeaderLogProperties
+import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.TraceMdcKeys
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
@@ -52,7 +52,7 @@ class TwinContractTest {
     @Test
     fun `should pin the masking fingerprint format to the literal twin contract`() {
         // Given/When/Then
-        assertThat(HeaderLogProperties.mask("secret-token")).isEqualTo("12:930bbdc51b6aed5c")
+        assertThat(HeaderValueMasker.DEFAULT.mask("secret-token")).isEqualTo("12:930bbdc51b6aed5c")
     }
 
     @Test

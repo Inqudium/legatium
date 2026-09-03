@@ -17,7 +17,7 @@ import java.util.regex.Pattern;
  * Invariants under test: construction rejects only its documented cases
  * (blank entries, wildcard exclude) and select() never throws; a value
  * configured as masked never appears in the output in plaintext but always as
- * the stable length:hash fingerprint; mask() is deterministic and matches its
+ * the stable length:hash fingerprint; the default masker is deterministic and matches its
  * documented shape.
  *
  * Runs as a regression test (checked-in inputs plus the empty input) in every
@@ -52,7 +52,8 @@ class HeaderMaskingFuzzTest {
             }
         }
 
-        List<kotlin.Pair<String, String>> selected = properties.select(headers.keySet(), headers::get);
+        List<kotlin.Pair<String, String>> selected =
+                properties.select(headers.keySet(), HeaderValueMasker.Companion.getDEFAULT(), headers::get);
 
         boolean maskAll = masked.contains(HeaderLogProperties.WILDCARD);
         for (kotlin.Pair<String, String> entry : selected) {
@@ -77,8 +78,8 @@ class HeaderMaskingFuzzTest {
         }
 
         String probe = data.consumeRemainingAsString();
-        String fingerprint = HeaderLogProperties.Companion.mask(probe);
-        if (!fingerprint.equals(HeaderLogProperties.Companion.mask(probe))) {
+        String fingerprint = HeaderValueMasker.Companion.getDEFAULT().mask(probe);
+        if (!fingerprint.equals(HeaderValueMasker.Companion.getDEFAULT().mask(probe))) {
             throw new IllegalStateException("mask() is not deterministic for: " + probe);
         }
         if (!FINGERPRINT.matcher(fingerprint).matches()) {

@@ -2,6 +2,7 @@ package eu.inqudium.legatium.webclient.logging
 
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
+import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.NanoTimeSource
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
@@ -24,7 +25,8 @@ import org.springframework.core.annotation.Order
  * legatium-restclient-logging's key for key; both modules may even live in one application (a servlet
  * host using `WebClient` for streaming calls), each logging the client it serves.
  *
- * Every bean backs off to a host-provided one. The meter registry arrives as an [ObjectProvider] and is
+ * Every bean backs off to a host-provided one - the time source, the id generator, the
+ * [HeaderValueMasker] (a keyed fingerprint for a compliance regime), the filter itself. The meter registry arrives as an [ObjectProvider] and is
  * CONSUMED, never exported - a logging library must not define the host's `MeterRegistry`; without one
  * (no actuator) a private [SimpleMeterRegistry] absorbs the counts and the module works unchanged.
  *
@@ -44,6 +46,10 @@ class ClientLoggingAutoConfiguration {
     @ConditionalOnMissingBean
     fun clientLoggingCorrelationIdGenerator(): CorrelationIdGenerator = CorrelationIdGenerator.DEFAULT
 
+    @Bean
+    @ConditionalOnMissingBean
+    fun clientLoggingHeaderValueMasker(): HeaderValueMasker = HeaderValueMasker.DEFAULT
+
     /** The filter as its own bean, so a host can replace it while keeping the customizer below. */
     @Bean
     @ConditionalOnMissingBean
@@ -51,8 +57,9 @@ class ClientLoggingAutoConfiguration {
         properties: ClientLoggingProperties,
         nanoTime: NanoTimeSource,
         correlationIds: CorrelationIdGenerator,
+        masker: HeaderValueMasker,
         meterRegistry: ObjectProvider<MeterRegistry>,
-    ): ClientRequestLoggingFilter = ClientRequestLoggingFilter(properties, nanoTime, correlationIds, meterRegistry.getIfAvailable { SimpleMeterRegistry() })
+    ): ClientRequestLoggingFilter = ClientRequestLoggingFilter(properties, nanoTime, correlationIds, meterRegistry.getIfAvailable { SimpleMeterRegistry() }, masker)
 
     /**
      * Attaches the filter to every `WebClient.Builder` Boot hands out (and to every HTTP service client

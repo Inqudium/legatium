@@ -2,6 +2,7 @@ package eu.inqudium.legatium.webclient.logging
 
 import eu.inqudium.legatium.common.ClientLogField
 import eu.inqudium.legatium.common.ClientLoggingProperties
+import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.MdcScope
 import eu.inqudium.legatium.common.NanoTimeSource
@@ -43,6 +44,7 @@ internal class ExchangeLogEmitter(
     private val properties: ClientLoggingProperties,
     private val nanoTime: NanoTimeSource,
     private val metrics: ClientLoggingMetrics,
+    private val masker: HeaderValueMasker,
 ) {
     private val exchangeLog = LoggerFactory.getLogger(properties.loggerName)
 
@@ -181,7 +183,7 @@ internal class ExchangeLogEmitter(
             // Multi-value resolution, natively from the reactive HttpHeaders.
             val responseHeaders =
                 response?.headers()?.asHttpHeaders()?.let { headers ->
-                    properties.responseHeaders.select(headers.headerNames()) { name ->
+                    properties.responseHeaders.select(headers.headerNames(), masker) { name ->
                         headers[name]?.takeIf { it.isNotEmpty() }?.joinToString(", ")
                     }
                 } ?: emptyList()

@@ -2,6 +2,7 @@ package eu.inqudium.legatium.restclient.logging
 
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
+import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.NanoTimeSource
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
@@ -25,8 +26,9 @@ import org.springframework.core.annotation.Order
  * needs no web application: a batch job or a message consumer calling out is a client too.
  *
  * Every bean backs off to a host-provided one: a host may pin [NanoTimeSource] or
- * [CorrelationIdGenerator] (tests do), or define its own [ClientRequestLoggingInterceptor] bean to take
- * over the interceptor while keeping the customizer wiring below.
+ * [CorrelationIdGenerator] (tests do), replace the [HeaderValueMasker] (a keyed fingerprint for a
+ * compliance regime), or define its own [ClientRequestLoggingInterceptor] bean to take over the
+ * interceptor while keeping the customizer wiring below.
  *
  * The customizers live in nested configurations conditional on Boot's `spring-boot-restclient` module
  * (an optional dependency of this one): a host that builds its clients by hand keeps the interceptor bean
@@ -44,6 +46,10 @@ class ClientLoggingAutoConfiguration {
     @ConditionalOnMissingBean
     fun clientLoggingCorrelationIdGenerator(): CorrelationIdGenerator = CorrelationIdGenerator.DEFAULT
 
+    @Bean
+    @ConditionalOnMissingBean
+    fun clientLoggingHeaderValueMasker(): HeaderValueMasker = HeaderValueMasker.DEFAULT
+
     /**
      * The interceptor as its own bean, so a host can replace it while keeping the customizers below.
      *
@@ -58,8 +64,9 @@ class ClientLoggingAutoConfiguration {
         properties: ClientLoggingProperties,
         nanoTime: NanoTimeSource,
         correlationIds: CorrelationIdGenerator,
+        masker: HeaderValueMasker,
         meterRegistry: ObjectProvider<MeterRegistry>,
-    ): ClientRequestLoggingInterceptor = ClientRequestLoggingInterceptor(properties, nanoTime, correlationIds, meterRegistry.getIfAvailable { SimpleMeterRegistry() })
+    ): ClientRequestLoggingInterceptor = ClientRequestLoggingInterceptor(properties, nanoTime, correlationIds, meterRegistry.getIfAvailable { SimpleMeterRegistry() }, masker)
 
     /**
      * Attaches the interceptor to every `RestClient.Builder` Boot hands out (and to every HTTP service

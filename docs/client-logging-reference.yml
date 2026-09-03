@@ -81,10 +81,13 @@ client-logging:
     # exclude always wins over an include.
     excludes: []
     #  - Cookie
-    # Names whose VALUE is replaced by a stable short fingerprint (length:hex-hash, e.g. "18:a8b3c4d5").
-    # Non-reversible, but identical values yield identical fingerprints, so a masked token can still be
-    # correlated across events without exposing the secret. "*" masks every logged header. Masking only
-    # affects headers that are logged at all - listing a name here does not include it.
+    # Names whose VALUE is replaced by the HeaderValueMasker bean's rendering - by default a stable short
+    # fingerprint (length:hex-hash, e.g. "18:a8b3c4d5"): non-reversible, but identical values yield
+    # identical fingerprints, so a masked token can still be correlated across events without exposing
+    # the secret. A host that needs a different shape (a keyed HMAC, a fixed "***") pins its own
+    # HeaderValueMasker bean; the properties decide WHICH values are masked, the bean decides HOW. "*"
+    # masks every logged header. Masking only affects headers that are logged at all - listing a name
+    # here does not include it.
     masked: []
     #  - Authorization
   response-headers:

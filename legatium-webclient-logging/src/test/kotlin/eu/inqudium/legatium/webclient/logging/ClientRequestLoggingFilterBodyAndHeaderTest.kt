@@ -3,6 +3,7 @@ package eu.inqudium.legatium.webclient.logging
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.HeaderLogProperties
+import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.NanoTimeSource
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
@@ -90,9 +91,40 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             // Then
             val rendered = keyValues(log.events.single())["client_request_headers"].toString()
             assertThat(rendered).contains("Accept:\"application/json, text/plain\"")
-            assertThat(rendered).contains("Authorization:\"${HeaderLogProperties.mask("Bearer secret-token")}\"")
+            assertThat(rendered).contains("Authorization:\"${HeaderValueMasker.DEFAULT.mask("Bearer secret-token")}\"")
             assertThat(rendered).doesNotContain("secret-token")
             assertThat(rendered).contains("X-Correlation-Id:\"generated-42\"")
+        }
+
+        @Test
+        fun `should render masked values through a host-provided masker`() {
+            // What is tested: the masker is an injected collaborator - the filter built with a host
+            //   bean masks request AND response headers with it.
+            // Success criteria: both selected, masked headers carry the host masker's output, never the
+            //   plaintext and never the built-in fingerprint.
+            // Why it matters: a compliance regime forbidding unkeyed hashes must be satisfiable without
+            //   forking the module.
+            // Given
+            val keyed = HeaderValueMasker { "hmac:${it.length}" }
+            val keyedSubject =
+                ClientRequestLoggingFilter(
+                    base.copy(
+                        requestHeaders = HeaderLogProperties(includes = listOf("Authorization"), masked = listOf("Authorization")),
+                        responseHeaders = HeaderLogProperties(includes = listOf("Set-Cookie"), masked = listOf("Set-Cookie")),
+                    ),
+                    NanoTimeSource { ticker.get() },
+                    CorrelationIdGenerator { "generated-42" },
+                    SimpleMeterRegistry(),
+                    keyed,
+                )
+
+            // When
+            keyedSubject.call(request { header("Authorization", "Bearer secret-token") }, answering(headers = mapOf("Set-Cookie" to "session=1")))
+
+            // Then
+            val fields = keyValues(log.events.single())
+            assertThat(fields["client_request_headers"].toString()).isEqualTo("[Authorization:\"hmac:19\"]")
+            assertThat(fields["client_response_headers"].toString()).isEqualTo("[Set-Cookie:\"hmac:9\"]")
         }
 
         @Test
