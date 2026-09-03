@@ -21,7 +21,8 @@ each twin inlines it into its own jar with the Maven Shade plugin;
   Jazzer fuzz tests), `NanoTimeSource`, `CorrelationIdGenerator` (with
   the counting default, ADR-0004), `reportQuietly`/`failOpen`, `Mdc.kt`
   (`MdcKeys`/`TraceMdcKeys`/`MdcScope`), `HeaderLogProperties` (selection
-  semantics and the masking fingerprint, with unit test and fuzz target),
+  semantics, with unit test and fuzz target) and `HeaderValueMasker` (the
+  injectable masking, with the fingerprint default),
   `BodyReadState`/`decodeTruncated`, `Timeouts` (the classification that
   makes `client_outcome=timeout` mean the same thing on both stacks), and -
   since the amendments below - the `ClientLogField` enum with its builder

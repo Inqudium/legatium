@@ -228,7 +228,7 @@ five layers:
 | `BoundedBodyCapture` | The bounded capture target; count-only mode with limit `0`; the response-side read state (`BodyReadState`); single-writer/late-reader visibility via a volatile total. |
 | `MdcScope` | Puts identity (and, for the emission, trace keys) into the MDC and restores the previous values on close. |
 | `Traceparent` / `Timeouts` | Strict W3C `traceparent` parsing to `(traceId, spanId)`; the cause-chain walk that classifies a failure as a timeout. |
-| `NanoTimeSource` / `CorrelationIdGenerator` | Injectable time and id; `SYSTEM` and `DEFAULT` are the production defaults. |
+| `NanoTimeSource` / `CorrelationIdGenerator` / `HeaderValueMasker` | Injectable time, id and header masking; `SYSTEM` and the two `DEFAULT`s are the production defaults. |
 | `reportQuietly` / `failOpen` | Guard the diagnostics channel (counter + internal log) of every catch block. |
 
 ### 2.2 Auto-configuration and registration
@@ -242,6 +242,7 @@ client too. It registers:
 |---|---|---|
 | `NanoTimeSource` | `@ConditionalOnMissingBean` | `NanoTimeSource.SYSTEM` |
 | `CorrelationIdGenerator` | `@ConditionalOnMissingBean` | `CorrelationIdGenerator.DEFAULT` (counting generator: random per-instance base-36 prefix + counter, 21 chars — ADR-0004) |
+| `HeaderValueMasker` | `@ConditionalOnMissingBean` | `HeaderValueMasker.DEFAULT` (the `length:hash` fingerprint); the one bean both twins mask with |
 | `ClientRequestLoggingInterceptor` | `@ConditionalOnMissingBean` | the interceptor, built from the bound properties and the host's `MeterRegistry` (`ObjectProvider`; private `SimpleMeterRegistry` without one) |
 | `RestClientCustomizer` | `@ConditionalOnClass(RestClientCustomizer)`, `@Order(LOWEST_PRECEDENCE - 10)` | `builder.requestInterceptor(interceptor)` on every `RestClient.Builder` Boot hands out |
 | `RestTemplateCustomizer` | `@ConditionalOnClass(RestTemplateCustomizer)`, same order | appends the interceptor to every `RestTemplate` built through `RestTemplateBuilder` |
@@ -413,8 +414,13 @@ Time and randomness are injected, not ambient:
   `traceparent` trace id is the request id) — and in a host with tracing configured, never at all
   ([§6.8](#68-tracing-makes-every-call-traced)).
 
-Both are `fun interface`s, both are `@ConditionalOnMissingBean` beans, and both are what the module's
-tests drive from an `AtomicLong` / a fixed string without any mocking library.
+- `HeaderValueMasker` — how a header listed in a `masked` section renders on the line; `DEFAULT` is the
+  stable `length:hash` fingerprint ([§6.10](#610-masking-is-a-fingerprint-not-a-secret)). The
+  properties decide WHICH values are masked, the bean decides HOW - a keyed HMAC for a compliance regime,
+  a fixed `***` for a host that wants no correlation at all.
+
+All three are `fun interface`s, all three are `@ConditionalOnMissingBean` beans, and all are what the
+module's tests drive from an `AtomicLong` / a fixed string / a lambda without any mocking library.
 
 ---
 
@@ -494,6 +500,11 @@ class ClientLoggingCustomisation {
     fun correlationIdGenerator(): CorrelationIdGenerator =
         CorrelationIdGenerator { UUID.randomUUID().toString() }
 
+    /** A keyed fingerprint where an unkeyed hash is not acceptable; both twins mask with this one bean. */
+    @Bean
+    fun headerValueMasker(secrets: Secrets): HeaderValueMasker =
+        HeaderValueMasker { value -> "hmac:" + secrets.hmacSha256Hex(value).take(16) }
+
     /** Only if the host owns a monotonic clock abstraction already. */
     @Bean
     fun nanoTimeSource(clock: MonotonicClock): NanoTimeSource =
@@ -503,7 +514,8 @@ class ClientLoggingCustomisation {
 
 A host-defined `ClientRequestLoggingInterceptor` bean replaces the **interceptor**, not the wiring: the
 auto-configured customizers still attach it to every Boot-built client. The constructor takes
-`(ClientLoggingProperties, NanoTimeSource, CorrelationIdGenerator, MeterRegistry)`:
+`(ClientLoggingProperties, NanoTimeSource, CorrelationIdGenerator, MeterRegistry)` plus an optional
+trailing `HeaderValueMasker` (the built-in fingerprint when omitted):
 
 ```kotlin
 @Bean
@@ -689,7 +701,7 @@ Each direction has one section with three lists; matching is case-insensitive th
 |---|---|
 | `includes` | Names to log. **Empty logs nothing** (the safe default). The entry `*` logs every header the message carries, deduplicated case-insensitively. |
 | `excludes` | Names removed from the included set — meaningful mainly with `*`. An exclude always wins. `*` is rejected here at binding time (an empty `includes` already logs nothing). |
-| `masked` | Names whose **value** is replaced by a fingerprint `length:hex` — the character length plus the first 64 bits of the SHA-256 of the UTF-8 value, e.g. `18:930bbdc51b6aed5c`. `*` masks every logged header. Masking affects only headers that are logged; listing a name here does not include it. |
+| `masked` | Names whose **value** is replaced by what the `HeaderValueMasker` bean renders — by default a fingerprint `length:hex`, the character length plus the first 64 bits of the SHA-256 of the UTF-8 value, e.g. `18:930bbdc51b6aed5c`. `*` masks every logged header. Masking affects only headers that are logged; listing a name here does not include it. |
 
 Multi-valued headers are joined with `, `. The selected pairs are rendered into one display-only field
 per direction as `[Name:"value", Name2:"value2"]`; nothing is emitted when the selection is empty or no
@@ -1069,12 +1081,15 @@ gauge reports the total across them.
 
 ### 6.10 Masking is a fingerprint, not a secret
 
-`masked` replaces a header value with `length:sha256-prefix64` — stable, so a masked token can still be
-correlated across events, across the two twins, and across the Limesium server line (same scheme), and a
-64-bit cryptographic prefix makes accidental collisions negligible. It is **unsalted and unkeyed**: it
-prevents plaintext exposure, not offline guessing. A reader with a candidate list (usernames, tenant
-names, short API keys) can confirm a candidate by hashing it. Do not treat `masked` as a security boundary
-for guessable values; omit such headers from the selection instead.
+By default `masked` replaces a header value with `length:sha256-prefix64` — stable, so a masked token
+can still be correlated across events, across the two twins, and across the Limesium server line (same
+scheme), and a 64-bit cryptographic prefix makes accidental collisions negligible. It is **unsalted and
+unkeyed**: it prevents plaintext exposure, not offline guessing. A reader with a candidate list
+(usernames, tenant names, short API keys) can confirm a candidate by hashing it. Do not treat the
+default as a security boundary for guessable values; omit such headers from the selection instead — or
+replace the rendering: the masker is the `HeaderValueMasker` bean ([§2.8](#28-injectable-collaborators)),
+so a host pins a keyed HMAC (guess-proof, still stable) or a fixed `***` (no correlation, no exposure)
+once, and both twins mask with it. The contract a replacement must keep: never return the plaintext.
 
 ### 6.11 Shared code: legatium-common, inlined by Shade
 

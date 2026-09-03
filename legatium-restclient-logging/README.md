@@ -18,7 +18,8 @@ Design in brief:
   buffered, replayed, or withheld; the request body is the byte array the client hands the interceptor.
 - SLF4J fluent API with `addKeyValue` — structured encoders pick the fields up directly.
 - Boot auto-configuration + `client-logging.*` properties; the functional beans (interceptor, time
-  source, id generator) overridable; the customizers conditional on Boot's `spring-boot-restclient`.
+  source, id generator, header masker) overridable; the customizers conditional on Boot's
+  `spring-boot-restclient`.
 - `client_request_id`, `client_method`, `client_route` in the MDC for the wire call, as an additive
   overlay — an inbound request's `endpoint_*` keys (Limesium) or a bridge's trace keys stay in place.
 
@@ -88,7 +89,7 @@ the built-in default.
 | `exclude-path-prefixes` | *(empty)* | Request-path prefixes that are not logged at all |
 | `exclude-hosts` | *(empty)* | Peer hosts (case-insensitive, without port) that are not logged at all — a metrics gateway, a config server |
 | `slow-request-threshold` | `5s` | At/above this duration the line escalates to WARN and is flagged `slow` |
-| `request-headers.*` / `response-headers.*` | *(empty)* | Per-direction sections with `includes` (names or `*`), `excludes`, and `masked` — masked values become a stable `length:hash` fingerprint (equal values, equal fingerprint) |
+| `request-headers.*` / `response-headers.*` | *(empty)* | Per-direction sections with `includes` (names or `*`), `excludes`, and `masked` — masked values are rendered by the `HeaderValueMasker` bean, by default a stable `length:hash` fingerprint (equal values, equal fingerprint) |
 | `log-request-body` / `log-response-body` | `false` | Capture bodies (the request body as handed over; the response body as the application reads it) |
 | `max-body-bytes` | `16384` | Capture limit per body; beyond it the log truncates (and says so), the exchange is untouched |
 | `measure-request-body-size` / `measure-response-body-size` | `false` | Count body bytes for the size meters (`client.request/response.body.size`) and the response read-state counter without logging content |
@@ -160,9 +161,11 @@ cross-module tests catch *named* contract drift, not behavioural drift.
 
 ## Overriding
 
-Define your own bean to replace a default: `NanoTimeSource`, `CorrelationIdGenerator`, or a complete
+Define your own bean to replace a default: `NanoTimeSource`, `CorrelationIdGenerator`,
+`HeaderValueMasker` (how masked header values render — a keyed HMAC, a fixed `***`), or a complete
 `ClientRequestLoggingInterceptor`. The shared types a custom bean touches — `ClientLoggingProperties`,
-`NanoTimeSource`, `CorrelationIdGenerator` — live in the package `eu.inqudium.legatium.common`. A custom interceptor bean takes over the *interceptor*, not the
+`NanoTimeSource`, `CorrelationIdGenerator`, `HeaderValueMasker` — live in the package
+`eu.inqudium.legatium.common`. A custom interceptor bean takes over the *interceptor*, not the
 wiring: the auto-configured `RestClientCustomizer` and `RestTemplateCustomizer` still attach it to every
 Boot-built client. A host that builds its clients by hand adds the bean itself
 (`builder.requestInterceptor(interceptor)`). Set `client-logging.enabled=false` to remove everything.
