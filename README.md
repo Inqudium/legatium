@@ -83,7 +83,9 @@ guides, Elasticsearch mapping, generated [test evidence](https://inqudium.github
 - [**Limesium**](https://github.com/Inqudium/limesium) — the sibling project for the *inbound*
   side: one structured `endpoint_*` line per request the service receives, on the logger
   `endpoint-http-exchange`, built to the same design. Run both and a log document holds the
-  server line and the client lines of the calls it made, joined by the shared request id.
+  server line and the client lines of the calls it made, joined by the shared request id - and
+  because both mask header values with the same stable fingerprint (the same `masking-key` on
+  both sides keeps it so), a masked token reads identically on the inbound and the outbound line.
 
 
 ### Quick start
