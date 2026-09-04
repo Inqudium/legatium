@@ -15,13 +15,16 @@ The RestClient module is the reference implementation; its documentation applies
   [`/docs/adapter-logging-reference.yml`](../docs/adapter-logging-reference.yml) — bound by
   `ClientLoggingReferenceConfigTest` in `legatium-common` against the one `ClientLoggingProperties`
   class both twins inline, so the namespace cannot drift from the code, and the twins cannot drift
-  from each other by construction.
+  from each other by construction. The properties are explained in the guide's
+  [§4](docs/GUIDE.md#4-configuration).
 - **Index mapping:** the one component template for both stacks is the repository-shared
   [`/docs/elk/`](../docs/elk/README.md) — bound by `ClientLogFieldTest` in `legatium-common` against
-  the one `ClientLogField` enum both twins inline.
+  the one `ClientLogField` enum both twins inline. The field table is the guide's
+  [§5.1](docs/GUIDE.md#51-log-fields).
 - **Metrics:** the same six meters (`adapter.logging.failopen`, `adapter.logging.events`,
   `adapter.logging.exchanges.open`, `adapter.logging.correlation.id`, `adapter.request/response.body.size`,
-  `adapter.response.body.read`), consumed from the host's `MeterRegistry`, never exported.
+  `adapter.response.body.read`), consumed from the host's `MeterRegistry`, never exported. The meter
+  table is the guide's [§5.4](docs/GUIDE.md#54-meters).
 
 ## Deliberate stack differences
 
@@ -194,6 +197,34 @@ Which encoder produces which shape — and why the default console pattern shows
 is the guide's [§3.7](docs/GUIDE.md#37-logging-backend-and-structured-output); the field family itself is
 documented once, in the guide's [§5.1](docs/GUIDE.md#51-log-fields), and mapped by the component template
 in [`/docs/elk/`](../docs/elk/README.md).
+
+## Configuration (`adapter-logging.*`)
+
+Every property lives under the `adapter-logging.*` namespace, identical in both twins by construction:
+both bind the one shared `ClientLoggingProperties` class. The complete, commented reference with every
+key at its default is the repository-shared
+[`/docs/adapter-logging-reference.yml`](../docs/adapter-logging-reference.yml) — copy the block and
+change only what you need; `ClientLoggingReferenceConfigTest` in `legatium-common` fails the build on
+any drift between that file and the class. The properties are explained in the guide's
+[§4](docs/GUIDE.md#4-configuration): the property reference, header sections, body logging and
+measuring, activation by host and path, logger levels, validation at startup, and example
+configurations. `adapter-logging.enabled=false` removes the module without touching the classpath.
+
+## Metrics
+
+The module's meters exist for one reason: a log line that was lost cannot report its own loss through
+the same pipeline. Six meters, consumed from the host's `MeterRegistry` when one exists (actuator) and
+never exported, form that independent channel — they answer whether exchange events are being lost
+loudly (a fail-open counter by stage), lost silently (an open-exchange gauge whose baseline must return
+towards zero), or lost downstream (an events counter to reconcile against the index), where each call's
+identity came from (trace, header, or generated), and — opt-in — how large the bodies were and how far
+the application actually read them. Rates, latencies and status distributions are deliberately left to
+Boot's own `http.client.requests` and to the structured log fields.
+
+Every meter with its type, tags and meaning is the guide's [§5.4](docs/GUIDE.md#54-meters); how to read
+them together, with a suggested alert set, is [§5.5](docs/GUIDE.md#55-reading-the-meters-together). The
+names are identical in both twins and pinned by `TwinContractTest`; the `outcome` tag of the events
+counter carries this stack's `cancelled` in addition.
 
 ## Coroutines
 
