@@ -54,6 +54,11 @@ class FailOpenDiagnosticsTest {
 
     @Test
     fun `should run the operation untouched when it does not throw`() {
+        // What is tested: the happy path of failOpen - no catch branch runs when the operation returns.
+        // Success criteria: the operation ran, neither handler was called (they would fail the test), and
+        //   the interrupt flag stays clear.
+        // Why it matters: the guard wraps every emitter and callback; touching the interrupt flag or
+        //   reporting on success would count a fail-open event for every healthy call.
         // Given/When
         var ran = false
         failOpen(onInterrupted = { error("unexpected") }, onFailure = { error("unexpected") }) { ran = true }

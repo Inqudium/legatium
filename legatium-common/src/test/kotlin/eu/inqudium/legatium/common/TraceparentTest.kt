@@ -11,6 +11,11 @@ import org.junit.jupiter.api.Test
 class TraceparentTest {
     @Test
     fun `should accept every conformant header of the shared fixture with the expected identifiers`() {
+        // What is tested: the accepting side of the parser - each valid fixture line yields the trace id
+        //   and the parent id it names, including higher versions with extra fields.
+        // Success criteria: the fixture is non-empty and every line parses to its expected pair.
+        // Why it matters: a rejected valid header drops the call out of the trace and into the
+        //   correlation-header path, so its log line no longer joins the tracing infrastructure.
         // Given: the valid lines of the shared fixture
         val cases = TraceparentConformanceFixture.valid()
         assertThat(cases).isNotEmpty()
@@ -38,6 +43,10 @@ class TraceparentTest {
 
     @Test
     fun `should treat an absent header as no trace context`() {
+        // What is tested: the null branch at the top of `parse`.
+        // Success criteria: null in, null out - no exception.
+        // Why it matters: most outbound calls of a host without tracing carry no header; the traceless
+        //   path starts here and must not pay an exception per call.
         // Given/When/Then
         assertThat(Traceparent.parse(null)).isNull()
     }

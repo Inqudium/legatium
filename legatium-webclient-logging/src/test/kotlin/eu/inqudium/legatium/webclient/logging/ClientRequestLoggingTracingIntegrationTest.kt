@@ -87,6 +87,13 @@ class ClientRequestLoggingTracingIntegrationTest {
 
     @Test
     fun `should treat a call without an outer span as traced too because the client observation roots a trace`() {
+        // What is tested: the identity decision when NO span is active on the subscribing thread -
+        //   Boot's client observation still opens a span, so the request reaches the filter with a
+        //   traceparent.
+        // Success criteria: the peer received a traceparent and no X-Correlation-Id; the event's
+        //   MDC carries traceId and spanId.
+        // Why it matters: with a tracing bridge present there is no traceless call at all, so the
+        //   correlation header must never appear next to a bridge - the trace id is the identity.
         // Given/When
         webClientBuilder
             .baseUrl(peer.baseUrl)

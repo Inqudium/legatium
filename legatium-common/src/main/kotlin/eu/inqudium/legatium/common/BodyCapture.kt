@@ -4,6 +4,7 @@ import java.nio.ByteBuffer
 import java.nio.CharBuffer
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
+import kotlin.math.ceil
 
 /**
  * How far the application consumed a RESPONSE body, as observed by a twin's tee. [UNREAD]: the body was
@@ -45,7 +46,7 @@ internal fun decodeTruncated(
     // Sized in double precision and rounded UP: maxCharsPerByte is a float, and a float product
     // truncated to Int can undershoot for large captures - the OVERFLOW result below is the guard
     // against a decoder whose declared maximum is wrong, not the normal path.
-    var capacity = Math.ceil(bytes.size.toDouble() * decoder.maxCharsPerByte()).toInt() + 1
+    var capacity = ceil(bytes.size.toDouble() * decoder.maxCharsPerByte()).toInt() + 1
     val input = ByteBuffer.wrap(bytes)
     while (true) {
         val chars = CharBuffer.allocate(capacity)

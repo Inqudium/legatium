@@ -42,6 +42,7 @@ fun interface HeaderValueMasker {
          * security boundary for guessable values; omit such headers from the selection instead - or
          * key the fingerprint ([keyed], the `masking-key` property).
          */
+        @JvmField
         val DEFAULT: HeaderValueMasker = FingerprintHeaderValueMasker(null)
 
         /**
@@ -55,6 +56,7 @@ fun interface HeaderValueMasker {
          * never a checked-in literal). [key] must not be blank; an empty key means unkeyed - see
          * [forKey].
          */
+        @JvmStatic
         fun keyed(key: String): HeaderValueMasker {
             require(key.isNotBlank()) { "masking key must not be blank" }
             return FingerprintHeaderValueMasker(key)
@@ -65,32 +67,34 @@ fun interface HeaderValueMasker {
          * default - unkeyed), [keyed] otherwise. The auto-configurations build their default bean from
          * this, so keying the fingerprint needs no bean of the host's own.
          */
+        @JvmStatic
         fun forKey(key: String): HeaderValueMasker = if (key.isEmpty()) DEFAULT else keyed(key)
+    }
+}
 
-        private class FingerprintHeaderValueMasker(
-            key: String?,
-        ) : HeaderValueMasker {
-            private val secret: SecretKeySpec? = key?.let { SecretKeySpec(it.toByteArray(StandardCharsets.UTF_8), HMAC) }
+/** The built-in fingerprint: unkeyed SHA-256 for a null [key], HMAC-SHA256 under the key otherwise. */
+private class FingerprintHeaderValueMasker(
+    key: String?,
+) : HeaderValueMasker {
+    private val secret: SecretKeySpec? = key?.let { SecretKeySpec(it.toByteArray(StandardCharsets.UTF_8), HMAC) }
 
-            override fun mask(value: String): String {
-                val bytes = value.toByteArray(StandardCharsets.UTF_8)
-                // A Mac instance is not thread-safe; one per call is the correct trade for a path that
-                // runs once per masked header. HexFormat instead of a per-byte "%02x".format:
-                // byte-identical output at a fraction of the allocation.
-                val digest =
-                    if (secret == null) {
-                        MessageDigest.getInstance("SHA-256").digest(bytes)
-                    } else {
-                        Mac.getInstance(HMAC).apply { init(secret) }.doFinal(bytes)
-                    }
-                return "${value.length}:${HEX.formatHex(digest, 0, FINGERPRINT_BYTES)}"
+    override fun mask(value: String): String {
+        val bytes = value.toByteArray(StandardCharsets.UTF_8)
+        // A Mac instance is not thread-safe; one per call is the correct trade for a path that
+        // runs once per masked header. HexFormat instead of a per-byte "%02x".format:
+        // byte-identical output at a fraction of the allocation.
+        val digest =
+            if (secret == null) {
+                MessageDigest.getInstance("SHA-256").digest(bytes)
+            } else {
+                Mac.getInstance(HMAC).apply { init(secret) }.doFinal(bytes)
             }
+        return "${value.length}:${HEX.formatHex(digest, 0, FINGERPRINT_BYTES)}"
+    }
 
-            private companion object {
-                private const val HMAC = "HmacSHA256"
-                private const val FINGERPRINT_BYTES = 8
-                private val HEX = HexFormat.of()
-            }
-        }
+    private companion object {
+        private const val HMAC = "HmacSHA256"
+        private const val FINGERPRINT_BYTES = 8
+        private val HEX = HexFormat.of()
     }
 }

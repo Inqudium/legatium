@@ -66,6 +66,12 @@ class UriTemplateAttributeTest {
 
     @Test
     fun `should mirror the private constant of DefaultRestClient literally`() {
+        // What is tested: the package-private DefaultRestClient.URI_TEMPLATE_ATTRIBUTE read
+        //   reflectively, compared with the module's own derived constant.
+        // Success criteria: both strings are identical.
+        // Why it matters: the constant cannot be referenced, so the module repeats its derivation;
+        //   a Spring upgrade that renames the attribute would otherwise silently drop
+        //   adapter_url_template and fold every body meter into the UNKNOWN uri tag.
         // Given/When: the package-private client's constant, read reflectively
         val field =
             Class

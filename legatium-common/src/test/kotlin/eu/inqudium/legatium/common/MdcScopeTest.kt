@@ -138,6 +138,12 @@ class MdcScopeTest {
 
     @Test
     fun `should attach a failing rollback to the install exception instead of replacing it`() {
+        // What is tested: the nested failure in the init block - the put fails AND the rollback's remove
+        //   fails on a key installed before it.
+        // Success criteria: the install exception propagates with the rollback failure attached as
+        //   suppressed; the key the rollback could remove is gone.
+        // Why it matters: a rollback exception replacing the original would hide the actual cause of the
+        //   broken adapter behind its own follow-up failure.
         // Given: an adapter whose put of adapter_route fails AND whose remove of adapter_request_id fails
         installMdcAdapter(FailingAdapter(original, failPut = setOf(MdcKeys.ROUTE), failRemove = setOf(MdcKeys.REQUEST_ID)))
 

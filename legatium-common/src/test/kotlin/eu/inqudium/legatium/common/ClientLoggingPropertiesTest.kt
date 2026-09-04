@@ -28,6 +28,11 @@ class ClientLoggingPropertiesTest {
 
         @Test
         fun `should reject zero and negative thresholds`() {
+            // What is tested: the lower end of the threshold check below the resolution floor - zero and a
+            //   negative duration.
+            // Success criteria: both fail construction with an IllegalArgumentException.
+            // Why it matters: a zero threshold flags every call as slow and escalates the whole stream to
+            //   WARN; a negative one is a binding typo that would do the same.
             // Given/When/Then: neither zero nor a negative duration is a threshold
             assertThat(catchThrowable { ClientLoggingProperties(slowRequestThreshold = Duration.ZERO) })
                 .isInstanceOf(IllegalArgumentException::class.java)
@@ -37,6 +42,10 @@ class ClientLoggingPropertiesTest {
 
         @Test
         fun `should accept exactly one millisecond as the smallest threshold`() {
+            // What is tested: the boundary of the `toMillis() >= 1` check - the smallest legal threshold.
+            // Success criteria: construction succeeds and the property holds exactly one millisecond.
+            // Why it matters: an off-by-one in the floor would reject the documented minimum and fail the
+            //   context start of a host that tuned the threshold down.
             // Given/When
             val properties = ClientLoggingProperties(slowRequestThreshold = Duration.ofMillis(1))
 
@@ -77,6 +86,10 @@ class ClientLoggingPropertiesTest {
     inner class `Excluded hosts` {
         @Test
         fun `should reject blank host entries`() {
+            // What is tested: the blank-entry check of `excludeHosts` next to a valid entry.
+            // Success criteria: construction fails with a message naming the property.
+            // Why it matters: the host match is case-insensitive equality, so a blank entry can never match -
+            //   the operator believes a peer is excluded while its calls keep logging.
             // Given/When/Then: a blank host can never match and hides a configuration mistake
             assertThat(catchThrowable { ClientLoggingProperties(excludeHosts = listOf("pushgateway", " ")) })
                 .isInstanceOf(IllegalArgumentException::class.java)
@@ -106,6 +119,10 @@ class ClientLoggingPropertiesTest {
 
         @Test
         fun `should accept every token character of a field name`() {
+            // What is tested: the positive side of the RFC 9110 field-name check - every tchar in one name.
+            // Success criteria: construction succeeds and the name binds unchanged.
+            // Why it matters: the regex is hand-written; a missing special character would reject a legal
+            //   header name and fail the context start for a host with an unusual but valid convention.
             // Given/When: the full RFC 9110 tchar set
             val properties = ClientLoggingProperties(correlationIdHeader = "X-Corr.Id_42!#$%&'*+^`|~")
 

@@ -29,7 +29,7 @@ import java.nio.charset.Charset
  * start of consumption and the end of the stream; the emitter turns the state into the
  * `adapter.response.body.read` counter.
  */
-class BoundedBodyCapture(
+internal class BoundedBodyCapture(
     private val maxBytes: Int,
 ) {
     private val buffer = ByteArrayOutputStream()

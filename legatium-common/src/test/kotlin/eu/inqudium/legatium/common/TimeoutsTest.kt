@@ -52,6 +52,11 @@ class TimeoutsTest {
 
     @Test
     fun `should not classify ordinary failures or a missing throwable as a timeout`() {
+        // What is tested: the negative side of the classification - a plain I/O error, a state error
+        //   wrapping one, and null.
+        // Success criteria: false for all three.
+        // Why it matters: a walk that matched a superclass too eagerly would report every connection reset
+        //   as a timeout and make the `timeout` outcome meaningless on the dashboards.
         // Given/When/Then: I/O errors, state errors and null are plain failures
         assertThat(Timeouts.isTimeout(IOException("connection reset"))).isFalse()
         assertThat(Timeouts.isTimeout(IllegalStateException("boom", IOException("reset")))).isFalse()

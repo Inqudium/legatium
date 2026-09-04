@@ -106,7 +106,7 @@ class ClientRequestLoggingMetricsTest {
             // Why it matters: a body nobody consumes must stay VISIBLE - the gauge baseline is the only
             //   signal for that silent-loss mode.
             // Given/When
-            val response = filter.filter(request(), answering(body = "x")).block()!!
+            val response = requireNotNull(filter.filter(request(), answering(body = "x")).block())
             assertThat(gauge()).isEqualTo(1.0)
             response.releaseBody().block()
 
@@ -118,6 +118,12 @@ class ClientRequestLoggingMetricsTest {
 
         @Test
         fun `should count the request-id origin per source`() {
+            // What is tested: metrics.requestId with the RequestIdSource ClientIdentity resolved -
+            //   a conformant traceparent, an accepted correlation header, and neither.
+            // Success criteria: the correlation counter shows one increment under each of trace,
+            //   header and generated.
+            // Why it matters: a rising `generated` share is the one signal that the host stopped
+            //   propagating its trace or correlation context onto outbound calls.
             // Given/When
             filter.call(request { header("traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01") }, answering())
             filter.call(request { header("X-Correlation-Id", "c-1") }, answering())
@@ -131,11 +137,18 @@ class ClientRequestLoggingMetricsTest {
 
         @Test
         fun `should share one metrics owner between two filters on the same registry`() {
+            // What is tested: ClientLoggingMetrics.forRegistry handing a second filter on the same
+            //   registry the existing owner instead of a new one with an ignored gauge
+            //   registration.
+            // Success criteria: the gauge read through the FIRST filter's registry moves to 1 and
+            //   back to 0 for an exchange the SECOND filter carries.
+            // Why it matters: a duplicate owner's gauge would be silently dropped by Micrometer and
+            //   that filter's open exchanges would become invisible on the liveness signal.
             // Given
             val second = ClientRequestLoggingFilter(properties, { ticker.get() }, { "generated-43" }, registry)
 
             // When/Then
-            val response = second.filter(request(), answering()).block()!!
+            val response = requireNotNull(second.filter(request(), answering()).block())
             assertThat(gauge()).isEqualTo(1.0)
             response.releaseBody().block()
             assertThat(gauge()).isZero()
@@ -146,6 +159,13 @@ class ClientRequestLoggingMetricsTest {
     inner class `Body meters` {
         @Test
         fun `should record body sizes and the response read state under template and host, independent of the level gate`() {
+            // What is tested: recordBodySizes in the emitter with both measure flags on and the
+            //   logger at OFF - the request tee through the inserter wrap, the response tee, and
+            //   the read-state counter.
+            // Success criteria: 5 request bytes and 6 response bytes recorded under the template
+            //   and host tags, the read counter at 1 for state=complete, and no event emitted.
+            // Why it matters: metrics run before the level gate; a size sample that vanished when
+            //   the logger is quiet would make the meters depend on log configuration.
             // Given
             val measuring =
                 ClientRequestLoggingFilter(
@@ -203,6 +223,12 @@ class ClientRequestLoggingMetricsTest {
 
         @Test
         fun `should not record a read state when the call produced no response`() {
+            // What is tested: the `exchange.response != null` guard around metrics.responseBodyRead
+            //   for a connector error before any status line.
+            // Success criteria: no counter exists under adapter.response.body.read after the failed
+            //   call.
+            // Why it matters: a call that never got an answer has no body to consume; counting it
+            //   as `unread` would inflate the discarded-payload share the counter exists to show.
             // Given
             val measuring = ClientRequestLoggingFilter(properties.copy(measureResponseBodySize = true), { ticker.get() }, { "generated-42" }, registry)
 
@@ -218,6 +244,12 @@ class ClientRequestLoggingMetricsTest {
     inner class `Fail-open stages` {
         @Test
         fun `should degrade to a pass-through and count stage wiring when the id generator throws`() {
+            // What is tested: wireOrNull catching an exception from ClientIdentity.resolve and
+            //   returning null, so filter() falls through to next.exchange(request).
+            // Success criteria: the caller receives the body, no event is logged, the fail-open
+            //   counter shows stage=wiring at 1 and the gauge is back at 0.
+            // Why it matters: a broken host collaborator must cost the log line, never the call -
+            //   and the gauge must not be left up by an exchange that was never opened.
             // Given
             val broken = ClientRequestLoggingFilter(properties, { ticker.get() }, { throw IllegalStateException("no ids") }, registry)
 
@@ -260,6 +292,13 @@ class ClientRequestLoggingMetricsTest {
 
         @Test
         fun `should confine an arrival-line backend failure and count stage arrival`() {
+            // What is tested: the failOpen guard of logRequestStart - a TurboFilter throws on the
+            //   INFO level check of the exchange logger while the arrival line is being written.
+            // Success criteria: the exchange proceeds, the caller gets the body, the fail-open
+            //   counter shows stage=arrival at 1, and the completion line (armed off by then) is
+            //   still emitted.
+            // Why it matters: the start line is optional and must never take the call or the
+            //   completion line down with it when the logging backend misbehaves.
             // Given: a logging backend whose level check throws for the exchange logger at INFO
             val context = LoggerFactory.getILoggerFactory() as LoggerContext
             val exchangeLogger = properties.loggerName
@@ -283,7 +322,7 @@ class ClientRequestLoggingMetricsTest {
                 val announcing = ClientRequestLoggingFilter(properties.copy(logRequestStart = true), { ticker.get() }, { "generated-42" }, registry)
 
                 // When
-                val response = announcing.filter(request(), answering(body = "served")).block()!!
+                val response = requireNotNull(announcing.filter(request(), answering(body = "served")).block())
                 armed = false
                 val body = response.bodyToMono(String::class.java).block()
 
@@ -298,6 +337,14 @@ class ClientRequestLoggingMetricsTest {
 
         @Test
         fun `should keep working with a private meter when the host registry rejects a registration`() {
+            // What is tested: registerOrFallback in ClientLoggingMetrics - the events counter's
+            //   success id is already taken by a Gauge, so Micrometer rejects the counter
+            //   registration.
+            // Success criteria: the filter constructs, the call is logged, the conflicting id holds
+            //   no counter in the host registry while the other outcomes registered normally.
+            // Why it matters: a name clash with another library must neither abort the context
+            //   start nor suppress the exchange event - the one meter goes private, everything else
+            //   keeps exporting.
             // Given: the events meter's success id taken by a gauge
             val conflicting: MeterRegistry = SimpleMeterRegistry()
             Gauge.builder(ClientLoggingMetrics.EVENTS_METER) { 1.0 }.tag("outcome", "success").register(conflicting)
@@ -314,6 +361,12 @@ class ClientRequestLoggingMetricsTest {
 
         @Test
         fun `should count a throwing host counter as stage wiring and still log the exchange`() {
+            // What is tested: updateQuietly around metrics.requestId - the host registry hands out
+            //   a correlation counter whose increment throws during wiring.
+            // Success criteria: the exchange is logged once and the fail-open counter shows
+            //   stage=wiring at 1.
+            // Why it matters: without the guard the throw would surface in wireOrNull and degrade
+            //   the call to an unlogged pass-through because of a broken bookkeeping counter.
             // Given
             val hostile: MeterRegistry =
                 object : SimpleMeterRegistry() {

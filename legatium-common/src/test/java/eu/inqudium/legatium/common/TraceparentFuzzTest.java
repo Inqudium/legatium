@@ -24,6 +24,13 @@ class TraceparentFuzzTest {
 
     @FuzzTest(maxDuration = "10m")
     void parserUpholdsItsContract(FuzzedDataProvider data) {
+        // What is tested: Traceparent.parse against arbitrary input - the negative oracle (never throws,
+        //   accepts only well-formed lowercase-hex ids of fixed length, neither all zeros) and the positive
+        //   oracle (a structurally valid version-00 header built from fuzzed hex always parses).
+        // Success criteria: no exception and no verdict that contradicts either oracle for any input
+        //   Jazzer generates, the checked-in corpus included.
+        // Why it matters: the header is peer-controlled; a throw would break a call on the fail-open
+        //   path, a false accept would join the event to a foreign trace, a false reject would drop it.
         if (data.consumeBoolean()) {
             // Positive oracle: a conformant version-00 header must parse.
             String traceId = hex(data, 32, true);

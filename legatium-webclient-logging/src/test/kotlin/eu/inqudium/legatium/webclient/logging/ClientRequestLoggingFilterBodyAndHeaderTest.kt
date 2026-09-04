@@ -76,6 +76,15 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
     inner class `Header selection and masking` {
         @Test
         fun `should log selected request headers multi-value, mask the configured ones stably and include the sent correlation header`() {
+            // What is tested: HeaderLogProperties.select over the OUTGOING request's HttpHeaders -
+            //   explicit includes, a two-valued header joined, a masked name rendered by the
+            //   default fingerprint, and the correlation header the filter itself added.
+            // Success criteria: the field joins both Accept values with ", ", renders Authorization
+            //   as the DEFAULT masker's output without the plaintext, and shows X-Correlation-Id as
+            //   "generated-42".
+            // Why it matters: the field must describe the request as it went over the wire,
+            //   including the header this module put there, and a masked value must be the stable
+            //   fingerprint a reader can correlate.
             // Given
             val filter =
                 filterWith(
@@ -134,6 +143,13 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
         @Test
         fun `should log the selected response headers as the peer sent them`() {
+            // What is tested: the response-side selection at emission - a wildcard include, an
+            //   exclude that wins over it, and an unmasked name rendered in plaintext.
+            // Success criteria: Content-Type appears with its literal value, Set-Cookie appears
+            //   nowhere in the field.
+            // Why it matters: a wildcard include is the debugging configuration; the exclude and
+            //   the plaintext allowlist are what keep a session cookie out of the line while the
+            //   content type stays readable.
             // Given: a wildcard include with one exclusion and one name allowed in plaintext
             val filter =
                 filterWith(
@@ -200,6 +216,12 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
         @Test
         fun `should truncate the logged request body at the capture limit and say so`() {
+            // What is tested: a request-side capture with maxBodyBytes below the body length, fed
+            //   through the inserter wrap's tee.
+            // Success criteria: the field holds the first 4 bytes plus the truncation note with the
+            //   exact 10-byte total.
+            // Why it matters: the cap bounds log volume and heap per call; the note tells the
+            //   reader that the body shown is a prefix and how much really went out.
             // Given
             val filter = filterWith(base.copy(logRequestBody = BodyLogMode.ALWAYS, maxBodyBytes = 4))
             val request = request(method = HttpMethod.POST) { body(BodyInserters.fromValue("0123456789")) }
@@ -213,6 +235,12 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
         @Test
         fun `should omit the request body key for a bodiless request`() {
+            // What is tested: a GET without an inserter body under logRequestBody=ALWAYS - the tee
+            //   sees setComplete only, the capture stays at zero bytes and loggedValue returns
+            //   null.
+            // Success criteria: the event carries no adapter_request_body key at all.
+            // Why it matters: an empty-string field on every bodiless call would be noise and would
+            //   make "no body" indistinguishable from "an empty body".
             // Given/When
             filterWith(base.copy(logRequestBody = BodyLogMode.ALWAYS)).call(request(), writingThenAnswering())
 
@@ -225,6 +253,13 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
     inner class `Response body tee` {
         @Test
         fun `should log the response body the application consumed and deliver identical content`() {
+            // What is tested: the ObservedBody tee in the default consumption path -
+            //   bodyToMono(String) reads the body through the mutated response.
+            // Success criteria: the caller receives "hello" unchanged and the event logs the same
+            //   text.
+            // Why it matters: the tee is a passive copy; a body that arrived altered or a log that
+            //   showed something else than what the application read would both be bugs of the same
+            //   mechanism.
             // Given
             val filter = filterWith(base.copy(logResponseBody = BodyLogMode.ALWAYS))
 
@@ -260,6 +295,12 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
         @Test
         fun `should copy nothing at all in count-only mode while still counting every byte`() {
+            // What is tested: tee() against a capture with limit 0 - remainingCapacity is 0, so the
+            //   copy branch is skipped and the whole buffer goes to count().
+            // Success criteria: totalBytes is 7 and the logged value is the bare truncation note
+            //   with that total.
+            // Why it matters: measure-only mode installs exactly this capture on every call; it
+            //   must cost no allocation per buffer while keeping the size sample exact.
             // Given: limit 0 - the measure-only mode
             val capture = BoundedBodyCapture(0)
             val buffer = DefaultDataBufferFactory.sharedInstance.wrap("payload".toByteArray())
@@ -274,6 +315,12 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
         @Test
         fun `should truncate the logged response body at the capture limit and keep the exact total`() {
+            // What is tested: a response-side capture with maxBodyBytes below the body length, fed
+            //   through the ObservedBody tee.
+            // Success criteria: the field holds the first 4 bytes plus the truncation note with the
+            //   exact 10-byte total.
+            // Why it matters: the cap protects heap and log volume on the response side too, and
+            //   the total must stay exact even though only a prefix was copied.
             // Given
             val filter = filterWith(base.copy(logResponseBody = BodyLogMode.ALWAYS, maxBodyBytes = 4))
 
@@ -286,6 +333,12 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
         @Test
         fun `should decode the response body with the charset the peer declared`() {
+            // What is tested: declaredCharsetOrUtf8 on the RESPONSE headers at emission - the
+            //   Content-Type charset parameter selects the decoder for the captured bytes.
+            // Success criteria: the ISO-8859-1 bytes of "café" log as "café", not as a mojibake
+            //   sequence.
+            // Why it matters: a peer that does not speak UTF-8 must still yield a readable body
+            //   field; the decoder must follow the header, not a default.
             // Given
             val filter = filterWith(base.copy(logResponseBody = BodyLogMode.ALWAYS))
             val latin =
@@ -304,6 +357,11 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
         @Test
         fun `should omit the response body key when no bytes flowed`() {
+            // What is tested: an empty response body under logResponseBody=ALWAYS - the tee sees no
+            //   buffer, loggedValue returns null and the *IfPresent helper drops the field.
+            // Success criteria: the event carries no adapter_response_body key.
+            // Why it matters: an empty field on every bodiless answer would be noise and would hide
+            //   the difference between "nothing sent" and "empty body sent".
             // Given/When: a bodiless answer, released
             filterWith(base.copy(logResponseBody = BodyLogMode.ALWAYS)).call(request(), answering())
 
@@ -377,6 +435,13 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
         @Test
         fun `should log both bodies of a 5xx answer in on-failure mode`() {
+            // What is tested: the on-failure gate for a 5xx - classified as outcome failure without
+            //   an error signal, so both captures are written.
+            // Success criteria: outcome failure, the request body "sent" and the response body
+            //   "upstream down" on the line.
+            // Why it matters: a 5xx is the case an operator wants the bodies for, and the request
+            //   body was teed before the outcome was known - the on-failure capture must not have
+            //   thrown it away.
             // Given/When: a failure outcome without an error signal
             filterWith(onFailure).call(posting("sent"), writingThenAnswering(answer(HttpStatus.BAD_GATEWAY, "upstream down")))
 
@@ -389,6 +454,12 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
         @Test
         fun `should log the teed request body of a call that failed after sending it`() {
+            // What is tested: on-failure with an error signal AFTER the request body was written -
+            //   no response exists, the exchange completes through doFinally on the response Mono.
+            // Success criteria: the caller gets the IOException, the line carries outcome failure
+            //   and the request body, and no response body key.
+            // Why it matters: for a connection that dropped after the upload the request body is
+            //   the only payload evidence there is; it must survive to the failure line.
             // Given: a connector that takes the body and then fails without a response
             val refused =
                 ExchangeFunction { request ->
@@ -427,6 +498,13 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
         @Test
         fun `should still measure the size of a body it withholds`() {
+            // What is tested: on-failure plus measureRequestBodySize on a successful call - the
+            //   capture is installed for logging, the emitter records its size and then discards
+            //   the text.
+            // Success criteria: the request body size summary totals 4 bytes while the event has no
+            //   adapter_request_body key.
+            // Why it matters: metrics run before the level and outcome gates; a size sample must
+            //   not depend on whether the body ends up on the line.
             // Given: on-failure plus measuring, on an own registry
             val registry = SimpleMeterRegistry()
             val measuring = ClientRequestLoggingFilter(onFailure.copy(measureRequestBodySize = true), { ticker.get() }, { "g" }, registry)

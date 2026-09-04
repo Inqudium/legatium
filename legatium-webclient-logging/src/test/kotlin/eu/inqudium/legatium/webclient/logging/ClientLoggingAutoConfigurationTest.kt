@@ -31,6 +31,13 @@ class ClientLoggingAutoConfigurationTest {
 
     @Test
     fun `should register the filter, the defaults and the customizer`() {
+        // What is tested: the default bean set of the auto-configuration in a plain context without
+        //   a host bean - filter, time source, id generator, masker and the WebClientCustomization
+        //   nested config.
+        // Success criteria: each type is present exactly once and the customizer bean exists by
+        //   name.
+        // Why it matters: dropping the module on the classpath is the whole activation story; a
+        //   missing default bean would fail the context of every host that does not define its own.
         // Given/When
         contextRunner.run { context ->
             // Then
@@ -75,6 +82,11 @@ class ClientLoggingAutoConfigurationTest {
 
     @Test
     fun `should back off entirely when disabled by the property`() {
+        // What is tested: the class-level @ConditionalOnProperty on `adapter-logging.enabled`.
+        // Success criteria: with the property false neither the filter, the defaults, the bound
+        //   properties nor the customizer exist.
+        // Why it matters: the switch-off must leave no trace - a lingering customizer would still
+        //   attach a filter, a lingering default bean could collide with a host's own.
         // Given/When
         contextRunner.withPropertyValues("adapter-logging.enabled=false").run { context ->
             // Then
@@ -88,6 +100,12 @@ class ClientLoggingAutoConfigurationTest {
 
     @Test
     fun `should bind the identical adapter-logging namespace`() {
+        // What is tested: @EnableConfigurationProperties binding of the shared
+        //   ClientLoggingProperties under the `adapter-logging` prefix - a scalar, a list, a nested
+        //   header section and a boolean.
+        // Success criteria: the bound bean carries the four configured values.
+        // Why it matters: the RestClient twin binds the same class under the same prefix; a host
+        //   with both modules configures them once, so the keys must resolve identically here.
         // Given/When
         contextRunner
             .withPropertyValues(
@@ -107,6 +125,13 @@ class ClientLoggingAutoConfigurationTest {
 
     @Test
     fun `should let a host filter bean win and consume a host registry`() {
+        // What is tested: the @ConditionalOnMissingBean back-off for the filter and the masker, and
+        //   the ObjectProvider consumption of a host MeterRegistry.
+        // Success criteria: the host filter is the single filter bean and the one the builder
+        //   carries, the host registry holds the module's three fail-open counters, and the host
+        //   masker renders `***`.
+        // Why it matters: a host that replaces the filter must not get a second one, and the module
+        //   must export into the host's registry rather than define one of its own.
         // Given/When
         contextRunner.withUserConfiguration(HostConfig::class.java).run { context ->
             // Then
@@ -125,6 +150,13 @@ class ClientLoggingAutoConfigurationTest {
 
     @Test
     fun `should keep the filter bean without the customizer when Boot's webclient module is absent`() {
+        // What is tested: the @ConditionalOnClass(WebClientCustomizer) guard on the nested
+        //   customization, with the class hidden by a FilteredClassLoader.
+        // Success criteria: the context starts, the filter bean exists, the customizer bean does
+        //   not.
+        // Why it matters: spring-boot-webclient is an optional dependency; a host building its
+        //   clients by hand must still get the filter bean without a ClassNotFoundError at context
+        //   start.
         // Given/When: the customizer contract hidden from the classloader
         ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(ClientLoggingAutoConfiguration::class.java))
@@ -139,6 +171,12 @@ class ClientLoggingAutoConfigurationTest {
 
     @Test
     fun `should ship the auto-configuration through the imports resource`() {
+        // What is tested: the AutoConfiguration.imports resource under META-INF/spring on the test
+        //   classpath.
+        // Success criteria: one of the imports files names ClientLoggingAutoConfiguration by its
+        //   FQCN.
+        // Why it matters: Boot discovers auto-configurations only through this file - without the
+        //   entry the module is inert on every classpath and no other test would notice.
         // Given/When
         val lines =
             javaClass.classLoader

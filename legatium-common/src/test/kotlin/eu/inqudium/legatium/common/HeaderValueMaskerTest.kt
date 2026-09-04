@@ -22,6 +22,11 @@ class HeaderValueMaskerTest {
 
     @Test
     fun `should render identical values identically under the same key`() {
+        // What is tested: stability of the keyed fingerprint - within one masker and across two maskers
+        //   built from the same key.
+        // Success criteria: the same value renders the same string in both cases.
+        // Why it matters: a per-instance nonce or salt would keep the shape but break the correlation of a
+        //   masked token across events, twins and the inbound sibling.
         // Given/When/Then: stability is what keeps a masked token correlatable
         val masker = HeaderValueMasker.keyed("k")
         assertThat(masker.mask("Bearer x")).isEqualTo(masker.mask("Bearer x"))
@@ -41,6 +46,10 @@ class HeaderValueMaskerTest {
 
     @Test
     fun `should reject a blank key`() {
+        // What is tested: the blank-key guard of `keyed`, reached directly and through `forKey`.
+        // Success criteria: both throw an IllegalArgumentException.
+        // Why it matters: a whitespace key is not empty, so `forKey` would otherwise build an HMAC under a
+        //   worthless secret and present the result as guess-proof.
         // Given/When/Then: whitespace is not a secret
         assertThat(catchThrowable { HeaderValueMasker.keyed(" ") }).isInstanceOf(IllegalArgumentException::class.java)
         assertThat(catchThrowable { HeaderValueMasker.forKey("  ") }).isInstanceOf(IllegalArgumentException::class.java)

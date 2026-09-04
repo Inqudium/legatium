@@ -141,6 +141,11 @@ class ClientLogFieldTest {
 
         @Test
         fun `should map the numeric and boolean shapes the code guarantees`() {
+            // What is tested: the type half of the lockstep - the three non-keyword fields against the JVM
+            //   type the enum declares (Long duration, Int status, Boolean slow flag).
+            // Success criteria: duration maps as long, the status code as short, the slow flag as boolean.
+            // Why it matters: a keyword duration cannot be ranged or percentiled, and a status mapped as a
+            //   number that is summed reads as garbage - the index type is what makes the dashboards work.
             // Given / When / Then: the shape each field declares and the type the index expects
             //   must describe the same value - long duration, short status (three digits, a label never
             //   summed), boolean flags
@@ -151,6 +156,12 @@ class ClientLogFieldTest {
 
         @Test
         fun `should be a component template, claiming no indices of its own`() {
+            // What is tested: the top-level shape of the shipped JSON - a component template, not an index
+            //   template.
+            // Success criteria: the root carries only `template` and `_meta`; in particular no
+            //   `index_patterns`.
+            // Why it matters: an index_patterns entry would compete with the host's own template on priority
+            //   and claim data streams the host never meant to hand to this module.
             // Given / When: the top-level keys
             val root: Map<String, Any> = JsonPath.read(template, "$")
 

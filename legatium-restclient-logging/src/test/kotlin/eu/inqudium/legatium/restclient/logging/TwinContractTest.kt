@@ -3,6 +3,7 @@ package eu.inqudium.legatium.restclient.logging
 import eu.inqudium.legatium.common.BodyReadState
 import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
+import eu.inqudium.legatium.common.ClientOutcome
 import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.TraceMdcKeys
@@ -37,6 +38,11 @@ class TwinContractTest {
 
     @Test
     fun `should pin the response body read states to the literal twin contract`() {
+        // What is tested: the tagValue literals of BodyReadState and the size of the enum - the
+        //   state tag of adapter.response.body.read, spelled out rather than derived from the enum.
+        // Success criteria: unread, partial and complete exactly, and no fourth value.
+        // Why it matters: the tag values are what alert rules and dashboards key on across both
+        //   twins; an added or renamed state would split or silently empty those queries.
         // Given/When/Then: the literal tag values, pinned
         assertThat(BodyReadState.UNREAD.tagValue).isEqualTo("unread")
         assertThat(BodyReadState.PARTIAL.tagValue).isEqualTo("partial")
@@ -46,6 +52,13 @@ class TwinContractTest {
 
     @Test
     fun `should pin the MDC keys to the literal twin contract`() {
+        // What is tested: the MdcKeys and TraceMdcKeys literals - the adapter_ family every line of
+        //   a call carries, and Boot's traceId/spanId keys the emission overlay reuses.
+        // Success criteria: adapter_request_id, adapter_method, adapter_route, traceId and spanId,
+        //   spelled exactly so.
+        // Why it matters: an encoder emits these as fields by name - the adapter_ prefix keeps them
+        //   beside limesium's endpoint_ keys, and only Boot's own trace key names make the join with
+        //   the tracing bridge hold.
         // Given/When/Then: the literal MDC keys, pinned - the client family beside limesium's
         //   endpoint family, and Boot's own trace keys for the join
         assertThat(MdcKeys.REQUEST_ID).isEqualTo("adapter_request_id")
@@ -57,6 +70,14 @@ class TwinContractTest {
 
     @Test
     fun `should pin the masking fingerprint format to the literal twin contract`() {
+        // What is tested: HeaderValueMasker.DEFAULT end to end - character length, colon, first 8
+        //   bytes of SHA-256 over the UTF-8 bytes as lowercase hex - against a hardcoded expected
+        //   value.
+        // Success criteria: "secret-token" renders as "12:930bbdc51b6aed5c", the same literal the
+        //   other twin and limesium pin.
+        // Why it matters: the fingerprint is stable so a masked token correlates across the server
+        //   line and both client lines; a changed digest prefix or hex casing would break that
+        //   correlation without failing anything.
         // The expected value is hardcoded, not derived: the first 64 bits of SHA-256 over the UTF-8
         //   bytes are stable across JVMs - and identical to limesium's, so a masked token correlates
         //   across the server line and the client line.
@@ -66,11 +87,17 @@ class TwinContractTest {
 
     @Test
     fun `should pin the outcome vocabulary of this stack`() {
+        // What is tested: the tagValue literals of the three ClientOutcome values the RestClient
+        //   stack pre-registers on the events counter - success, failure and timeout; cancelled
+        //   belongs to the reactive twin alone.
+        // Success criteria: the three tag values match the literals exactly.
+        // Why it matters: adapter_outcome and the outcome tag of adapter.logging.events are queried
+        //   by these strings; a renamed value would empty every existing alert on this stack.
         // Given/When/Then: the literal outcome vocabulary, pinned - the blocking stack has no
         //   cancellation
-        assertThat(ClientLoggingMetrics.OUTCOME_SUCCESS).isEqualTo("success")
-        assertThat(ClientLoggingMetrics.OUTCOME_FAILURE).isEqualTo("failure")
-        assertThat(ClientLoggingMetrics.OUTCOME_TIMEOUT).isEqualTo("timeout")
+        assertThat(ClientOutcome.SUCCESS.tagValue).isEqualTo("success")
+        assertThat(ClientOutcome.FAILURE.tagValue).isEqualTo("failure")
+        assertThat(ClientOutcome.TIMEOUT.tagValue).isEqualTo("timeout")
     }
 
     @Test

@@ -1,8 +1,10 @@
 package eu.inqudium.legatium.restclient.logging
 
+import eu.inqudium.legatium.common.Classification
 import eu.inqudium.legatium.common.ClientLogField
 import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
+import eu.inqudium.legatium.common.ClientOutcome
 import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.MdcScope
@@ -137,18 +139,126 @@ internal class ExchangeLogEmitter(
 
     private fun emitExchange(exchange: Exchange) {
         val elapsedNanos = nanoTime.nanoTime() - exchange.startNanos
-        val durationMs = elapsedNanos / NANOS_PER_MS
-        val failure = exchange.failure
-        // Status and headers were snapshotted at handover (the interceptor counted and warned if the
-        // engine refused): the emission runs after the client's close and never asks the response again.
-        val status: Int? = exchange.responseStatus
-        val headersSnapshot = exchange.responseHeaders
         // Full-precision, overflow-free comparison (twin parity): a 1.5 ms threshold must not flag a 1 ms
         // exchange. The logged duration keeps millisecond resolution - hence the 1 ms floor in the properties.
         val slow = Duration.ofNanos(elapsedNanos) >= properties.slowRequestThreshold
         // Metrics BEFORE the level gate: a metric must not depend on how loud the logger is configured.
-        // Guarded on their own: a host registry that rejects the body-size summary (meter-id conflict)
-        // costs the sample, never the event (twin parity with the WebClient module).
+        recordBodySizesQuietly(exchange)
+        // Status and headers were snapshotted at handover (the interceptor counted and warned if the
+        // engine refused): the emission runs after the client's close and never asks the response again.
+        val status = exchange.responseStatus
+        val classification = classify(exchange.failure, status)
+        // Slow escalates INFO -> WARN without changing the outcome.
+        val level = if (slow && classification.level == Level.INFO) Level.WARN else classification.level
+        if (!exchangeLog.isEnabledForLevel(level)) {
+            return
+        }
+        // The emission scope overlays the trace context parsed from the outgoing traceparent header
+        // (ADR-0002), so the encoder emits the SAME traceId/spanId the request went out with. The ids
+        // ride the MDC only, not the key-values; the message suffix is the one extra, for plain-text
+        // appenders that drop the MDC. The scope OWNS the trace keys: an id that was not parsed is
+        // removed for the emission, so a stale bridge id on the closing thread cannot join the event to
+        // a foreign trace.
+        val mdcScope = MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true)
+        try {
+            logEvent(exchange, classification, level, status, elapsedNanos / NANOS_PER_MS, slow)
+        } finally {
+            restoreQuietly(mdcScope, exchange)
+        }
+    }
+
+    /**
+     * The SLF4J level carries the severity, adapter_outcome the semantic - decoupled on purpose (see
+     * ClientLogField.OUTCOME): a timeout is WARN with its own outcome (the peer is slow, not broken),
+     * any other thrown call is ERROR, a 5xx answer without an exception is WARN (the peer answered, the
+     * application decides what to make of it); all of the latter two carry "failure".
+     */
+    private fun classify(
+        failure: Throwable?,
+        status: Int?,
+    ): Classification =
+        when {
+            failure != null && Timeouts.isTimeout(failure) -> Classification(Level.WARN, ClientOutcome.TIMEOUT, failure)
+            failure != null -> Classification(Level.ERROR, ClientOutcome.FAILURE, failure)
+            (status ?: 0) >= 500 -> Classification(Level.WARN, ClientOutcome.FAILURE, null)
+            else -> Classification(Level.INFO, ClientOutcome.SUCCESS, null)
+        }
+
+    /** The one immutable builder chain of the completion event; optional fields are left off by the *IfPresent helpers. */
+    private fun logEvent(
+        exchange: Exchange,
+        classification: Classification,
+        level: Level,
+        status: Int?,
+        durationMs: Long,
+        slow: Boolean,
+    ) {
+        val headers = exchange.responseHeaders
+        val (requestBody, responseBody) = loggedBodies(exchange, classification.outcome, status, headers)
+        val traceSuffix =
+            if (exchange.traceId != null || exchange.spanId != null) {
+                " ${TraceMdcKeys.TRACE_ID}=${exchange.traceId ?: "-"} ${TraceMdcKeys.SPAN_ID}=${exchange.spanId ?: "-"}"
+            } else {
+                ""
+            }
+        exchangeLog
+            .atLevel(level)
+            .setMessage(
+                "Adapter http exchange ${exchange.method} ${exchange.target} -> ${status ?: "-"} " +
+                    "[${MdcKeys.REQUEST_ID}=${exchange.requestId}$traceSuffix]",
+            ).addKeyValue(ClientLogField.OUTCOME, classification.outcome.tagValue)
+            .addKeyValue(ClientLogField.DURATION_MS, durationMs)
+            .addKeyValue(ClientLogField.REQUEST_METHOD, exchange.method)
+            .addKeyValueIfPresent(ClientLogField.RESPONSE_STATUS_CODE, status)
+            .addKeyValueIfPresent(ClientLogField.URL_HOST, exchange.host)
+            .addKeyValue(ClientLogField.URL_PATH, exchange.path)
+            .setCauseIfPresent(classification.cause)
+            .addKeyValueIfPresent(ClientLogField.SLOW, true.takeIf { slow })
+            .addKeyValueIfPresent(ClientLogField.URL_TEMPLATE, exchange.uriTemplate)
+            .addKeyValueIfPresent(ClientLogField.URL_QUERY, exchange.query)
+            .addKeyValueIfPresent(ClientLogField.REQUEST_HEADERS, renderHeaders(exchange.requestHeaders))
+            .addKeyValueIfPresent(ClientLogField.RESPONSE_HEADERS, renderHeaders(selectedResponseHeaders(headers)))
+            .addKeyValueIfPresent(ClientLogField.REQUEST_BODY, requestBody)
+            .addKeyValueIfPresent(ClientLogField.RESPONSE_BODY, responseBody)
+            .log()
+        // Guarded inside the metrics: a throwing host counter after a successful log() must not be
+        // reported as a lost emission.
+        metrics.eventEmitted(classification.outcome)
+    }
+
+    /** Multi-value resolution, like the request side: a single-value getFirst would silently truncate repeated headers (Set-Cookie being the classic). */
+    private fun selectedResponseHeaders(headers: HttpHeaders?): List<Pair<String, String>> =
+        headers?.let {
+            properties.responseHeaders.select(it.headerNames(), masker) { name ->
+                it[name]?.takeIf { values -> values.isNotEmpty() }?.joinToString(", ")
+            }
+        } ?: emptyList()
+
+    /**
+     * Body fields only when the direction's mode admits THIS outcome: `on-failure` captured the bytes
+     * (the outcome is unknown while they flow) and discards them here for a clean exchange (success
+     * outcome, no 4xx). A capture may also exist in count-only mode for the size metrics, and its empty
+     * buffer must not surface as a truncated-looking field.
+     */
+    private fun loggedBodies(
+        exchange: Exchange,
+        outcome: ClientOutcome,
+        status: Int?,
+        headers: HttpHeaders?,
+    ): Pair<String?, String?> {
+        val failed = outcome != ClientOutcome.SUCCESS || (status ?: 0) in 400..499
+        val requestBody = if (properties.logRequestBody.logs(failed)) exchange.requestCapture?.loggedValue(exchange.requestCharset) else null
+        val responseBody =
+            if (properties.logResponseBody.logs(failed)) {
+                exchange.responseCapture?.loggedValue(headers?.declaredCharsetOrUtf8() ?: StandardCharsets.UTF_8)
+            } else {
+                null
+            }
+        return requestBody to responseBody
+    }
+
+    /** Guarded on its own: a host registry that rejects the body-size summary (meter-id conflict) costs the sample, never the event. */
+    private fun recordBodySizesQuietly(exchange: Exchange) {
         try {
             recordBodySizes(exchange)
         } catch (e: Exception) {
@@ -162,116 +272,29 @@ internal class ExchangeLogEmitter(
                 )
             }
         }
-        // The SLF4J level carries the severity, adapter_outcome the semantic - decoupled on purpose (see
-        // ClientLogField.OUTCOME): a timeout is WARN with its own outcome (the peer is slow, not broken),
-        // any other thrown call is ERROR, a 5xx answer without an exception is WARN (the peer answered,
-        // the application decides what to make of it); all of the latter two carry "failure". A slow but
-        // otherwise healthy exchange escalates INFO -> WARN without changing outcome.
-        val classification =
-            when {
-                failure != null && Timeouts.isTimeout(failure) -> {
-                    Classification(Level.WARN, ClientLoggingMetrics.OUTCOME_TIMEOUT, failure)
-                }
+    }
 
-                failure != null -> {
-                    Classification(Level.ERROR, ClientLoggingMetrics.OUTCOME_FAILURE, failure)
-                }
-
-                (status ?: 0) >= 500 -> {
-                    Classification(Level.WARN, ClientLoggingMetrics.OUTCOME_FAILURE, null)
-                }
-
-                else -> {
-                    Classification(Level.INFO, ClientLoggingMetrics.OUTCOME_SUCCESS, null)
-                }
-            }
-        val outcome = classification.outcome
-        val cause = classification.cause
-        val level = if (slow && classification.level == Level.INFO) Level.WARN else classification.level
-        if (!exchangeLog.isEnabledForLevel(level)) {
-            return
-        }
-        // The emission scope overlays the trace context parsed from the outgoing traceparent header
-        // (ADR-0002), so the encoder emits the SAME traceId/spanId the request went out with. The ids
-        // ride the MDC only, not the key-values; the message suffix below is the one extra, for
-        // plain-text appenders that drop the MDC. The scope OWNS the trace keys: an id that was not
-        // parsed is removed for the emission, so a stale bridge id on the closing thread cannot join the
-        // event to a foreign trace.
-        val mdcScope =
-            MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true)
-        val traceSuffix =
-            if (exchange.traceId != null || exchange.spanId != null) {
-                " ${TraceMdcKeys.TRACE_ID}=${exchange.traceId ?: "-"} ${TraceMdcKeys.SPAN_ID}=${exchange.spanId ?: "-"}"
-            } else {
-                ""
-            }
+    /**
+     * Restoration guarded on its own, like the interceptor's call scope: a throwing MDC adapter here must
+     * neither be reported as a LOST emission (the event is already on the logger) nor mask an emission
+     * failure propagating out of the try - it costs the restoration, counted as stage=wiring.
+     */
+    private fun restoreQuietly(
+        scope: MdcScope,
+        exchange: Exchange,
+    ) {
         try {
-            // Multi-value resolution, like the request side: a single-value getFirst would silently
-            // truncate repeated headers (Set-Cookie being the classic).
-            val responseHeaders =
-                headersSnapshot?.let { headers ->
-                    properties.responseHeaders.select(headers.headerNames(), masker) { name ->
-                        headers[name]?.takeIf { it.isNotEmpty() }?.joinToString(", ")
-                    }
-                } ?: emptyList()
-            // Body fields only when the direction's mode admits THIS outcome: `on-failure` captured the
-            // bytes (the outcome is unknown while they flow) and discards them here for a clean exchange (success outcome, no 4xx). A
-            // capture may also exist in count-only mode for the size metrics, and its empty buffer must
-            // not surface as a truncated-looking field.
-            val failed = outcome != ClientLoggingMetrics.OUTCOME_SUCCESS || (status ?: 0) in 400..499
-            val requestBody =
-                if (properties.logRequestBody.logs(failed)) exchange.requestCapture?.loggedValue(exchange.requestCharset) else null
-            val responseBody =
-                if (properties.logResponseBody.logs(failed)) {
-                    exchange.responseCapture?.loggedValue(headersSnapshot?.declaredCharsetOrUtf8() ?: StandardCharsets.UTF_8)
-                } else {
-                    null
-                }
-            // One immutable builder chain; optional fields are left off by the *IfPresent helpers. Both
-            // halves of the path pair: the expanded path (high cardinality, per-call) and the
-            // low-cardinality URI template for grouping - only when the client recorded one. The host as
-            // its own field (the outbound coordinate), the query as its own field (the path excludes it).
-            exchangeLog
-                .atLevel(level)
-                .setMessage(
-                    "Adapter http exchange ${exchange.method} ${exchange.target} -> ${status ?: "-"} " +
-                        "[${MdcKeys.REQUEST_ID}=${exchange.requestId}$traceSuffix]",
-                ).addKeyValue(ClientLogField.OUTCOME, outcome)
-                .addKeyValue(ClientLogField.DURATION_MS, durationMs)
-                .addKeyValue(ClientLogField.REQUEST_METHOD, exchange.method)
-                .addKeyValueIfPresent(ClientLogField.RESPONSE_STATUS_CODE, status)
-                .addKeyValueIfPresent(ClientLogField.URL_HOST, exchange.host)
-                .addKeyValue(ClientLogField.URL_PATH, exchange.path)
-                .setCauseIfPresent(cause)
-                .addKeyValueIfPresent(ClientLogField.SLOW, true.takeIf { slow })
-                .addKeyValueIfPresent(ClientLogField.URL_TEMPLATE, exchange.uriTemplate)
-                .addKeyValueIfPresent(ClientLogField.URL_QUERY, exchange.query)
-                .addKeyValueIfPresent(ClientLogField.REQUEST_HEADERS, renderHeaders(exchange.requestHeaders))
-                .addKeyValueIfPresent(ClientLogField.RESPONSE_HEADERS, renderHeaders(responseHeaders))
-                .addKeyValueIfPresent(ClientLogField.REQUEST_BODY, requestBody)
-                .addKeyValueIfPresent(ClientLogField.RESPONSE_BODY, responseBody)
-                .log()
-            // Guarded inside the metrics: a throwing host counter after a successful log() must not be
-            // reported as a lost emission.
-            metrics.eventEmitted(outcome)
-        } finally {
-            // Restoration guarded on its own, like the interceptor's call scope: a throwing MDC adapter
-            // here must neither be reported as a LOST emission (the event is already on the logger) nor
-            // mask an emission failure propagating out of the try - it costs the restoration, counted as
-            // stage=wiring.
-            try {
-                mdcScope.close()
-            } catch (e: Exception) {
-                reportQuietly {
-                    metrics.wiringFailure()
-                    internalLog.warn(
-                        "MDC restoration failed after emitting {} {} - the emitting thread may carry stale client keys: {}",
-                        exchange.method,
-                        exchange.target,
-                        e.toString(),
-                        e,
-                    )
-                }
+            scope.close()
+        } catch (e: Exception) {
+            reportQuietly {
+                metrics.wiringFailure()
+                internalLog.warn(
+                    "MDC restoration failed after emitting {} {} - the emitting thread may carry stale client keys: {}",
+                    exchange.method,
+                    exchange.target,
+                    e.toString(),
+                    e,
+                )
             }
         }
     }
@@ -303,13 +326,6 @@ internal class ExchangeLogEmitter(
         }
         return headers.joinToString(separator = ", ", prefix = "[", postfix = "]") { (name, value) -> "$name:\"$value\"" }
     }
-
-    /** The level/outcome/cause triple one exchange classifies to - the `when` above yields it as one value. */
-    private class Classification(
-        val level: Level,
-        val outcome: String,
-        val cause: Throwable?,
-    )
 
     companion object {
         private const val NANOS_PER_MS = 1_000_000L

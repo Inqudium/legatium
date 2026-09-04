@@ -40,6 +40,14 @@ class ClientLoggingAutoConfigurationTest {
 
     @Test
     fun `should register the interceptor, the defaults and both customizers`() {
+        // What is tested: the default bean set of the auto-configuration in a plain (non-web)
+        //   context with Boot's restclient auto-configurations present - interceptor, the three
+        //   @ConditionalOnMissingBean defaults and both nested customizer configurations.
+        // Success criteria: exactly one bean each of the interceptor, NanoTimeSource,
+        //   CorrelationIdGenerator and HeaderValueMasker, plus the two named customizer beans.
+        // Why it matters: a missing default would fail the interceptor's constructor injection, a
+        //   missing customizer would leave Boot's clients unlogged; the context runner has no web
+        //   type, pinning that no web application is required.
         // Given/When
         contextRunner.run { context ->
             // Then
@@ -89,6 +97,13 @@ class ClientLoggingAutoConfigurationTest {
 
     @Test
     fun `should back off entirely when disabled by the property`() {
+        // What is tested: the class-level @ConditionalOnProperty on adapter-logging.enabled - with
+        //   it false the whole configuration, including @EnableConfigurationProperties and the nested
+        //   customizer classes, is skipped.
+        // Success criteria: neither the interceptor, the defaults, the bound properties nor the
+        //   customizer bean exists.
+        // Why it matters: the kill switch must remove every trace of the module, not only the log
+        //   line - a leftover customizer or default bean would still shadow a host's own beans.
         // Given/When
         contextRunner.withPropertyValues("adapter-logging.enabled=false").run { context ->
             // Then
@@ -102,6 +117,13 @@ class ClientLoggingAutoConfigurationTest {
 
     @Test
     fun `should bind the adapter-logging namespace`() {
+        // What is tested: property binding of ClientLoggingProperties under the adapter-logging
+        //   prefix - a scalar, a list, a nested header section and a boolean, through Boot's relaxed
+        //   binding.
+        // Success criteria: the bound bean reports logger-name, exclude-hosts,
+        //   request-headers.masked and measure-response-body-size exactly as configured.
+        // Why it matters: the prefix and the nested section names are the documented configuration
+        //   contract; a rename in the properties class would silently ignore an operator's YAML.
         // Given/When
         contextRunner
             .withPropertyValues(
@@ -121,6 +143,15 @@ class ClientLoggingAutoConfigurationTest {
 
     @Test
     fun `should let a host interceptor bean win and consume a host registry`() {
+        // What is tested: the @ConditionalOnMissingBean back-off for the interceptor and the
+        //   masker, with the host-defined interceptor still handed to the customizer and the host's
+        //   MeterRegistry receiving the module's meters.
+        // Success criteria: the single interceptor bean is the host's, Boot's builder carries it as
+        //   the last interceptor, the host registry holds the three fail-open counters, and the
+        //   single masker renders the host's "***".
+        // Why it matters: a host must be able to replace the interceptor or the masking policy
+        //   without losing the customizer wiring, and the meters must land in the exported registry
+        //   rather than a private one.
         // Given/When
         contextRunner.withUserConfiguration(HostConfig::class.java).run { context ->
             // Then: the host's bean alone, wired into Boot's builder; the meters in the host registry
@@ -159,6 +190,12 @@ class ClientLoggingAutoConfigurationTest {
 
     @Test
     fun `should ship the auto-configuration through the imports resource`() {
+        // What is tested: the META-INF/spring/...AutoConfiguration.imports resource of the module -
+        //   the registration mechanism Boot 3+ uses instead of spring.factories.
+        // Success criteria: the merged import lines on the classpath contain the fully qualified
+        //   class name of ClientLoggingAutoConfiguration.
+        // Why it matters: the context-runner tests register the class explicitly; only this
+        //   resource makes the module active by merely being on a host's classpath.
         // Given/When: the merged AutoConfiguration.imports resources on the classpath
         val lines =
             javaClass.classLoader

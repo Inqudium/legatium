@@ -14,6 +14,43 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
+ * The disposition of one exchange - the value of `adapter_outcome` and the `outcome` tag of the events
+ * counter. A closed set, like every wire-bound vocabulary of the family: the tag value is the contract,
+ * the constant is the code's name for it. [CANCELLED] exists on the reactive stack only.
+ */
+internal enum class ClientOutcome(
+    val tagValue: String,
+) {
+    SUCCESS("success"),
+    FAILURE("failure"),
+    TIMEOUT("timeout"),
+    CANCELLED("cancelled"),
+}
+
+/** The `stage` tag of the fail-open counter: where a logging failure was swallowed. */
+internal enum class FailOpenStage(
+    val tagValue: String,
+) {
+    /** The exchange event was LOST. */
+    EMISSION("emission"),
+
+    /** The optional start line was lost. */
+    ARRIVAL("arrival"),
+
+    /** Wiring or bookkeeping around the call failed; the event usually still follows. */
+    WIRING("wiring"),
+}
+
+/** The `source` tag of the correlation counter: where an exchange's request id came from (ADR-0002). */
+internal enum class RequestIdSource(
+    val tagValue: String,
+) {
+    TRACE("trace"),
+    HEADER("header"),
+    GENERATED("generated"),
+}
+
+/**
  * The client stack a twin serves - the ONLY facts of the shared metrics owner that differ per twin: the
  * `client` tag of the open-exchanges gauge, the outcome vocabulary of the events counter, and the
  * wording of the gauge's description. Everything else about the six meters is one cross-stack contract
@@ -23,24 +60,19 @@ internal enum class ClientStack(
     /** The `client` tag value of the open-exchanges gauge. */
     val tag: String,
     /** The closed outcome vocabulary of this stack, pre-registered on the events counter. */
-    val outcomes: List<String>,
+    val outcomes: List<ClientOutcome>,
     /** The stack's own wording of what an open exchange is. */
     val openExchangesDescription: String,
 ) {
     RESTCLIENT(
         "restclient",
-        listOf(ClientLoggingMetrics.OUTCOME_SUCCESS, ClientLoggingMetrics.OUTCOME_FAILURE, ClientLoggingMetrics.OUTCOME_TIMEOUT),
+        listOf(ClientOutcome.SUCCESS, ClientOutcome.FAILURE, ClientOutcome.TIMEOUT),
         "Exchanges between interceptor entry and response close; a growing baseline means " +
             "responses are not being closed and exchange events are silently lost",
     ),
     WEBCLIENT(
         "webclient",
-        listOf(
-            ClientLoggingMetrics.OUTCOME_SUCCESS,
-            ClientLoggingMetrics.OUTCOME_FAILURE,
-            ClientLoggingMetrics.OUTCOME_TIMEOUT,
-            ClientLoggingMetrics.OUTCOME_CANCELLED,
-        ),
+        ClientOutcome.entries,
         "Exchanges between filter entry and the response body's terminal signal; a growing " +
             "baseline means response bodies are never consumed or released and exchange events " +
             "are silently lost",
@@ -108,11 +140,11 @@ internal class ClientLoggingMetrics private constructor(
     // the report about it is itself only a log line in the same possibly-broken pipeline. A counter
     // travels the independent metrics channel.
     private val failOpenCounters =
-        listOf(STAGE_EMISSION, STAGE_ARRIVAL, STAGE_WIRING).associateWith { stage ->
+        FailOpenStage.entries.associateWith { stage ->
             registerOrFallback(FAIL_OPEN_METER) { registry ->
                 Counter
                     .builder(FAIL_OPEN_METER)
-                    .tag("stage", stage)
+                    .tag("stage", stage.tagValue)
                     .description(
                         "Logging failures swallowed by the fail-open path; each increment is a lost or " +
                             "degraded log emission that never disturbed its outbound call",
@@ -128,7 +160,7 @@ internal class ClientLoggingMetrics private constructor(
             registerOrFallback(EVENTS_METER) { registry ->
                 Counter
                     .builder(EVENTS_METER)
-                    .tag("outcome", outcome)
+                    .tag("outcome", outcome.tagValue)
                     .description(
                         "Structured exchange events actually emitted on the exchange logger; reconcile " +
                             "against the log index to detect log-pipeline loss",
@@ -159,11 +191,11 @@ internal class ClientLoggingMetrics private constructor(
     // application stopped propagating traceparent (or a correlation header) onto its outbound calls - a
     // regression neither logs nor other metrics surface reliably.
     private val requestIdSourceCounters =
-        listOf(REQUEST_ID_SOURCE_TRACE, REQUEST_ID_SOURCE_HEADER, REQUEST_ID_SOURCE_GENERATED).associateWith { source ->
+        RequestIdSource.entries.associateWith { source ->
             registerOrFallback(CORRELATION_METER) { registry ->
                 Counter
                     .builder(CORRELATION_METER)
-                    .tag("source", source)
+                    .tag("source", source.tagValue)
                     .description(
                         "Origin of the exchange's request id: the traceparent trace id, " +
                             "the correlation header already on the request, or generated and sent (ADR-0002)",
@@ -171,18 +203,18 @@ internal class ClientLoggingMetrics private constructor(
             }
         }
 
-    fun emissionFailure() = failOpenCounters.getValue(STAGE_EMISSION).increment()
+    fun emissionFailure() = failOpenCounters.getValue(FailOpenStage.EMISSION).increment()
 
-    fun arrivalFailure() = failOpenCounters.getValue(STAGE_ARRIVAL).increment()
+    fun arrivalFailure() = failOpenCounters.getValue(FailOpenStage.ARRIVAL).increment()
 
-    fun wiringFailure() = failOpenCounters.getValue(STAGE_WIRING).increment()
+    fun wiringFailure() = failOpenCounters.getValue(FailOpenStage.WIRING).increment()
 
     /**
      * Counts one EMITTED exchange event; [outcome] must be one of this stack's [ClientStack.outcomes].
      * Guarded: the event is already on the logger when this runs, so a failing host counter must
      * neither be reported as a lost emission nor disturb the caller.
      */
-    fun eventEmitted(outcome: String) = updateQuietly(EVENTS_METER) { eventCounters.getValue(outcome).increment() }
+    fun eventEmitted(outcome: ClientOutcome) = updateQuietly(EVENTS_METER) { eventCounters.getValue(outcome).increment() }
 
     fun exchangeOpened() {
         openExchanges.incrementAndGet()
@@ -193,11 +225,10 @@ internal class ClientLoggingMetrics private constructor(
     }
 
     /**
-     * Counts the request-id origin; [source] must be one of the [REQUEST_ID_SOURCE_TRACE] family.
-     * Guarded like [eventEmitted]: a throwing host counter must not degrade the call to an unlogged
-     * pass-through.
+     * Counts the request-id origin. Guarded like [eventEmitted]: a throwing host counter must not degrade
+     * the call to an unlogged pass-through.
      */
-    fun requestId(source: String) =
+    fun requestId(source: RequestIdSource) =
         updateQuietly(CORRELATION_METER) {
             requestIdSourceCounters.getValue(source).increment()
         }
@@ -376,22 +407,5 @@ internal class ClientLoggingMetrics private constructor(
          * header onto its outbound calls.
          */
         const val CORRELATION_METER = "adapter.logging.correlation.id"
-
-        /** The closed outcome vocabulary - shared with the emitters, so counter keys and log field agree. */
-        const val OUTCOME_SUCCESS = "success"
-        const val OUTCOME_FAILURE = "failure"
-        const val OUTCOME_TIMEOUT = "timeout"
-
-        /** The reactive stack's own disposition - a subscription the caller abandoned; never emitted by the blocking twin. */
-        const val OUTCOME_CANCELLED = "cancelled"
-
-        private const val STAGE_EMISSION = "emission"
-        private const val STAGE_ARRIVAL = "arrival"
-        private const val STAGE_WIRING = "wiring"
-
-        /** The closed request-id source vocabulary of [CORRELATION_METER] - shared with the entry points. */
-        const val REQUEST_ID_SOURCE_TRACE = "trace"
-        const val REQUEST_ID_SOURCE_HEADER = "header"
-        const val REQUEST_ID_SOURCE_GENERATED = "generated"
     }
 }

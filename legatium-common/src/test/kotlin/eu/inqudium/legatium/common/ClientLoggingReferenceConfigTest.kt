@@ -1,7 +1,7 @@
 package eu.inqudium.legatium.common
 
 import org.assertj.core.api.Assertions.assertThat
-import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.Test
 import org.springframework.boot.context.properties.bind.BindException
 import org.springframework.boot.context.properties.bind.Binder
@@ -89,7 +89,8 @@ class ClientLoggingReferenceConfigTest {
         // Then
         assertThat(bound.logRequestBody).isEqualTo(BodyLogMode.ON_FAILURE)
         assertThat(bound.logResponseBody).isEqualTo(BodyLogMode.ALWAYS)
-        assertThatThrownBy { bind("adapter-logging.log-response-body" to "true") }.isInstanceOf(BindException::class.java)
+        val rejected = catchThrowable { bind("adapter-logging.log-response-body" to "true") }
+        assertThat(rejected).isInstanceOf(BindException::class.java)
     }
 }
 
@@ -98,12 +99,12 @@ private fun configurationKeysOf(
     type: KClass<*>,
     prefix: String = "",
 ): Set<String> =
-    type.primaryConstructor!!
+    requireNotNull(type.primaryConstructor) { "$type has no primary constructor" }
         .parameters
         .flatMap { parameter ->
-            val key = prefix + kebabCase(parameter.name!!)
+            val key = prefix + kebabCase(requireNotNull(parameter.name) { "unnamed constructor parameter of $type" })
             val classifier = parameter.type.classifier as KClass<*>
-            if (classifier.isData && classifier.primaryConstructor != null && classifier.qualifiedName!!.startsWith("eu.inqudium")) {
+            if (classifier.isData && classifier.primaryConstructor != null && classifier.qualifiedName.orEmpty().startsWith("eu.inqudium")) {
                 configurationKeysOf(classifier, "$key.")
             } else {
                 listOf(key)

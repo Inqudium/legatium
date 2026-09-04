@@ -22,6 +22,7 @@ fun interface CorrelationIdGenerator {
          * ids per second, so an operational certainty rather than an unconditional one (NOT a
          * UUID; see that class's documentation for the rationale and the format contract).
          */
+        @JvmField
         val DEFAULT: CorrelationIdGenerator = CountingCorrelationIdGenerator()
     }
 }
@@ -50,19 +51,18 @@ internal class CountingCorrelationIdGenerator(
      */
     counterStart: Long = 0L,
 ) : CorrelationIdGenerator {
-    /** `toUnsignedString`: a leading minus sign would lengthen the id and break the alphabet; the reinterpretation is a bijection. */
-    private val prefix: String =
-        java.lang.Long
-            .toUnsignedString(prefixSeed, 36)
-            .padStart(PREFIX_WIDTH, '0')
+    /** Rendered UNSIGNED: a leading minus sign would lengthen the id and break the alphabet; the reinterpretation is a bijection. */
+    private val prefix: String = prefixSeed.toULong().toString(36).padStart(PREFIX_WIDTH, '0')
 
     /** Deliberately a shared atomic, not a thread-local counter: under virtual threads a `ThreadLocal` would restart at zero per call. */
     private val counter = AtomicLong(counterStart)
 
     override fun nextCorrelationId(): String =
         prefix +
-            java.lang.Long
-                .toUnsignedString(counter.getAndIncrement(), 36)
+            counter
+                .getAndIncrement()
+                .toULong()
+                .toString(36)
                 .padStart(COUNTER_WIDTH, '0')
 
     private companion object {

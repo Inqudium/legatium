@@ -1,16 +1,16 @@
 package eu.inqudium.legatium.restclient.logging
 
 import eu.inqudium.legatium.common.ClientActivation
+import eu.inqudium.legatium.common.ClientIdentity
 import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.ClientStack
-import eu.inqudium.legatium.common.CorrelationHeader
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.MdcScope
 import eu.inqudium.legatium.common.NanoTimeSource
-import eu.inqudium.legatium.common.Traceparent
+import eu.inqudium.legatium.common.RequestTarget
 import eu.inqudium.legatium.common.reportQuietly
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
@@ -100,47 +100,8 @@ class ClientRequestLoggingInterceptor
             if (activation.shouldNotFilter(request.uri)) {
                 return execution.execute(request, body)
             }
-            // The WIRING is fail-open too, not only the emission: identity resolution and the time source
-            // are host-provided beans, and header selection touches the request's header map - an exception
-            // in any of them must degrade this interceptor to a plain pass-through, never fail the call.
-            val exchange: Exchange? =
-                try {
-                    wireExchange(request, body)
-                } catch (e: Exception) {
-                    reportQuietly {
-                        metrics.wiringFailure()
-                        internalLog.error(
-                            "Client logging could not be wired for {} {} - continuing without logging: {}",
-                            request.method,
-                            request.uri,
-                            e.toString(),
-                            e,
-                        )
-                    }
-                    null
-                }
-            if (exchange == null) {
-                return execution.execute(request, body)
-            }
-            // The call-wide MDC scope is logging-owned work and therefore fail-open too: a throwing MDC
-            // adapter degrades the identity feature, never the call. MdcScope itself rolls back a partial
-            // install before rethrowing, so the calling thread never keeps half an identity.
-            val mdcScope: MdcScope? =
-                try {
-                    MdcScope(exchange.requestId, exchange.method, exchange.target)
-                } catch (e: Exception) {
-                    reportQuietly {
-                        metrics.wiringFailure()
-                        internalLog.error(
-                            "MDC scope could not be opened for {} {} - continuing without call MDC: {}",
-                            exchange.method,
-                            exchange.target,
-                            e.toString(),
-                            e,
-                        )
-                    }
-                    null
-                }
+            val exchange = wireOrNull(request, body) ?: return execution.execute(request, body)
+            val callScope = openCallScope(exchange)
             // The optional arrival line, before the call and OUTSIDE the try below: a failure in it must be
             // confined (it is, see the emitter - including the level gate), never misattributed as a call
             // failure.
@@ -149,24 +110,7 @@ class ClientRequestLoggingInterceptor
             }
             try {
                 val response = execution.execute(request, body)
-                exchange.response = response
-                // Status and headers are final at handover and the engine can still answer; snapshot them
-                // now, so the emission after the client's close never asks a closed response. A refusing
-                // engine costs the status (`-> -`), counted as wiring, never the event.
-                try {
-                    exchange.responseStatus = response.statusCode.value()
-                    exchange.responseHeaders = response.headers
-                } catch (e: Exception) {
-                    reportQuietly {
-                        metrics.wiringFailure()
-                        internalLog.warn(
-                            "Response status and headers could not be read for {} {} - the event will show no status: {}",
-                            exchange.method,
-                            exchange.target,
-                            e.toString(),
-                        )
-                    }
-                }
+                snapshotResponse(exchange, response)
                 // Pure object construction, no host call - nothing here can fail and strand the response.
                 return CapturingClientHttpResponse(
                     delegate = response,
@@ -175,20 +119,10 @@ class ClientRequestLoggingInterceptor
                     onClose = { completeExchange(exchange) },
                 )
             } catch (e: Exception) {
-                // No response: the exchange ends here. Breadcrumb first (a host-backend call, guarded so a
-                // throwing backend cannot REPLACE the client's exception), then the event, then the
+                // No response: the exchange ends here. Breadcrumb first, then the event, then the
                 // unchanged rethrow - IOException for the client to map, or whatever else the engine threw.
                 exchange.failure = e
-                reportQuietly {
-                    internalLog.warn(
-                        "Adapter http exchange failed: {} {} - {} [{}={}]",
-                        exchange.method,
-                        exchange.target,
-                        e.toString(),
-                        MdcKeys.REQUEST_ID,
-                        exchange.requestId,
-                    )
-                }
+                breadcrumb(exchange, e)
                 completeExchange(exchange)
                 throw e
             } catch (t: Throwable) {
@@ -198,112 +132,158 @@ class ClientRequestLoggingInterceptor
                 abandonExchange(exchange, t)
                 throw t
             } finally {
-                // Restoration is guarded separately: a throwing MDC adapter here must neither fail the call
-                // nor MASK an exception already propagating out of it - it costs the restoration, counted
-                // as stage=wiring.
-                try {
-                    mdcScope?.close()
-                } catch (e: Exception) {
-                    reportQuietly {
-                        metrics.wiringFailure()
-                        internalLog.warn(
-                            "MDC restoration failed for {} {} - the calling thread may carry stale client keys: {}",
-                            exchange.method,
-                            exchange.target,
-                            e.toString(),
-                            e,
-                        )
-                    }
+                closeCallScope(callScope, exchange)
+            }
+        }
+
+        /**
+         * The WIRING is fail-open too, not only the emission: identity resolution and the time source are
+         * host-provided beans, and header selection touches the request's header map - an exception in
+         * any of them degrades this interceptor to a plain pass-through (null), counted `stage=wiring`,
+         * never fails the call.
+         */
+        private fun wireOrNull(
+            request: HttpRequest,
+            body: ByteArray,
+        ): Exchange? =
+            try {
+                wireExchange(request, body)
+            } catch (e: Exception) {
+                reportQuietly {
+                    metrics.wiringFailure()
+                    internalLog.error(
+                        "Client logging could not be wired for {} {} - continuing without logging: {}",
+                        request.method,
+                        request.uri,
+                        e.toString(),
+                        e,
+                    )
                 }
+                null
+            }
+
+        /**
+         * The call-wide MDC scope is logging-owned work and therefore fail-open too: a throwing MDC
+         * adapter degrades the identity feature, never the call. MdcScope itself rolls back a partial
+         * install before rethrowing, so the calling thread never keeps half an identity.
+         */
+        private fun openCallScope(exchange: Exchange): MdcScope? =
+            try {
+                MdcScope(exchange.requestId, exchange.method, exchange.target)
+            } catch (e: Exception) {
+                reportQuietly {
+                    metrics.wiringFailure()
+                    internalLog.error(
+                        "MDC scope could not be opened for {} {} - continuing without call MDC: {}",
+                        exchange.method,
+                        exchange.target,
+                        e.toString(),
+                        e,
+                    )
+                }
+                null
+            }
+
+        /**
+         * Restoration is guarded separately: a throwing MDC adapter here must neither fail the call nor
+         * MASK an exception already propagating out of it - it costs the restoration, counted as
+         * stage=wiring.
+         */
+        private fun closeCallScope(
+            scope: MdcScope?,
+            exchange: Exchange,
+        ) {
+            try {
+                scope?.close()
+            } catch (e: Exception) {
+                reportQuietly {
+                    metrics.wiringFailure()
+                    internalLog.warn(
+                        "MDC restoration failed for {} {} - the calling thread may carry stale client keys: {}",
+                        exchange.method,
+                        exchange.target,
+                        e.toString(),
+                        e,
+                    )
+                }
+            }
+        }
+
+        /**
+         * Status and headers are final at handover and the engine can still answer; snapshot them now,
+         * so the emission after the client's close never asks a closed response. A refusing engine costs
+         * the status (`-> -`), counted as wiring, never the event.
+         */
+        private fun snapshotResponse(
+            exchange: Exchange,
+            response: ClientHttpResponse,
+        ) {
+            exchange.response = response
+            try {
+                exchange.responseStatus = response.statusCode.value()
+                exchange.responseHeaders = response.headers
+            } catch (e: Exception) {
+                reportQuietly {
+                    metrics.wiringFailure()
+                    internalLog.warn(
+                        "Response status and headers could not be read for {} {} - the event will show no status: {}",
+                        exchange.method,
+                        exchange.target,
+                        e.toString(),
+                    )
+                }
+            }
+        }
+
+        /** The WARN breadcrumb of a thrown call - a host-backend call, guarded so a throwing backend cannot REPLACE the client's exception. */
+        private fun breadcrumb(
+            exchange: Exchange,
+            e: Exception,
+        ) {
+            reportQuietly {
+                internalLog.warn(
+                    "Adapter http exchange failed: {} {} - {} [{}={}]",
+                    exchange.method,
+                    exchange.target,
+                    e.toString(),
+                    MdcKeys.REQUEST_ID,
+                    exchange.requestId,
+                )
             }
         }
 
         /**
          * Everything that must exist before the wire call runs: identity resolution and the traceless
          * correlation header, the captures, the eagerly captured request-side coordinates and the gauge.
-         * Called exclusively from the fail-open block in [intercept] - anything thrown here is confined
-         * there and degrades the interceptor to a pass-through.
+         * Called exclusively from [wireOrNull] - anything thrown here is confined there.
          */
         private fun wireExchange(
             request: HttpRequest,
             body: ByteArray,
         ): Exchange {
             val headers = request.headers
-            // The exchange identity, resolved per ADR-0002: a conformant traceparent's trace id IS the
-            // request id (a correlation header the caller put on the request is ignored on such calls -
-            // the distributed identity outranks the private one); only a traceless call accepts the
-            // correlation header already on the request or generates a fresh id, and only a traceless
-            // call without one gets the header ADDED - a traced call goes out observationally untouched.
-            val trace = Traceparent.parse(headers.getFirst(Traceparent.HEADER))
-            // A correlation id already on the request is accepted only within the CorrelationHeader rule
-            // (length, visible ASCII); anything else counts as absent and is REPLACED on the wire.
-            val headerCorrelationId =
-                if (trace == null) {
-                    CorrelationHeader.accept(headers.getFirst(properties.correlationIdHeader))
-                } else {
-                    null
-                }
-            // A retrying OUTER interceptor re-enters with the request this module already stamped: the
-            // header then carries the id generated on attempt 1, remembered on the request, and the
-            // origin counter must keep calling it `generated` - reusing the id across attempts is right,
-            // counting the module's own write as propagation would dilute the very signal the counter is.
-            val generatedEarlier = request.attributes[GENERATED_ID_ATTRIBUTE] as? String
-            val requestId = trace?.first ?: headerCorrelationId ?: correlationIds.nextCorrelationId()
+            // The header stamped on attempt 1 comes back on a re-entry by a retrying OUTER interceptor:
+            // remembered on the request, so the origin counter keeps calling it `generated`.
+            val identity = ClientIdentity.resolve(headers, properties, correlationIds, generatedEarlier = request.attributes[GENERATED_ID_ATTRIBUTE] as? String)
             // Guarded inside the metrics: a throwing host counter must not turn the call into an unlogged
             // pass-through.
-            metrics.requestId(
-                when {
-                    trace != null -> ClientLoggingMetrics.REQUEST_ID_SOURCE_TRACE
-                    headerCorrelationId != null && headerCorrelationId != generatedEarlier -> ClientLoggingMetrics.REQUEST_ID_SOURCE_HEADER
-                    else -> ClientLoggingMetrics.REQUEST_ID_SOURCE_GENERATED
-                },
-            )
-            if (trace == null && headerCorrelationId == null) {
-                headers.set(properties.correlationIdHeader, requestId)
-                request.attributes[GENERATED_ID_ATTRIBUTE] = requestId
+            metrics.requestId(identity.source)
+            if (identity.sendCorrelationHeader) {
+                headers.set(properties.correlationIdHeader, identity.requestId)
+                request.attributes[GENERATED_ID_ATTRIBUTE] = identity.requestId
             }
-
-            // The request body is what the client hands the interceptor: complete, in memory, already
-            // final. A capture exists when the body is logged in ANY mode OR measured - `on-failure` needs
-            // the bytes before the outcome is known and the emitter drops them on success; measure-only
-            // runs the capture in count-only mode (limit 0: nothing buffered, every byte counted).
-            val requestCapture =
-                if (properties.logRequestBody.captures || properties.measureRequestBodySize) {
-                    BoundedBodyCapture(if (properties.logRequestBody.captures) properties.maxBodyBytes else 0).also {
-                        it.capture(body, 0, body.size)
-                    }
-                } else {
-                    null
-                }
-            val responseCapture =
-                if (properties.logResponseBody.captures || properties.measureResponseBodySize) {
-                    BoundedBodyCapture(if (properties.logResponseBody.captures) properties.maxBodyBytes else 0)
-                } else {
-                    null
-                }
-
-            // RAW (still percent-encoded) path and query, as they go on the wire - twin parity with the
-            // WebClient module, and the log-injection guard: java.net.URI's decoded getPath()/getQuery()
-            // turn `%0A`/`%0D` into real line breaks that would forge lines in every plain-text sink
-            // (message, MDC adapter_route, fields). Activation matching keeps the decoded path (the
-            // representation a server router would match).
-            val uri = request.uri
-            val host = uri.host?.let { if (uri.port != -1) "$it:${uri.port}" else it }
-            val path = uri.rawPath?.takeIf { it.isNotEmpty() } ?: "/"
-            val target =
-                buildString {
-                    uri.scheme?.let { append(it).append("://") }
-                    host?.let { append(it) }
-                    append(path)
-                }
+            val captures = newCaptures()
+            // The request body is what the client hands the interceptor: complete, in memory, already final.
+            captures.request?.capture(body, 0, body.size)
+            val target = RequestTarget.of(request.uri)
             val exchange =
                 Exchange(
                     method = request.method.name(),
-                    target = target,
-                    host = host,
-                    path = path,
-                    query = if (properties.includeQueryString) uri.rawQuery else null,
-                    requestId = requestId,
+                    target = target.target,
+                    host = target.host,
+                    path = target.path,
+                    query = if (properties.includeQueryString) request.uri.rawQuery else null,
+                    requestId = identity.requestId,
                     // Multi-value resolution, natively from HttpHeaders - AFTER the correlation header was
                     // added, so a selected correlation header shows what actually went out.
                     requestHeaders =
@@ -311,16 +291,32 @@ class ClientRequestLoggingInterceptor
                             headers[name]?.takeIf { it.isNotEmpty() }?.joinToString(", ")
                         },
                     uriTemplate = request.attributes[URI_TEMPLATE_ATTRIBUTE] as? String,
-                    requestCapture = requestCapture,
-                    responseCapture = responseCapture,
+                    requestCapture = captures.request,
+                    responseCapture = captures.response,
                     requestCharset = headers.declaredCharsetOrUtf8(),
                     startNanos = nanoTime.nanoTime(),
-                    traceId = trace?.first,
-                    spanId = trace?.second,
+                    traceId = identity.traceId,
+                    spanId = identity.spanId,
                 )
             metrics.exchangeOpened()
             return exchange
         }
+
+        /**
+         * A capture exists when the body is logged in ANY mode OR measured - `on-failure` needs the bytes
+         * before the outcome is known and the emitter drops them on success; measure-only runs the capture
+         * in count-only mode (limit 0: nothing buffered, every byte counted).
+         */
+        private fun newCaptures(): Captures =
+            Captures(
+                request = if (properties.logRequestBody.captures || properties.measureRequestBodySize) BoundedBodyCapture(if (properties.logRequestBody.captures) properties.maxBodyBytes else 0) else null,
+                response = if (properties.logResponseBody.captures || properties.measureResponseBodySize) BoundedBodyCapture(if (properties.logResponseBody.captures) properties.maxBodyBytes else 0) else null,
+            )
+
+        private class Captures(
+            val request: BoundedBodyCapture?,
+            val response: BoundedBodyCapture?,
+        )
 
         /**
          * The exactly-once end of an exchange - gauge close plus emission - guarded by [Exchange.completed]:

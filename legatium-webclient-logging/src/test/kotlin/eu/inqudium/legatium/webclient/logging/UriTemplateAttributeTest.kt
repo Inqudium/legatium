@@ -62,6 +62,12 @@ class UriTemplateAttributeTest {
 
     @Test
     fun `should mirror the private constant of DefaultWebClient literally`() {
+        // What is tested: the mirrored URI_TEMPLATE_ATTRIBUTE against the private field of Spring's
+        //   DefaultWebClient, read via reflection.
+        // Success criteria: both strings are identical.
+        // Why it matters: the constant is private upstream and can only be mirrored; a change in
+        //   Spring's derivation would drop adapter_url_template from every event without a compile
+        //   error.
         // Given/When
         val field =
             Class

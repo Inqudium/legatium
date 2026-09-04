@@ -34,31 +34,37 @@ class HeaderMaskingFuzzTest {
 
     @FuzzTest(maxDuration = "10m")
     void selectionAndMaskingUpholdTheirContract(FuzzedDataProvider data) {
+        // What is tested: HeaderLogProperties construction and select() plus the default masker against
+        //   arbitrary name lists and header maps - the documented rejection cases exactly, no throw from
+        //   select(), include-minus-exclude once per name, masked values only as the fingerprint.
+        // Success criteria: no exception and no oracle violation for any input Jazzer generates - a
+        //   masked value in plaintext or a rejection outside the documented cases fails the run.
+        // Why it matters: header names and values are peer- and operator-controlled input on every
+        //   exchange; a plaintext leak through an unforeseen name shape is a secret in the logs.
         List<String> includes = consumeNames(data);
         List<String> excludes = consumeNames(data);
         List<String> masked = consumeNames(data);
         List<String> unmasked = consumeNames(data);
 
+        // The documented rejection, decided ONCE up front: blank entries, or the '*' wildcard in excludes or
+        // unmasked. The constructor must reject exactly these inputs - no others, and none of these silently.
+        boolean documentedRejection =
+                hasBlank(includes)
+                        || hasBlank(excludes)
+                        || hasBlank(masked)
+                        || hasBlank(unmasked)
+                        || excludes.contains(HeaderLogProperties.WILDCARD)
+                        || unmasked.contains(HeaderLogProperties.WILDCARD);
         HeaderLogProperties properties;
         try {
             properties = new HeaderLogProperties(includes, excludes, masked, unmasked);
         } catch (IllegalArgumentException rejected) {
-            // Documented rejection ONLY: blank entries, or the '*' wildcard in excludes or unmasked.
-            boolean documented =
-                    hasBlank(includes)
-                            || hasBlank(excludes)
-                            || hasBlank(masked)
-                            || hasBlank(unmasked)
-                            || excludes.contains(HeaderLogProperties.WILDCARD)
-                            || unmasked.contains(HeaderLogProperties.WILDCARD);
-            if (!documented) {
+            if (!documentedRejection) {
                 throw new IllegalStateException("undocumented rejection: " + rejected.getMessage(), rejected);
             }
             return;
         }
-        if (hasBlank(includes) || hasBlank(excludes) || hasBlank(masked) || hasBlank(unmasked)
-                || excludes.contains(HeaderLogProperties.WILDCARD)
-                || unmasked.contains(HeaderLogProperties.WILDCARD)) {
+        if (documentedRejection) {
             throw new IllegalStateException("documented rejection not applied for " + includes + excludes + masked + unmasked);
         }
 
@@ -77,7 +83,7 @@ class HeaderMaskingFuzzTest {
         List<kotlin.Pair<String, String>> selected =
                 properties.select(
                         headers.keySet(),
-                        HeaderValueMasker.Companion.getDEFAULT(),
+                        HeaderValueMasker.DEFAULT,
                         name -> lookupIgnoreCase(headers, name)); // case-insensitive, like HttpHeaders
 
         boolean maskAll = masked.contains(HeaderLogProperties.WILDCARD);
@@ -133,8 +139,8 @@ class HeaderMaskingFuzzTest {
         }
 
         String probe = data.consumeRemainingAsString();
-        String fingerprint = HeaderValueMasker.Companion.getDEFAULT().mask(probe);
-        if (!fingerprint.equals(HeaderValueMasker.Companion.getDEFAULT().mask(probe))) {
+        String fingerprint = HeaderValueMasker.DEFAULT.mask(probe);
+        if (!fingerprint.equals(HeaderValueMasker.DEFAULT.mask(probe))) {
             throw new IllegalStateException("mask() is not deterministic for: " + probe);
         }
         if (!FINGERPRINT.matcher(fingerprint).matches()) {

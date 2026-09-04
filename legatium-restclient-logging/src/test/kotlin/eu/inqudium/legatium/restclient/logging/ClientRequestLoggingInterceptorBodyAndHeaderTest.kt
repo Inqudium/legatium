@@ -118,6 +118,14 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
 
         @Test
         fun `should log the selected response headers as the peer sent them`() {
+            // What is tested: response-side selection at emission from the SNAPSHOTTED headers - a
+            //   wildcard include over the names the peer sent, an exclude that wins over it, and an
+            //   unmasked name rendered in plaintext.
+            // Success criteria: adapter_response_headers carries Content-Type with its plaintext
+            //   value and no Set-Cookie at all, neither of its two values.
+            // Why it matters: the wildcard is the debugging move an operator reaches for; the
+            //   exclude must remove a multi-value cookie completely, not only its first value, and
+            //   the allowlist must not be confused with the exclude.
             // Given: a wildcard include with one exclusion and one name allowed in plaintext
             val interceptor =
                 interceptorWith(
@@ -163,6 +171,12 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
 
         @Test
         fun `should omit the header fields when nothing is selected`() {
+            // What is tested: the shipped default sections (empty includes on both sides) - select
+            //   short-circuits to an empty list and renderHeaders turns that into null.
+            // Success criteria: neither adapter_request_headers nor adapter_response_headers is on
+            //   the event although the request carried an Accept header.
+            // Why it matters: the default must log no header at all, and an empty "[]" field would
+            //   look like a selection that found nothing rather than none configured.
             // Given: the default sections
             interceptorWith(base).intercept(request().apply { headers.set("Accept", "*/*") }, ByteArray(0), answering()).consumeAndClose()
 
@@ -175,6 +189,12 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
     inner class `Request body` {
         @Test
         fun `should log the request body the client hands the interceptor`() {
+            // What is tested: the request-side capture in always mode - the byte array the client
+            //   passes to intercept is copied at wiring time and decoded with the JSON Content-Type's
+            //   default charset.
+            // Success criteria: adapter_request_body carries the JSON exactly as sent.
+            // Why it matters: the blocking clients hand the interceptor the complete, final body -
+            //   the line must show what actually went out, not what the caller intended to send.
             // Given
             val interceptor = interceptorWith(base.copy(logRequestBody = BodyLogMode.ALWAYS))
             val request = request(method = HttpMethod.POST).apply { headers.contentType = MediaType.APPLICATION_JSON }
@@ -188,6 +208,13 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
 
         @Test
         fun `should truncate the logged request body at the capture limit and say so`() {
+            // What is tested: max-body-bytes applied to the request capture - the wiring copies the
+            //   whole array into a 4-byte capture, so only the prefix is buffered while the total is
+            //   counted.
+            // Success criteria: adapter_request_body is the 4-byte prefix followed by the
+            //   "[truncated, 10 bytes total]" note.
+            // Why it matters: a large upload must never land in the log line in full, and the
+            //   reader must see that the value is cut and how large the body really was.
             // Given: a 4-byte cap over a 10-byte body
             val interceptor = interceptorWith(base.copy(logRequestBody = BodyLogMode.ALWAYS, maxBodyBytes = 4))
 
@@ -200,6 +227,12 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
 
         @Test
         fun `should decode the request body with the declared charset`() {
+            // What is tested: declaredCharsetOrUtf8 on the request headers at wiring time - the
+            //   charset parameter of the Content-Type selects how the captured bytes are decoded.
+            // Success criteria: an ISO-8859-1 encoded "café" declared as such is logged as "café",
+            //   not as a mis-decoded UTF-8 rendering.
+            // Why it matters: a body decoded with the wrong charset shows mojibake for every
+            //   non-ASCII character, which reads like corrupt data on the wire.
             // Given: an ISO-8859-1 body declared as such
             val interceptor = interceptorWith(base.copy(logRequestBody = BodyLogMode.ALWAYS))
             val request =
@@ -216,6 +249,11 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
 
         @Test
         fun `should omit the request body key for a bodiless request`() {
+            // What is tested: a zero-length body array through the always-mode request capture -
+            //   totalBytes stays 0 and loggedValue returns null.
+            // Success criteria: no adapter_request_body key on the event.
+            // Why it matters: a GET without a body must not show an empty body field, which a
+            //   dashboard would count as a body that was sent.
             // Given/When
             interceptorWith(base.copy(logRequestBody = BodyLogMode.ALWAYS)).intercept(request(), ByteArray(0), answering()).consumeAndClose()
 
@@ -228,6 +266,13 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
     inner class `Response body tee` {
         @Test
         fun `should log the response body the application actually read`() {
+            // What is tested: the response tee through consumeAndClose - the application reads the
+            //   stream to EOF, every byte is copied into the capture, and the emission at close
+            //   renders it.
+            // Success criteria: the application receives "hello" unchanged and
+            //   adapter_response_body carries the same "hello".
+            // Why it matters: the tee is a passive copy - it must neither alter what the converters
+            //   see nor log anything the converters did not read.
             // Given
             val interceptor = interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS))
 
@@ -253,6 +298,12 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
 
         @Test
         fun `should log exactly the prefix the application read of a partially consumed body`() {
+            // What is tested: the tee mirrors consumption, not transmission - the application reads
+            //   3 of 6 bytes and closes; the capture holds only what flowed through read().
+            // Success criteria: adapter_response_body is "abc" without a truncation note, since the
+            //   capture saw no more bytes than it buffered.
+            // Why it matters: an early-exiting parser leaves bytes on the wire the log must not
+            //   invent; the truthful count is what the size summary records as well.
             // Given: the application reads 3 bytes and closes
             val response = interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS)).intercept(request(), ByteArray(0), answering(body = "abcdef"))
             val prefix = ByteArray(3)
@@ -265,6 +316,12 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
 
         @Test
         fun `should truncate the logged response body at the capture limit and keep the exact total`() {
+            // What is tested: max-body-bytes on the response tee - the capture buffers the first 4
+            //   bytes the application reads and counts the remaining 6.
+            // Success criteria: adapter_response_body is the 4-byte prefix plus the "[truncated, 10
+            //   bytes total]" note.
+            // Why it matters: a large download must cost at most max-body-bytes of log line and
+            //   memory, and the note must state the real size the application consumed.
             // Given
             val interceptor = interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS, maxBodyBytes = 4))
 
@@ -277,6 +334,12 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
 
         @Test
         fun `should decode the response body with the charset the peer declared`() {
+            // What is tested: declaredCharsetOrUtf8 on the snapshotted response headers at emission
+            //   - the peer's Content-Type charset decodes the captured bytes.
+            // Success criteria: a Latin-1 encoded "café" declared as ISO-8859-1 is logged as
+            //   "café".
+            // Why it matters: peers do declare legacy charsets; decoding them as UTF-8 would render
+            //   every accented character as a replacement and hide the real payload.
             // Given: a Latin-1 answer declared as such
             val interceptor = interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS))
             val latin = "caf\u00e9".toByteArray(StandardCharsets.ISO_8859_1)
@@ -364,6 +427,13 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
 
         @Test
         fun `should log both bodies of a 5xx answer in on-failure mode`() {
+            // What is tested: loggedBodies for a failure outcome without an exception - a 502
+            //   classifies as failure, so both directions' on-failure gates admit their captured
+            //   bytes.
+            // Success criteria: outcome failure, adapter_request_body "sent" and
+            //   adapter_response_body "upstream down" on one line.
+            // Why it matters: a 5xx is exactly the line an operator opens to see what was sent and
+            //   what the peer answered; on-failure must not withhold either side there.
             // Given/When: a failure outcome without an exception
             interceptorWith(onFailure)
                 .intercept(request(method = HttpMethod.POST), "sent".toByteArray(), answering(status = HttpStatus.BAD_GATEWAY, body = "upstream down"))
@@ -378,6 +448,13 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
 
         @Test
         fun `should log the buffered request body of a call that threw in on-failure mode`() {
+            // What is tested: the no-response completion path with on-failure - the request body
+            //   was copied at wiring time before the wire call, so it is available for the event
+            //   emitted from the catch block.
+            // Success criteria: the IOException propagates unchanged, the event carries outcome
+            //   failure and the request body, and no response body key exists.
+            // Why it matters: for a call that never got an answer the request body is the only
+            //   payload evidence there is; it must survive the exception path.
             // Given: a call that never gets a response
             val refused = ClientHttpRequestExecution { _, _ -> throw IOException("Connection refused") }
 
@@ -413,6 +490,13 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
 
         @Test
         fun `should still measure the size of a body it withholds`() {
+            // What is tested: the split between capturing and logging - on-failure plus
+            //   measure-request-body-size on a successful call: recordBodySizes runs before the level
+            //   and outcome gates, loggedBodies then drops the field.
+            // Success criteria: the request body size summary records 4 bytes while the event
+            //   carries no adapter_request_body.
+            // Why it matters: the size metric must not depend on whether the body reached the line;
+            //   an operator can measure payloads without paying for their log volume.
             // Given: on-failure plus measuring, on an own registry
             val registry = SimpleMeterRegistry()
             val interceptor = ClientRequestLoggingInterceptor(onFailure.copy(measureRequestBodySize = true), { ticker.get() }, { "g" }, registry)

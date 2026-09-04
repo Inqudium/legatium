@@ -15,6 +15,13 @@ class BoundedBodyCaptureTest {
     inner class `Counting and bounding` {
         @Test
         fun `should count every byte but buffer only up to the limit`() {
+            // What is tested: both capture overloads against one 4-byte cap - the chunk write clips
+            //   to the remaining room, the single-byte write checks the buffer size, totalBytes
+            //   advances regardless.
+            // Success criteria: totalBytes is 10 while loggedValue renders the four buffered bytes
+            //   plus the "... [truncated, 10 bytes total]" note.
+            // Why it matters: the size summaries need the exact total and the log line must never
+            //   hold more than max-body-bytes, whatever chunking the engine's stream uses.
             // Given: a 4-byte cap
             val capture = BoundedBodyCapture(4)
 
@@ -30,6 +37,13 @@ class BoundedBodyCaptureTest {
 
         @Test
         fun `should buffer nothing in count-only mode and still count everything`() {
+            // What is tested: limit 0, the mode newCaptures installs for measure-*-body-size
+            //   without body logging - room is never positive, so the write is skipped, but the count
+            //   advances.
+            // Success criteria: totalBytes is 5 and loggedValue is the bare truncation note without
+            //   a prefix.
+            // Why it matters: a measure-only capture is installed on every exchange and must cost
+            //   no buffer memory; the exact total is what the size summary records.
             // Given: limit 0 - the measure-only mode
             val capture = BoundedBodyCapture(0)
 
@@ -43,6 +57,13 @@ class BoundedBodyCaptureTest {
 
         @Test
         fun `should report a zero-byte body as absent`() {
+            // What is tested: the totalBytes == 0 short-circuit of loggedValue on a capture nothing
+            //   flowed through.
+            // Success criteria: null, not an empty string and not a "[truncated, 0 bytes total]"
+            //   note.
+            // Why it matters: the emitter's addKeyValueIfPresent drops a null, so a bodiless
+            //   exchange gets no body key at all instead of an empty one that looks like an empty
+            //   body.
             // Given/When/Then
             assertThat(BoundedBodyCapture(8).loggedValue(StandardCharsets.UTF_8)).isNull()
         }
@@ -69,6 +90,13 @@ class BoundedBodyCaptureTest {
 
         @Test
         fun `should drop an incomplete trailing sequence of another variable-width charset`() {
+            // What is tested: decodeTruncated with a charset other than UTF-8 - Shift_JIS "aあ" (61
+            //   82 a0) cut at 2 bytes leaves the lead byte 82 dangling; the underflow handling must
+            //   be charset-generic.
+            // Success criteria: the prefix is "a" followed by the note for 3 bytes total; the
+            //   dangling lead byte yields no replacement character.
+            // Why it matters: the response body is decoded with the charset the peer declares, so
+            //   the boundary logic must hold for every variable-width encoding, not only UTF-8.
             // Given: Shift_JIS "aあ" = 61 82 a0, capped at 2 bytes
             val shiftJis = Charset.forName("Shift_JIS")
             val capture = BoundedBodyCapture(2)
@@ -82,6 +110,11 @@ class BoundedBodyCaptureTest {
 
         @Test
         fun `should keep a complete multi-byte character that ends exactly at the cap`() {
+            // What is tested: the boundary case of the truncation decoder - "éx" capped at 2 bytes
+            //   ends exactly after the 2-byte é (c3 a9), so nothing is incomplete.
+            // Success criteria: the prefix is the whole "é" followed by the note for 3 bytes total.
+            // Why it matters: the underflow handling must drop only an incomplete tail; dropping a
+            //   complete character would lose a byte the cap admitted.
             // Given
             val capture = BoundedBodyCapture(2)
             val body = bytes("éx")
@@ -93,6 +126,13 @@ class BoundedBodyCaptureTest {
 
         @Test
         fun `should still replace malformed bytes inside the prefix`() {
+            // What is tested: the REPLACE action of the truncation decoder - 0xa9 is a stray
+            //   continuation byte between "a" and "b", well inside the 3-byte cap.
+            // Success criteria: the prefix renders "a�b" with the note for 4 bytes total; the
+            //   malformed byte is replaced, not dropped, and does not abort the decoding.
+            // Why it matters: endOfInput=false must suppress only the trailing underflow; genuinely
+            //   broken input must render as String(bytes, charset) would, so the log shows the
+            //   corruption where it is.
             // Given
             val capture = BoundedBodyCapture(3)
             val body = byteArrayOf(0x61, 0xa9.toByte(), 0x62, 0x63)
@@ -107,6 +147,13 @@ class BoundedBodyCaptureTest {
     inner class `Read state` {
         @Test
         fun `should start unread and move to partial on start and to complete on completion, never backwards`() {
+            // What is tested: the readState transitions - UNREAD at construction, PARTIAL on
+            //   markStarted, COMPLETE on markCompleted, and markStarted's UNREAD guard after
+            //   completion.
+            // Success criteria: the four observations in that order; the last markStarted leaves
+            //   COMPLETE in place.
+            // Why it matters: the state becomes the state tag of adapter.response.body.read - a
+            //   fully consumed body reported as partial would show payload discarded that was not.
             // Given
             val capture = BoundedBodyCapture(8)
             assertThat(capture.readState).isEqualTo(BodyReadState.UNREAD)

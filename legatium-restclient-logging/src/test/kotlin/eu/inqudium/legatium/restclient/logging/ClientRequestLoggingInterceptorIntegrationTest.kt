@@ -115,6 +115,15 @@ class ClientRequestLoggingInterceptorIntegrationTest {
 
     @Test
     fun `should log a 5xx answer as WARN failure with the body the client read for its exception`() {
+        // What is tested: the emission point at response close against the real client -
+        //   RestClient's default status handler reads the 500 body to build its
+        //   HttpServerErrorException, and that read passes through the tee before the close triggers
+        //   the event.
+        // Success criteria: the client throws HttpServerErrorException; the single event is WARN
+        //   with outcome failure, status 500 and adapter_response_body "boom".
+        // Why it matters: emitting when the interceptor returns would log an empty body for exactly
+        //   the answers an operator most wants to read; only a real client proves the close comes
+        //   after the handler's read.
         // Given
         val client = restClientBuilder.baseUrl(peer.baseUrl).build()
 
@@ -140,6 +149,14 @@ class ClientRequestLoggingInterceptorIntegrationTest {
 
     @Test
     fun `should log a refused connection as ERROR failure without a status`() {
+        // What is tested: the no-response completion path with the real JDK engine - the connect
+        //   fails inside execution.execute, the catch block completes the exchange and rethrows, and
+        //   RestClient wraps the IOException.
+        // Success criteria: the client throws ResourceAccessException; the single event is ERROR
+        //   with outcome failure, a "-> -" status placeholder in the message, no status field and the
+        //   cause attached.
+        // Why it matters: a peer that is down produces no response object at all - the event must
+        //   still exist, carry the cause, and not pretend a status it never received.
         // Given: a port nobody listens on - with a connect timeout, so a host that DROPs instead of
         //   refusing cannot hang the test
         val client =
@@ -206,6 +223,14 @@ class ClientRequestLoggingInterceptorIntegrationTest {
 
     @Test
     fun `should log a RestTemplate call through the same interceptor without a template`() {
+        // What is tested: the RestTemplateCustomizer path end to end - Boot's RestTemplateBuilder
+        //   carries the interceptor, the expanded URI is logged, and RestTemplate sets no uriTemplate
+        //   attribute, so the field stays absent.
+        // Success criteria: the echo body arrives, the event carries adapter_url_path /things/9 and
+        //   no adapter_url_template, and the peer received a generated correlation header.
+        // Why it matters: RestTemplate is still the client of most existing code; it must be logged
+        //   by the same interceptor with the same identity contract, and the template field must not
+        //   show a fabricated value.
         // Given: RestTemplate records no URI template attribute (the base URL goes in through the
         //   template handler - Boot 4 deprecated rootUri in favour of it)
         val restTemplate = restTemplateBuilder.uriTemplateHandler(DefaultUriBuilderFactory(peer.baseUrl)).build()
@@ -224,6 +249,13 @@ class ClientRequestLoggingInterceptorIntegrationTest {
 
     @Test
     fun `should log a bodiless 204 without body fields`() {
+        // What is tested: a bodiless consumption on a real stream - toBodilessEntity closes the 204
+        //   without opening the body, so both captures stay at zero bytes although body logging is
+        //   always on.
+        // Success criteria: status 204 on the entity and the event; neither adapter_request_body
+        //   nor adapter_response_body is present.
+        // Why it matters: a 204 is the routine answer of every delete and update; an empty body
+        //   field on each of them would be noise that looks like a payload.
         // Given
         val client = restClientBuilder.baseUrl(peer.baseUrl).build()
 

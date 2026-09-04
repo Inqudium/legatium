@@ -108,6 +108,13 @@ class ClientRequestLoggingMetricsTest {
 
         @Test
         fun `should count the request-id origin per source`() {
+            // What is tested: metrics.requestId with the source ClientIdentity.resolve decides - a
+            //   conformant traceparent counts as trace, an acceptable correlation header as header,
+            //   neither as generated.
+            // Success criteria: after one call of each kind the adapter.logging.correlation.id
+            //   counter holds exactly 1.0 under each of the three source tags.
+            // Why it matters: a rising generated share is the only signal that the application
+            //   stopped propagating its trace or correlation header onto outbound calls.
             // Given/When: a traced, a header-carrying and a bare request
             interceptor
                 .intercept(request().apply { headers.set("traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01") }, ByteArray(0), answering())
@@ -187,6 +194,15 @@ class ClientRequestLoggingMetricsTest {
 
         @Test
         fun `should count an unread response body and record no size sample for it`() {
+            // What is tested: recordBodySizes for a response the application closed without opening
+            //   the body - the capture stays UNREAD at zero bytes, a response exists, and no template
+            //   attribute was recorded.
+            // Success criteria: adapter.response.body.read counts 1.0 under uri=UNKNOWN, the peer
+            //   host and state=unread; no response body size summary exists because recordBodySize
+            //   skips zero bytes.
+            // Why it matters: the read-state counter is the one place a discarded payload becomes
+            //   visible - the size summary cannot show it, and a zero sample there would distort the
+            //   distribution of bodies that exist.
             // Given: measuring, and a response closed without reading
             val measuring =
                 ClientRequestLoggingInterceptor(properties.copy(measureResponseBodySize = true), { ticker.get() }, { "generated-42" }, registry)
@@ -202,6 +218,13 @@ class ClientRequestLoggingMetricsTest {
 
         @Test
         fun `should not record a read state when the call produced no response`() {
+            // What is tested: the exchange.response != null guard in recordBodySizes - a call that
+            //   threw before a status line leaves the measuring-mode capture with nothing to consume.
+            // Success criteria: no adapter.response.body.read counter is created at all after the
+            //   refused call.
+            // Why it matters: counting such a call as unread would blame the application for
+            //   discarding a body the peer never sent, inflating exactly the share the counter exists
+            //   to flag.
             // Given
             val measuring =
                 ClientRequestLoggingInterceptor(properties.copy(measureResponseBodySize = true), { ticker.get() }, { "generated-42" }, registry)
@@ -335,6 +358,12 @@ class ClientRequestLoggingMetricsTest {
 
         @Test
         fun `should count a throwing host counter as stage wiring and still log the exchange`() {
+            // What is tested: updateQuietly around the correlation counter's increment at wiring
+            //   time - a host Counter that registered fine but throws on increment.
+            // Success criteria: the exchange is logged as usual and the fail-open counter shows
+            //   exactly one stage=wiring increment on the hostile registry.
+            // Why it matters: a bookkeeping failure in a host meter must degrade to a lost count,
+            //   never turn the call into an unlogged pass-through.
             // Given: a registry whose correlation counter throws on increment
             val hostile: MeterRegistry =
                 object : SimpleMeterRegistry() {

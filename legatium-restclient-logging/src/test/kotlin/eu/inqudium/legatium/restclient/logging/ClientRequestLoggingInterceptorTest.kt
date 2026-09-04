@@ -6,6 +6,7 @@ import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.NanoTimeSource
+import eu.inqudium.legatium.common.RequestIdSource
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
@@ -125,6 +126,15 @@ class ClientRequestLoggingInterceptorTest {
 
         @Test
         fun `should log query, port and URI template as their own fields`() {
+            // What is tested: the URL coordinates RequestTarget and the wiring split off the
+            //   request - host with its explicit port, raw path, the query kept because
+            //   include-query-string is on, and the uriTemplate request attribute RestClient records.
+            // Success criteria: the message names the target without the query; adapter_url_host is
+            //   "localhost:8081", adapter_url_path "/things/7", adapter_url_query "page=2" and
+            //   adapter_url_template the template string.
+            // Why it matters: dashboards group by host and template, not by expanded URL - the
+            //   fields must be split exactly so, and the query must stay out of the message and the
+            //   MDC route.
             // Given: an explicit port, a query string and the template attribute RestClient records
             val request = request(uri = "http://localhost:8081/things/7?page=2")
             request.attributes[ClientRequestLoggingInterceptor.URI_TEMPLATE_ATTRIBUTE] = "http://localhost:8081/things/{id}"
@@ -172,6 +182,12 @@ class ClientRequestLoggingInterceptorTest {
 
         @Test
         fun `should log a slash path for a URI without a path`() {
+            // What is tested: RequestTarget.of on a bare authority - an empty rawPath is normalised
+            //   to "/" in both the target and the path field.
+            // Success criteria: the message reads "https://api.example.com/ -> 200" and
+            //   adapter_url_path is "/".
+            // Why it matters: the engine sends "GET / HTTP/1.1" for such a URI; an empty path field
+            //   would break grouping by path and make the target look truncated.
             // Given: a bare authority
             interceptor.intercept(request(uri = "https://api.example.com"), ByteArray(0), answering()).consumeAndClose()
 
@@ -238,6 +254,14 @@ class ClientRequestLoggingInterceptorTest {
 
         @Test
         fun `should adopt a correlation id already on the request and leave it untouched`() {
+            // What is tested: ClientIdentity.resolve on a traceless request whose correlation
+            //   header passes CorrelationHeader.accept - the header value becomes the request id and
+            //   sendCorrelationHeader is false.
+            // Success criteria: the header still holds exactly the one caller value, and the MDC
+            //   and the message carry "caller-id".
+            // Why it matters: an id propagated from the inbound request must join the server line
+            //   and the peer's line; overwriting or duplicating it would break the chain the caller
+            //   established.
             // Given: the caller put its own id on the request
             val request = request().apply { headers.set(properties.correlationIdHeader, "caller-id") }
 
@@ -327,6 +351,13 @@ class ClientRequestLoggingInterceptorTest {
     inner class `Levels and outcomes` {
         @Test
         fun `should escalate to WARN with outcome failure for a 5xx answer`() {
+            // What is tested: classify for a response without an exception and a status >= 500 -
+            //   the level is WARN, the outcome failure, the status kept.
+            // Success criteria: one WARN event with "-> 503" in the message, adapter_outcome
+            //   failure and status field 503.
+            // Why it matters: a 5xx is the peer's failure, not a broken call - WARN keeps it
+            //   visible without paging on every upstream hiccup while the outcome tag still counts it
+            //   as failed.
             // Given: the peer answers 503
             interceptor.intercept(request(), ByteArray(0), answering(status = HttpStatus.SERVICE_UNAVAILABLE)).consumeAndClose()
 
@@ -406,6 +437,13 @@ class ClientRequestLoggingInterceptorTest {
 
         @Test
         fun `should escalate to WARN and flag a slow but successful call`() {
+            // What is tested: the slow escalation in emitExchange - the injected clock advances by
+            //   exactly the 200 ms threshold during the call, so the Duration comparison with >=
+            //   holds while the classification stays success.
+            // Success criteria: the event is WARN, carries adapter_slow true and keeps
+            //   adapter_outcome success.
+            // Why it matters: severity and outcome are decoupled on purpose - a slow peer must show
+            //   up on the level without being counted as a failure.
             // Given: a call that consumes the configured threshold before it is closed
             interceptor
                 .intercept(request(), ByteArray(0), answering { ticker.addAndGet(200_000_000) })
@@ -457,6 +495,15 @@ class ClientRequestLoggingInterceptorTest {
 
         @Test
         fun `should log a WARN breadcrumb on the module logger when the call throws`() {
+            // What is tested: the breadcrumb of the catch block - a throwing execution logs one
+            //   WARN line on the interceptor's own logger, separate from the ERROR event on the
+            //   exchange logger.
+            // Success criteria: exactly one WARN on the module logger with method, target, the
+            //   exception's toString and the request id; the exchange logger still has exactly one
+            //   event.
+            // Why it matters: the exchange log stream keeps its one-event-per-exchange contract for
+            //   parsers, while the module logger shows the failure with its cause where the twins'
+            //   streams look alike.
             // Given: the module's own logger captured
             val internal = CapturedLogger(ClientRequestLoggingInterceptor::class.java.name)
             try {
@@ -498,6 +545,13 @@ class ClientRequestLoggingInterceptorTest {
 
         @Test
         fun `should be active only for paths matching an include pattern and let an exclude win`() {
+            // What is tested: ClientActivation.shouldNotFilter with an include pattern and an
+            //   exclude prefix - a path outside the include is skipped, a path inside it but under
+            //   the exclude prefix is skipped too.
+            // Success criteria: of three calls only /api/things produces an event; the static asset
+            //   and /api/internal/jobs are passed through unlogged.
+            // Why it matters: activation scoping is how an operator keeps noisy or sensitive routes
+            //   out of the log, and an include that could override an exclude would be a silent leak.
             // Given: /api/** included, /api/internal excluded
             val scoped = interceptorWith(properties.copy(includePathPatterns = listOf("/api/**"), excludePathPrefixes = listOf("/api/internal")))
 
@@ -533,6 +587,12 @@ class ClientRequestLoggingInterceptorTest {
 
         @Test
         fun `should reject an invalid include pattern at construction time`() {
+            // What is tested: the eager parse of include-path-patterns in ClientActivation - the
+            //   PathPatternParser runs in the interceptor's constructor, not per call.
+            // Success criteria: the constructor throws the parser's own PatternParseException whose
+            //   detailed string names the malformed pattern.
+            // Why it matters: a configuration error must fail the context start with a readable
+            //   message instead of failing, or silently skipping, every call at runtime.
             // Given/When
             val thrown = catchThrowable { interceptorWith(properties.copy(includePathPatterns = listOf("/api/{unclosed"))) }
 
@@ -543,6 +603,14 @@ class ClientRequestLoggingInterceptorTest {
 
         @Test
         fun `should announce the call before the wire call when enabled`() {
+            // What is tested: logRequestStart with log-request-start on - the arrival line is
+            //   emitted in intercept before execution.execute, under the exchange MDC, and the
+            //   completion line follows at close.
+            // Success criteria: during the execution the log holds exactly the "started" line;
+            //   afterwards there are two events, the first without adapter_outcome but with the host
+            //   and the request id in its MDC, the last with outcome success.
+            // Why it matters: an operator watching a hung call needs the line before the answer,
+            //   and the arrival line must stay invisible to outcome-keyed dashboards.
             // Given: start-line logging and an execution that observes the log stream mid-flight
             val startLogging = interceptorWith(properties.copy(logRequestStart = true))
             var eventsAtCallTime = listOf<String>()
@@ -658,14 +726,14 @@ class ClientRequestLoggingInterceptorTest {
             interceptor.intercept(request, ByteArray(0), answering()).consumeAndClose()
 
             // Then
-            fun origin(source: String) =
+            fun origin(source: RequestIdSource) =
                 meterRegistry
                     .get(ClientLoggingMetrics.CORRELATION_METER)
-                    .tag("source", source)
+                    .tag("source", source.tagValue)
                     .counter()
                     .count()
-            assertThat(origin(ClientLoggingMetrics.REQUEST_ID_SOURCE_GENERATED)).isEqualTo(2.0)
-            assertThat(origin(ClientLoggingMetrics.REQUEST_ID_SOURCE_HEADER)).isZero()
+            assertThat(origin(RequestIdSource.GENERATED)).isEqualTo(2.0)
+            assertThat(origin(RequestIdSource.HEADER)).isZero()
             assertThat(log.events.map { it.mdcPropertyMap[MdcKeys.REQUEST_ID] }).containsExactly("generated-42", "generated-42")
         }
 

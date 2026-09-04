@@ -65,6 +65,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   RestClient twin has one exactly-once guard; the field enum declares its
   wire shape for the lockstep test instead of gating at emission; the id
   generator's narrative moved into ADR-0004.
+- Code-style audit of 2026-09-04, applied: the outcome, fail-open stage and
+  request-id source vocabularies are enums (`ClientOutcome`, `FailOpenStage`,
+  `RequestIdSource`) instead of string constants; the identity resolution of
+  ADR-0002 and the URI split live in `legatium-common` (`ClientIdentity`,
+  `RequestTarget`) and both emitters classify through one shared
+  `Classification`; the entry points and emitters are split into named
+  steps; `HeaderValueMasker.DEFAULT`, `NanoTimeSource.SYSTEM` and
+  `CorrelationIdGenerator.DEFAULT` are `@JvmField`, the masker factories
+  `@JvmStatic`; the RestClient twin's `BoundedBodyCapture` is internal like
+  its twin; every test carries the rationale block the contributing guide
+  asks for.
 - Reactive body consumption vs. abandonment: a consumer that stops reading the
   body from within its own delivery - Spring's body skip for
   `bodyToMono(Void.class)` / `toEntity(Void.class)` / an unsupported media

@@ -14,6 +14,7 @@ fun interface NanoTimeSource {
 
     companion object {
         /** The production default; the single place in this module that reads the system's monotonic clock. */
+        @JvmField
         val SYSTEM: NanoTimeSource = NanoTimeSource { System.nanoTime() }
     }
 }

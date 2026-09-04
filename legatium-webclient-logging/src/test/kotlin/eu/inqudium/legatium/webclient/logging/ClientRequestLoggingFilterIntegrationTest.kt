@@ -115,6 +115,13 @@ class ClientRequestLoggingFilterIntegrationTest {
 
     @Test
     fun `should log a 5xx answer as WARN failure with the body the client read for its exception`() {
+        // What is tested: the 5xx classification through a real Reactor Netty exchange -
+        //   `retrieve()` reads the body to build its WebClientResponseException, and that read is
+        //   what the tee observes.
+        // Success criteria: the caller gets the response exception; the single event is WARN with
+        //   outcome failure, status 500 and the response body "boom".
+        // Why it matters: a 5xx is not an error signal in the reactive chain; the body on the line
+        //   comes from the client's own error-handling read, which only a real connector exercises.
         // Given
         val client = webClientBuilder.baseUrl(peer.baseUrl).build()
 
@@ -141,6 +148,12 @@ class ClientRequestLoggingFilterIntegrationTest {
 
     @Test
     fun `should log a refused connection as ERROR failure without a status`() {
+        // What is tested: the no-response path against a real closed port - the connector errors
+        //   before a status line, the exchange completes through doFinally on the response Mono.
+        // Success criteria: the caller gets a WebClientRequestException; the single event is ERROR
+        //   with outcome failure, "-> -" in the message and no status field.
+        // Why it matters: a connection refused is the most common outage signature; the line must
+        //   say so loudly and must not invent a status the peer never sent.
         // Given
         val client = webClientBuilder.baseUrl("http://127.0.0.1:1").build()
 
@@ -226,17 +239,25 @@ class ClientRequestLoggingFilterIntegrationTest {
 
     @Test
     fun `should log a bodiless 204 without body fields`() {
+        // What is tested: a real 204 answered by the peer with no body, consumed via
+        //   toBodilessEntity - the release path on a body that yields no buffer.
+        // Success criteria: status 204 on the entity and in the event; neither body key is present
+        //   although both body modes are `always`.
+        // Why it matters: a bodiless answer is the normal shape of a DELETE or PUT; an empty body
+        //   field on each of them would be noise in the most frequent healthy line.
         // Given
         val client = webClientBuilder.baseUrl(peer.baseUrl).build()
 
         // When
         val entity =
-            client
-                .get()
-                .uri("/empty")
-                .retrieve()
-                .toBodilessEntity()
-                .block()!!
+            requireNotNull(
+                client
+                    .get()
+                    .uri("/empty")
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block(),
+            )
 
         // Then
         assertThat(entity.statusCode.value()).isEqualTo(204)

@@ -1,14 +1,14 @@
 package eu.inqudium.legatium.webclient.logging
 
 import eu.inqudium.legatium.common.ClientActivation
+import eu.inqudium.legatium.common.ClientIdentity
 import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.ClientStack
-import eu.inqudium.legatium.common.CorrelationHeader
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.NanoTimeSource
-import eu.inqudium.legatium.common.Traceparent
+import eu.inqudium.legatium.common.RequestTarget
 import eu.inqudium.legatium.common.reportQuietly
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
@@ -233,83 +233,35 @@ class ClientRequestLoggingFilter
             emitter.logExchange(exchange)
         }
 
+        /**
+         * Everything that must exist before the connector call runs: identity resolution, the captures, the
+         * rebuilt outgoing request, the eagerly captured request-side coordinates and the gauge. Called
+         * exclusively from [wireOrNull] - anything thrown here is confined there.
+         */
         private fun wireExchange(request: ClientRequest): Wiring {
             val headers = request.headers()
-            // The exchange identity, resolved per ADR-0002: a conformant traceparent's trace id IS the
-            // request id (a correlation header the caller put on the request is ignored on such calls -
-            // the distributed identity outranks the private one); only a traceless call accepts the
-            // correlation header already on the request or generates a fresh id, and only a traceless
-            // call without one gets the header ADDED - a traced call goes out observationally untouched.
-            val trace = Traceparent.parse(headers.getFirst(Traceparent.HEADER))
-            // A correlation id already on the request is accepted only within the CorrelationHeader rule
-            // (length, visible ASCII); anything else counts as absent and is REPLACED on the wire.
-            val headerCorrelationId =
-                if (trace == null) {
-                    CorrelationHeader.accept(headers.getFirst(properties.correlationIdHeader))
-                } else {
-                    null
-                }
-            val requestId = trace?.first ?: headerCorrelationId ?: correlationIds.nextCorrelationId()
+            val identity = ClientIdentity.resolve(headers, properties, correlationIds)
             // Guarded inside the metrics: a throwing host counter must not turn the call into an unlogged
             // pass-through.
-            metrics.requestId(
-                when {
-                    trace != null -> ClientLoggingMetrics.REQUEST_ID_SOURCE_TRACE
-                    headerCorrelationId != null -> ClientLoggingMetrics.REQUEST_ID_SOURCE_HEADER
-                    else -> ClientLoggingMetrics.REQUEST_ID_SOURCE_GENERATED
-                },
-            )
-            val sendCorrelationHeader = trace == null && headerCorrelationId == null
-
-            // A capture exists when the body is logged in ANY mode OR measured - `on-failure` needs the
-            // bytes before the outcome is known and the emitter drops them on success; measure-only runs
-            // the capture in count-only mode (limit 0: nothing buffered, every byte counted).
-            val requestCapture =
-                if (properties.logRequestBody.captures || properties.measureRequestBodySize) {
-                    BoundedBodyCapture(if (properties.logRequestBody.captures) properties.maxBodyBytes else 0)
-                } else {
-                    null
-                }
-            val responseCapture =
-                if (properties.logResponseBody.captures || properties.measureResponseBodySize) {
-                    BoundedBodyCapture(if (properties.logResponseBody.captures) properties.maxBodyBytes else 0)
-                } else {
-                    null
-                }
-
+            metrics.requestId(identity.source)
+            val captures = newCaptures()
             // The request the connector gets: the caller's, plus the correlation header on a traceless call
             // without one, plus the body tee when the request body is captured. ClientRequest is immutable,
-            // so both go through one rebuild; untouched otherwise.
-            var outgoing = request
-            if (sendCorrelationHeader) {
-                outgoing = ClientRequest.from(outgoing).headers { it.set(properties.correlationIdHeader, requestId) }.build()
-            }
-            if (requestCapture != null) {
-                outgoing = outgoing.withRequestBodyTee(requestCapture)
-            }
+            // so both go through a rebuild; untouched otherwise.
+            val outgoing =
+                request
+                    .let { if (identity.sendCorrelationHeader) ClientRequest.from(it).headers { h -> h.set(properties.correlationIdHeader, identity.requestId) }.build() else it }
+                    .let { if (captures.request != null) it.withRequestBodyTee(captures.request) else it }
             val outgoingHeaders = outgoing.headers()
-
-            // RAW (still percent-encoded) path and query, as they go on the wire - twin parity with the
-            // RestClient module, and the log-injection guard: java.net.URI's decoded getPath()/getQuery()
-            // turn `%0A`/`%0D` into real line breaks that would forge lines in every plain-text sink
-            // (message, MDC adapter_route, fields). Activation matching keeps the decoded path.
-            val uri = request.url()
-            val host = uri.host?.let { if (uri.port != -1) "$it:${uri.port}" else it }
-            val path = uri.rawPath?.takeIf { it.isNotEmpty() } ?: "/"
-            val target =
-                buildString {
-                    uri.scheme?.let { append(it).append("://") }
-                    host?.let { append(it) }
-                    append(path)
-                }
+            val target = RequestTarget.of(request.url())
             val exchange =
                 Exchange(
                     method = request.method().name(),
-                    target = target,
-                    host = host,
-                    path = path,
-                    query = if (properties.includeQueryString) uri.rawQuery else null,
-                    requestId = requestId,
+                    target = target.target,
+                    host = target.host,
+                    path = target.path,
+                    query = if (properties.includeQueryString) request.url().rawQuery else null,
+                    requestId = identity.requestId,
                     // Multi-value resolution, natively from HttpHeaders - from the OUTGOING request, so a
                     // selected correlation header shows what actually goes out.
                     requestHeaders =
@@ -317,16 +269,32 @@ class ClientRequestLoggingFilter
                             outgoingHeaders[name]?.takeIf { it.isNotEmpty() }?.joinToString(", ")
                         },
                     uriTemplate = request.attribute(URI_TEMPLATE_ATTRIBUTE).orElse(null) as? String,
-                    requestCapture = requestCapture,
-                    responseCapture = responseCapture,
+                    requestCapture = captures.request,
+                    responseCapture = captures.response,
                     requestCharset = headers.declaredCharsetOrUtf8(),
                     startNanos = nanoTime.nanoTime(),
-                    traceId = trace?.first,
-                    spanId = trace?.second,
+                    traceId = identity.traceId,
+                    spanId = identity.spanId,
                 )
             metrics.exchangeOpened()
             return Wiring(exchange, outgoing)
         }
+
+        /**
+         * A capture exists when the body is logged in ANY mode OR measured - `on-failure` needs the bytes
+         * before the outcome is known and the emitter drops them on success; measure-only runs the capture
+         * in count-only mode (limit 0: nothing buffered, every byte counted).
+         */
+        private fun newCaptures(): Captures =
+            Captures(
+                request = if (properties.logRequestBody.captures || properties.measureRequestBodySize) BoundedBodyCapture(if (properties.logRequestBody.captures) properties.maxBodyBytes else 0) else null,
+                response = if (properties.logResponseBody.captures || properties.measureResponseBodySize) BoundedBodyCapture(if (properties.logResponseBody.captures) properties.maxBodyBytes else 0) else null,
+            )
+
+        private class Captures(
+            val request: BoundedBodyCapture?,
+            val response: BoundedBodyCapture?,
+        )
 
         /** The wired [exchange] plus the (possibly rebuilt) request the connector receives. */
         internal class Wiring(
