@@ -166,5 +166,50 @@ class BoundedBodyCaptureTest {
             capture.markStarted()
             assertThat(capture.readState).isEqualTo(BodyReadState.COMPLETE)
         }
+
+        @Test
+        fun `should complete when the byte count reaches the declared length without an EOF`() {
+            // What is tested: expectBytes - a declared length completes the read state the moment the
+            //   count reaches it, through either capture overload, with no markCompleted call.
+            // Success criteria: PARTIAL after 5 of 6 bytes, COMPLETE after the sixth, and COMPLETE
+            //   stays when more bytes than declared arrive.
+            // Why it matters: a length-aware reader (Spring's ByteArrayHttpMessageConverter,
+            //   readNBytes) never asks for the EOF; without this rule its complete reads counted as
+            //   partial.
+            // Given: a capture told to expect 6 bytes
+            val capture = BoundedBodyCapture(8)
+            capture.expectBytes(6)
+            capture.markStarted()
+
+            // When/Then
+            capture.capture(bytes("01234"), 0, 5)
+            assertThat(capture.readState).isEqualTo(BodyReadState.PARTIAL)
+            capture.capture('5'.code)
+            assertThat(capture.readState).isEqualTo(BodyReadState.COMPLETE)
+            capture.capture('6'.code)
+            assertThat(capture.readState).isEqualTo(BodyReadState.COMPLETE)
+            assertThat(capture.totalBytes).isEqualTo(7L)
+        }
+
+        @Test
+        fun `should complete a declared zero-length body when the stream is opened`() {
+            // What is tested: markStarted with a declared length of zero - a length-aware reader
+            //   opens the stream and reads nothing, which is the whole body.
+            // Success criteria: COMPLETE right after markStarted; with an unknown length the same
+            //   call yields PARTIAL.
+            // Why it matters: an empty declared body must not count as consumption that stopped
+            //   early.
+            // Given/When/Then: declared zero
+            val declaredEmpty = BoundedBodyCapture(8)
+            declaredEmpty.expectBytes(0)
+            declaredEmpty.markStarted()
+            assertThat(declaredEmpty.readState).isEqualTo(BodyReadState.COMPLETE)
+
+            // And: unknown length stays the EOF rule
+            val unknown = BoundedBodyCapture(8)
+            unknown.expectBytes(BoundedBodyCapture.UNKNOWN_LENGTH)
+            unknown.markStarted()
+            assertThat(unknown.readState).isEqualTo(BodyReadState.PARTIAL)
+        }
     }
 }

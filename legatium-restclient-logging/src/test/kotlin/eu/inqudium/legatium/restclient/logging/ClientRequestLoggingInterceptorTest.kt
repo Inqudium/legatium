@@ -694,6 +694,68 @@ class ClientRequestLoggingInterceptorTest {
         }
 
         @Test
+        fun `should classify a response whose status the client cannot read as a failure`() {
+            // What is tested: the guard around the metadata accessors of the response wrapper - the
+            //   snapshot at handover tolerates a refusing engine (status `-`, counted as wiring), but
+            //   the CLIENT's own later getStatusCode propagates and must mark the exchange failed.
+            // Success criteria: the client's status access throws unchanged; at close the event is
+            //   ERROR, outcome failure, without a status field, the cause attached.
+            // Why it matters: the caller experienced a failed exchange; a success line for it would
+            //   contradict the exception the caller is handling at that very moment.
+            // Given: an engine whose status is unreadable
+            val refusing =
+                ClientHttpRequestExecution { _, _ ->
+                    object : MockClientHttpResponse("x".toByteArray(), HttpStatus.OK) {
+                        override fun getStatusCode(): org.springframework.http.HttpStatusCode = throw IOException("status line garbled")
+                    }
+                }
+            val response = interceptor.intercept(request(), ByteArray(0), refusing)
+
+            // When: the client asks for the status, then closes in its finally
+            val thrown = catchThrowable { response.statusCode }
+            response.close()
+
+            // Then
+            assertThat(thrown).isInstanceOf(IOException::class.java).hasMessage("status line garbled")
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.ERROR)
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").doesNotContainKey("adapter_response_status_code")
+            assertThat(event.throwableProxy.message).isEqualTo("status line garbled")
+        }
+
+        @Test
+        fun `should classify a response whose close throws as a failure and still complete exactly once`() {
+            // What is tested: the close path of the response wrapper - the delegate's close throws
+            //   (a pooled connection that cannot be returned); the exception is recorded on the
+            //   exchange BEFORE the completion in the finally emits, and rethrown unchanged.
+            // Success criteria: close() throws the IOException; exactly one event, ERROR, outcome
+            //   failure WITH the 200 that was received, the close exception as its cause; a second
+            //   close is a no-op.
+            // Why it matters: previously the success event was written immediately before the very
+            //   exception the caller then saw - the two records of one exchange contradicted each other.
+            // Given
+            val unclosable =
+                ClientHttpRequestExecution { _, _ ->
+                    object : MockClientHttpResponse("ok".toByteArray(), HttpStatus.OK) {
+                        override fun close() = throw java.io.UncheckedIOException(IOException("release failed"))
+                    }
+                }
+            val response = interceptor.intercept(request(), ByteArray(0), unclosable)
+            response.body.readAllBytes()
+
+            // When
+            val thrown = catchThrowable { response.close() }
+            catchThrowable { response.close() }
+
+            // Then
+            assertThat(thrown).isInstanceOf(java.io.UncheckedIOException::class.java)
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.ERROR)
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").containsEntry("adapter_response_status_code", 200)
+            assertThat(event.throwableProxy.message).contains("release failed")
+        }
+
+        @Test
         fun `should close the gauge without an event when the wire call dies with an Error`() {
             // What is tested: the Throwable boundary decided in FailOpenDiagnostics - an Error from the
             //   execution (an inner interceptor's AssertionError, a LinkageError in the engine) is outside

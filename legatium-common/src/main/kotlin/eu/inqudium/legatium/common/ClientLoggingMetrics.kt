@@ -106,6 +106,15 @@ internal enum class ClientStack(
  * (architecture review of 2026-09-04, finding 7): failing the context start contradicts the fail-open
  * promise, and "not registering" needs a per-type no-op meter and is not simpler than one private
  * registry. The scenario is rare; the shape stays because it is the cheapest one that never throws.
+ *
+ * The GAUGE has a second collision case Micrometer does not reject: an id of the SAME type that already
+ * exists (a host gauge under this name and `client` tag, an older copy of this library on another
+ * classloader) is returned as-is, and the state function of the new registration is silently dropped -
+ * this instance would then count into an `AtomicLong` nobody exports. The gauge registration therefore
+ * checks the host registry for an existing meter under its exact name and tag FIRST and, if one is
+ * there, takes the same private-registry path with the same one-time warning: a visibly degraded gauge
+ * instead of a silently wrong one. (Counters and summaries have no such case: an existing counter of
+ * the same id is the shared meter, and increments merge.)
  */
 internal class ClientLoggingMetrics private constructor(
     private val meterRegistry: MeterRegistry,
@@ -115,25 +124,34 @@ internal class ClientLoggingMetrics private constructor(
     private val reportedConflicts: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /**
-     * Registers through [register] against the host registry; on rejection the meter lands in the
-     * private fallback registry instead, with one warning per meter name.
+     * Registers through [register] against the host registry; on rejection - Micrometer refusing the id,
+     * or [taken] reporting that the host registry already holds a meter under it whose state would not be
+     * this instance's - the meter lands in the private fallback registry instead, with one warning per
+     * meter name.
      */
     private fun <M : Meter> registerOrFallback(
         meterName: String,
+        taken: (MeterRegistry) -> Boolean = { false },
         register: (MeterRegistry) -> M,
-    ): M =
-        try {
-            register(meterRegistry)
-        } catch (e: Exception) {
-            if (reportedConflicts.add(meterName)) {
-                internalLog.warn(
-                    "Meter {} could not be registered in the host registry and is kept private (not exported): {}",
-                    meterName,
-                    e.toString(),
-                )
+    ): M {
+        val rejection =
+            try {
+                if (!taken(meterRegistry)) {
+                    return register(meterRegistry)
+                }
+                "a meter with this id is already registered and would keep its own state"
+            } catch (e: Exception) {
+                e.toString()
             }
-            register(fallbackRegistry)
+        if (reportedConflicts.add(meterName)) {
+            internalLog.warn(
+                "Meter {} could not be registered in the host registry and is kept private (not exported): {}",
+                meterName,
+                rejection,
+            )
         }
+        return register(fallbackRegistry)
+    }
 
     // One counter per fail-open site. The metric exists because the failure it counts is the one state
     // logs cannot reliably show: when the emission breaks, the missing exchange line IS the symptom, and
@@ -175,7 +193,12 @@ internal class ClientLoggingMetrics private constructor(
     // entry, down at completion) makes the assumption measurable.
     private val openExchanges =
         AtomicLong(0).also { open ->
-            registerOrFallback(OPEN_EXCHANGES_METER) { registry ->
+            registerOrFallback(
+                OPEN_EXCHANGES_METER,
+                // A same-type meter under this exact id would be returned unchanged by Micrometer, and this
+                // instance's state function silently discarded (see the class documentation).
+                taken = { registry -> registry.find(OPEN_EXCHANGES_METER).tag(CLIENT_TAG, stack.tag).meter() != null },
+            ) { registry ->
                 Gauge
                     .builder(OPEN_EXCHANGES_METER, open) { it.get().toDouble() }
                     // Tagged per twin: Micrometer deduplicates by id and would silently keep the FIRST
@@ -322,8 +345,9 @@ internal class ClientLoggingMetrics private constructor(
         // VALUE is exactly what every entry point already holds strongly - the owner lives as long as
         // an interceptor or filter using it does. Residual (accepted): when every entry point of a
         // still-live registry has been collected and a NEW one is wired against it afterwards, the
-        // fresh owner meets its own pre-registered meter ids again and the ignored-gauge case
-        // resurfaces - a churn pattern neither the auto-configurations nor per-test registries produce.
+        // fresh owner meets its own pre-registered gauge id again - the same-type collision check then
+        // keeps its gauge private with a warning instead of counting invisibly - a churn pattern
+        // neither the auto-configurations nor per-test registries produce.
         private val perRegistry = WeakHashMap<MeterRegistry, EnumMap<ClientStack, WeakReference<ClientLoggingMetrics>>>()
 
         /**

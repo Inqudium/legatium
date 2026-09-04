@@ -115,8 +115,9 @@ adapter-logging:
   # max-body-bytes) like `always` and drops it on success - the capture is paid, the output is saved.
   # A 4xx answer keeps its `success` outcome (the peer answered) but logs its bodies in `on-failure`:
   # the client's error is exactly what the body explains.
-  # The request body is what the client sends (complete, in memory on the blocking stack; teed as it
-  # is written on the reactive one); the response body is TEED as the application reads it - never
+  # The request body is what the client hands to the wire call (the complete serialized body, copied
+  # BEFORE the call on the blocking stack - so a refused call still shows what was about to be sent;
+  # teed as it is written to the connector on the reactive one); the response body is TEED as the application reads it - never
   # pre-read, never replayed, so streaming behaviour is untouched and the log shows exactly the bytes
   # that actually moved (a response body the application never read is logged as absent). Fields
   # `adapter_request_body` / `adapter_response_body` appear only when bytes flowed.
@@ -127,7 +128,9 @@ adapter-logging:
   # tagged by the URI template and the peer host). Deliberately independent of the log-*-body flags - a
   # metric must not appear and disappear with a logging flag. Measure-only installs a count-only
   # capture (nothing buffered); measured is what actually flowed, exact even beyond max-body-bytes.
-  # Zero-byte bodies record no sample. The response side additionally records the counter
+  # Zero-byte bodies record no sample. On the blocking stack the REQUEST sample is recorded only for an
+  # exchange that received a response - the interceptor copies the body before the wire call, and a
+  # response is its one proof that the bytes went out. The response side additionally records the counter
   # `adapter.response.body.read` (tag `state` = unread | partial | complete): the tee mirrors what the
   # application CONSUMED, so this is the one signal that tells a body the peer sent but the application
   # dropped from a body that was never sent.

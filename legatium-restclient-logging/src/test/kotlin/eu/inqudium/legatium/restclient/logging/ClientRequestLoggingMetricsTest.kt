@@ -22,7 +22,13 @@ import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
 import org.slf4j.Marker
 import org.springframework.http.HttpStatus
+import org.springframework.http.client.ClientHttpRequestExecution
+import org.springframework.http.converter.ByteArrayHttpMessageConverter
+import org.springframework.mock.http.client.MockClientHttpResponse
+import java.io.ByteArrayInputStream
+import java.io.FilterInputStream
 import java.io.IOException
+import java.io.InputStream
 import java.net.SocketTimeoutException
 import java.util.concurrent.atomic.AtomicLong
 
@@ -59,6 +65,33 @@ class ClientRequestLoggingMetricsTest {
             .count()
 
     private fun gauge(): Double = registry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()
+
+    /**
+     * A body stream that honours the InputStream contract for a zero-length read (returns 0), as the
+     * engines' streams do (verified against the JDK HttpClient's). Spring's mock body is a
+     * ByteArrayInputStream, which returns -1 for a zero-length read at its end - and `readNBytes(n)`
+     * ends with exactly such a read, so the mock would show the EOF that a real engine never shows.
+     */
+    private fun engineLikeStream(body: String): InputStream =
+        object : FilterInputStream(ByteArrayInputStream(body.toByteArray())) {
+            override fun read(
+                b: ByteArray,
+                off: Int,
+                len: Int,
+            ): Int = if (len == 0) 0 else super.read(b, off, len)
+        }
+
+    /** An execution answering 200 with [body] on an engine-like stream and the given extra headers. */
+    private fun answeringLikeAnEngine(
+        body: String,
+        headers: Map<String, String> = emptyMap(),
+    ): ClientHttpRequestExecution =
+        ClientHttpRequestExecution { _, _ ->
+            MockClientHttpResponse(engineLikeStream(body), HttpStatus.OK).apply {
+                this.headers.contentLength = body.length.toLong()
+                headers.forEach { (name, value) -> this.headers.set(name, value) }
+            }
+        }
 
     @Nested
     inner class `Counters and gauge` {
@@ -214,6 +247,110 @@ class ClientRequestLoggingMetricsTest {
             assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "unread"))
                 .isEqualTo(1.0)
             assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_SIZE_METER).summary()).isNull()
+        }
+
+        @Test
+        fun `should not record a request body size sample when the call produced no response`() {
+            // What is tested: the exchange.response != null guard on the REQUEST sample in
+            //   recordBodySizes - the interceptor copies the serialized body before the wire call,
+            //   and a refused connection means none of it reached the peer.
+            // Success criteria: after a refused POST with a 4-byte body no adapter.request.body.size
+            //   summary exists; after an answered POST with the same body the summary records 4.
+            // Why it matters: the meter is documented as bytes that actually flowed; a sample for a
+            //   body the peer never saw would inflate payload distributions with every outage and
+            //   make the twin comparison lie (the reactive twin tees at the connector write).
+            // Given
+            val measuring =
+                ClientRequestLoggingInterceptor(properties.copy(measureRequestBodySize = true), { ticker.get() }, { "generated-42" }, registry)
+
+            // When: refused, then answered
+            catchThrowable { measuring.intercept(request(method = org.springframework.http.HttpMethod.POST), "four".toByteArray()) { _, _ -> throw IOException("refused") } }
+            assertThat(registry.find(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).summary()).isNull()
+            measuring.intercept(request(method = org.springframework.http.HttpMethod.POST), "four".toByteArray(), answering()).consumeAndClose()
+
+            // Then: the answered call is the one that recorded
+            assertThat(registry.get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).summary().totalAmount()).isEqualTo(4.0)
+        }
+
+        @Test
+        fun `should count a body the ByteArray converter reads to its declared length as complete`() {
+            // What is tested: the declared-length completion rule - Spring's ByteArrayHttpMessageConverter
+            //   reads exactly Content-Length bytes with readNBytes and never asks for the EOF; the
+            //   capture learns the declared length at handover and completes when the count reaches it.
+            // Success criteria: the real converter reads the 6-byte body; adapter.response.body.read
+            //   counts 1 under state=complete and nothing under state=partial.
+            // Why it matters: before the rule every byte[] answer counted as partial - a dashboard
+            //   alarm for abandoned body processing fired on healthy calls.
+            // Given: measuring, and a response that declares its length on an engine-like stream (a
+            //   zero-length read at the end returns 0, not the -1 Spring's mock body would give)
+            val measuring =
+                ClientRequestLoggingInterceptor(properties.copy(measureResponseBodySize = true), { ticker.get() }, { "generated-42" }, registry)
+            val response = measuring.intercept(request(), ByteArray(0), answeringLikeAnEngine("world!"))
+
+            // When: the real Spring converter reads the body, then the client closes
+            val read = ByteArrayHttpMessageConverter().read(ByteArray::class.java, response)
+            response.close()
+
+            // Then
+            assertThat(read).isEqualTo("world!".toByteArray())
+            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(1.0)
+            assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "partial").counter()).isNull()
+        }
+
+        @Test
+        fun `should keep counting a length-exact read as partial when a Content-Encoding makes the length untrustworthy`() {
+            // What is tested: the conservative side of the declared-length rule - with a
+            //   Content-Encoding on the response an engine may hand the application a decoded body of
+            //   another length, so the capture must not trust Content-Length and falls back to the EOF.
+            // Success criteria: the same length-exact read as above counts state=partial.
+            // Why it matters: a wrong `complete` is worse than a conservative `partial` - the rule may
+            //   only fire where the declared length is the length the application reads.
+            // Given: measuring, a response declaring length AND encoding, on an engine-like stream
+            val measuring =
+                ClientRequestLoggingInterceptor(properties.copy(measureResponseBodySize = true), { ticker.get() }, { "generated-42" }, registry)
+            val response = measuring.intercept(request(), ByteArray(0), answeringLikeAnEngine("world!", mapOf("Content-Encoding" to "gzip")))
+
+            // When: exactly the declared length is read, no EOF asked for
+            response.body.readNBytes(6)
+            response.close()
+
+            // Then
+            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "partial")).isEqualTo(1.0)
+        }
+
+        @Test
+        fun `should fold a malformed Content-Length to unknown without counting a wiring failure`() {
+            // What is tested: the peer-controlled header at the completeness seam - Spring parses
+            //   Content-Length with Long.parseLong, so a non-numeric value throws; declaredBodyLength
+            //   must fold it to UNKNOWN_LENGTH itself instead of letting the snapshot's catch count
+            //   and warn.
+            // Success criteria: the status is on the event, no failopen{stage=wiring} increment, no
+            //   warning on the interceptor's logger, and the EOF rule alone decides: a length-exact
+            //   read without an EOF counts partial.
+            // Why it matters: a peer must not be able to raise a warning and a fail-open count per
+            //   answer with one garbage header; the header may only ever feed the comparison.
+            // Given: measuring, a garbage Content-Length on an engine-like stream, the module logger captured
+            val measuring =
+                ClientRequestLoggingInterceptor(properties.copy(measureResponseBodySize = true), { ticker.get() }, { "generated-42" }, registry)
+            val garbage =
+                ClientHttpRequestExecution { _, _ ->
+                    MockClientHttpResponse(engineLikeStream("world!"), HttpStatus.OK).apply { headers.set("Content-Length", "abc") }
+                }
+            val moduleLog = CapturedLogger(ClientRequestLoggingInterceptor::class.java.name)
+            try {
+                // When
+                val response = measuring.intercept(request(), ByteArray(0), garbage)
+                response.body.readNBytes(6)
+                response.close()
+
+                // Then
+                assertThat(keyValues(log.events.single())).containsEntry("adapter_response_status_code", 200)
+                assertThat(counter(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isZero()
+                assertThat(moduleLog.events).isEmpty()
+                assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "partial")).isEqualTo(1.0)
+            } finally {
+                moduleLog.detach()
+            }
         }
 
         @Test
@@ -403,6 +540,49 @@ class ClientRequestLoggingMetricsTest {
         assertThat(ClientLoggingMetrics.uriTag("https://api.example.com/things/{id}")).isEqualTo("https://api.example.com/things/{id}")
         assertThat(ClientLoggingMetrics.uriTag("https://api.example.com/things/42")).isEqualTo(ClientLoggingMetrics.UNTEMPLATED_URI)
         assertThat(ClientLoggingMetrics.uriTag(null)).isEqualTo(ClientLoggingMetrics.UNTEMPLATED_URI)
+    }
+
+    @Test
+    fun `should keep the gauge private with a warning when the host registry already holds an identical gauge`() {
+        // What is tested: the same-type collision check of the gauge registration - a host (or an
+        //   older library copy) already registered adapter.logging.exchanges.open{client=restclient};
+        //   Micrometer would return that gauge unchanged and drop this owner's state function.
+        // Success criteria: the host's gauge keeps its own value (7) while an exchange is open, the
+        //   registry holds exactly one meter under the id, one WARN on the metrics logger names the
+        //   meter as kept private, and the exchange is still logged.
+        // Why it matters: without the check the liveness gauge showed a foreign value and this
+        //   instance's open exchanges were invisible - no fallback, no warning, the one silent-loss
+        //   signal itself lost silently.
+        // Given: a host gauge under the exact id, and the metrics logger captured
+        val hostRegistry = SimpleMeterRegistry()
+        val hostState = AtomicLong(7)
+        io.micrometer.core.instrument.Gauge
+            .builder(ClientLoggingMetrics.OPEN_EXCHANGES_METER, hostState) { it.get().toDouble() }
+            .tag(ClientLoggingMetrics.CLIENT_TAG, "restclient")
+            .register(hostRegistry)
+        val metricsLog = CapturedLogger(ClientLoggingMetrics::class.java.name)
+        try {
+            // When
+            val onCollision = ClientRequestLoggingInterceptor(properties, { ticker.get() }, { "generated-42" }, hostRegistry)
+            val response = onCollision.intercept(request(), ByteArray(0), answering())
+            val hostGaugeWhileOpen =
+                hostRegistry
+                    .get(ClientLoggingMetrics.OPEN_EXCHANGES_METER)
+                    .tag(ClientLoggingMetrics.CLIENT_TAG, "restclient")
+                    .gauge()
+                    .value()
+            response.close()
+
+            // Then
+            assertThat(hostGaugeWhileOpen).isEqualTo(7.0)
+            assertThat(hostRegistry.find(ClientLoggingMetrics.OPEN_EXCHANGES_METER).meters()).hasSize(1)
+            val warning = metricsLog.events.single()
+            assertThat(warning.level).isEqualTo(Level.WARN)
+            assertThat(warning.formattedMessage).contains(ClientLoggingMetrics.OPEN_EXCHANGES_METER).contains("kept private")
+            assertThat(log.events).hasSize(1)
+        } finally {
+            metricsLog.detach()
+        }
     }
 
     @Test

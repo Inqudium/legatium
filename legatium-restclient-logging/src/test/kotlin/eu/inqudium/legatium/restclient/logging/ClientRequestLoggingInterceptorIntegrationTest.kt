@@ -1,7 +1,10 @@
 package eu.inqudium.legatium.restclient.logging
 
 import ch.qos.logback.classic.Level
+import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.MdcKeys
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.AfterAll
@@ -14,6 +17,7 @@ import org.springframework.boot.SpringBootConfiguration
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration
 import org.springframework.boot.restclient.RestTemplateBuilder
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Bean
 import org.springframework.http.MediaType
 import org.springframework.http.client.JdkClientHttpRequestFactory
 import org.springframework.web.client.HttpServerErrorException
@@ -25,7 +29,8 @@ import java.time.Duration
 /**
  * End to end through Boot's auto-configured `RestClient.Builder` and `RestTemplateBuilder` against a
  * real HTTP peer: registration by the customizers, the JDK HTTP engine, the URI template attribute, the
- * body tee on real streams, the correlation header on the wire, and the no-response dispositions
+ * body tee on real streams, the correlation header on the wire, the body meters against what the peer
+ * really received and what Spring's converters really read, and the no-response dispositions
  * (connection refused, read timeout) as the engine really raises them.
  */
 @SpringBootTest(
@@ -34,6 +39,8 @@ import java.time.Duration
     properties = [
         "adapter-logging.log-request-body=always",
         "adapter-logging.log-response-body=always",
+        "adapter-logging.measure-request-body-size=true",
+        "adapter-logging.measure-response-body-size=true",
         "adapter-logging.response-headers.includes=Content-Type",
         "adapter-logging.response-headers.unmasked=Content-Type",
         "adapter-logging.request-headers.includes=X-Correlation-Id",
@@ -52,6 +59,9 @@ class ClientRequestLoggingInterceptorIntegrationTest {
 
     @Autowired
     private lateinit var restTemplateBuilder: RestTemplateBuilder
+
+    @Autowired
+    private lateinit var registry: MeterRegistry
 
     private lateinit var log: CapturedLogger
 
@@ -111,6 +121,93 @@ class ClientRequestLoggingInterceptorIntegrationTest {
         assertThat(keyValues(event)["adapter_response_headers"].toString()).contains("Content-Type:\"application/json\"")
         assertThat(keyValues(event)["adapter_request_headers"].toString()).contains("X-Correlation-Id:\"${received.header("X-Correlation-Id")}\"")
         assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, received.header("X-Correlation-Id"))
+    }
+
+    @Test
+    fun `should measure the request body the peer received and count a byte array answer as complete`() {
+        // What is tested: the two body-meter seams against the real client - the request sample is
+        //   recorded because a response came back (the peer's record proves the bytes went out), and
+        //   the response read state is COMPLETE although RestClient deserialises the answer as a
+        //   byte[] through ByteArrayHttpMessageConverter, which reads exactly Content-Length bytes
+        //   and never asks for the EOF.
+        // Success criteria: the peer received "hello"; the request summary under the template
+        //   records 5 bytes; adapter.response.body.read counts 1 under state=complete and nothing
+        //   under state=partial for that template.
+        // Why it matters: only the real engine and the real converter prove the observation points
+        //   (write proven by a response; completion by the declared length) hold outside the mocks.
+        // Given
+        val client = restClientBuilder.baseUrl(peer.baseUrl).build()
+
+        // When: a byte[] answer to a 5-byte request
+        val body =
+            client
+                .post()
+                .uri("/things/{thingId}", 8)
+                .contentType(MediaType.TEXT_PLAIN)
+                .body("hello")
+                .retrieve()
+                .body(ByteArray::class.java)
+
+        // Then: the peer got the body, the meters describe it
+        assertThat(String(requireNotNull(body))).isEqualTo("""{"id":8,"echo":"hello"}""")
+        assertThat(peer.received.single().body).isEqualTo("hello")
+        val tags = arrayOf("uri", "${peer.baseUrl}/things/{thingId}", "host", peer.host)
+        assertThat(
+            registry
+                .get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER)
+                .tags(*tags)
+                .summary()
+                .totalAmount(),
+        ).isEqualTo(5.0)
+        assertThat(
+            registry
+                .get(ClientLoggingMetrics.RESPONSE_BODY_READ_METER)
+                .tags(*tags, "state", "complete")
+                .counter()
+                .count(),
+        ).isEqualTo(1.0)
+        assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tags(*tags, "state", "partial").counter()).isNull()
+    }
+
+    @Test
+    fun `should log the offered request body of a refused call but record no size sample for it`() {
+        // What is tested: the decoupled request-body contracts on the no-response path with the real
+        //   engine - the FIELD shows the body the client handed to the wire call (evidence), the size
+        //   METER records nothing because no response proves any byte reached the peer.
+        // Success criteria: the event carries adapter_request_body "hello" and outcome failure; no
+        //   adapter.request.body.size summary exists for the refused host.
+        // Why it matters: a size sample for a body the peer never saw would inflate payload
+        //   distributions with every outage; the field, by contrast, is the only payload evidence a
+        //   failed call leaves.
+        // Given: a port nobody listens on, with a connect timeout so a DROPping host cannot hang the test
+        val client =
+            restClientBuilder
+                .baseUrl("http://127.0.0.1:1")
+                .requestFactory(
+                    JdkClientHttpRequestFactory(
+                        java.net.http.HttpClient
+                            .newBuilder()
+                            .connectTimeout(Duration.ofSeconds(2))
+                            .build(),
+                    ),
+                ).build()
+
+        // When
+        val thrown =
+            catchThrowable {
+                client
+                    .post()
+                    .uri("/things/{id}", 9)
+                    .contentType(MediaType.TEXT_PLAIN)
+                    .body("hello")
+                    .retrieve()
+                    .body(String::class.java)
+            }
+
+        // Then
+        assertThat(thrown).isInstanceOf(ResourceAccessException::class.java)
+        assertThat(keyValues(log.events.single())).containsEntry("adapter_outcome", "failure").containsEntry("adapter_request_body", "hello")
+        assertThat(registry.find(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).tag("host", "127.0.0.1:1").summary()).isNull()
     }
 
     @Test
@@ -292,7 +389,10 @@ class ClientRequestLoggingInterceptorIntegrationTest {
     }
 }
 
-/** The smallest Boot application that auto-configures the clients and this module. */
+/** The smallest Boot application that auto-configures the clients and this module - with a host registry, so the meters can be asserted. */
 @SpringBootConfiguration
 @EnableAutoConfiguration
-internal class IntegrationApp
+internal class IntegrationApp {
+    @Bean
+    fun hostMeterRegistry(): MeterRegistry = SimpleMeterRegistry()
+}

@@ -52,8 +52,9 @@ internal class Exchange(
     val completed = AtomicBoolean(false)
 
     /**
-     * The failure of the call - the exception the wire call threw (no response), or an [java.io.IOException]
-     * the application met while reading the body (a response exists, its status is known).
+     * The failure of the call - the exception the wire call threw (no response), or the exception the
+     * application met on the response it was handed: opening or reading the body, asking for status or
+     * headers, closing the body stream or the response (a response exists, its status may be known).
      */
     @Volatile
     var failure: Throwable? = null

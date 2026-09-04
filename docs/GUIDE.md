@@ -123,7 +123,10 @@ A host-defined `ClientRequestLoggingInterceptor` (RestClient twin) or `ClientReq
 (WebClient twin) bean replaces the **entry point**, not the wiring: the auto-configured customizers
 still attach it to every Boot-built client. Both constructors take
 `(ClientLoggingProperties, NanoTimeSource, CorrelationIdGenerator, MeterRegistry)` plus an optional
-trailing `HeaderValueMasker` (the built-in fingerprint when omitted):
+trailing `HeaderValueMasker` — when omitted, the masker the properties' `masking-key` selects
+(`HeaderValueMasker.forKey`), so a hand-built entry point honours a configured key exactly like the
+auto-configured one; the property is the one source of truth, and only an explicitly passed masker (a
+host bean) overrides it:
 
 ```kotlin
 @Bean
@@ -265,9 +268,9 @@ by construction.
 | `slow-request-threshold` | duration | `5s` | At/above this duration an INFO call escalates to WARN and is flagged `adapter_slow: true`; the outcome stays `success`. Measured until the exchange is truly over — response close (RestClient) or the body's terminal signal (WebClient): response occupancy, not bare round-trip time. Must be ≥ 1 ms. |
 | `request-headers.includes` / `.excludes` / `.masked` / `.unmasked` | lists of header names | see [§6.2](#62-header-sections) | The request-header section. |
 | `response-headers.includes` / `.excludes` / `.masked` / `.unmasked` | lists of header names | see [§6.2](#62-header-sections) | The response-header section. |
-| `log-request-body` | `never` \| `on-failure` \| `always` | `never` | Log the request body into `adapter_request_body` (the byte array the client hands the interceptor; on the reactive stack teed as the inserter writes it), up to `max-body-bytes` — on every line (`always`) or only when the outcome is not `success` or the status is a 4xx (`on-failure`, [§6.3](#63-body-logging-and-body-measuring)). |
+| `log-request-body` | `never` \| `on-failure` \| `always` | `never` | Log the request body into `adapter_request_body`, up to `max-body-bytes` — on every line (`always`) or only when the outcome is not `success` or the status is a 4xx (`on-failure`, [§6.3](#63-body-logging-and-body-measuring)). On the blocking stack this is the serialized body the client **hands to the wire call** — copied before the call, so a refused connection still shows what was about to be sent; on the reactive stack it is teed as the inserter **writes** it to the connector. |
 | `log-response-body` | `never` \| `on-failure` \| `always` | `never` | Tee the response body into `adapter_response_body` as the application reads it, up to `max-body-bytes` — on every line or only when the outcome is not `success` or the status is a 4xx. |
-| `measure-request-body-size` | boolean | `false` | Record `adapter.request.body.size`; independent of `log-request-body`. |
+| `measure-request-body-size` | boolean | `false` | Record `adapter.request.body.size`; independent of `log-request-body`. On the blocking stack a sample is recorded only for an exchange that **received a response** — the one proof the interceptor's seam has that the request went out ([§7.4](#74-meters)). |
 | `measure-response-body-size` | boolean | `false` | Record `adapter.response.body.size` and `adapter.response.body.read`; independent of `log-response-body`. |
 | `max-body-bytes` | int > 0 | `16384` | Capture limit per body. Bounds **memory** (and, on the reactive stack, the tee's transient copy per buffer), not the exchange: bytes beyond it still flow; the logged value is truncated with a note of the total size. |
 | `masking-key` | string | *(empty)* | Keys the masking fingerprint: empty keeps the unkeyed `length:hash`, any other value turns it into an HMAC-SHA256 under the key — same shape, same stability under the same key, guess-proof without it. A **secret**: supply it like one; the properties' `toString` redacts it. Ignored when a host pins its own `HeaderValueMasker` bean. |
@@ -332,7 +335,11 @@ Rules that hold for every combination:
   undecoded rather than rendering a replacement character: `…<prefix>... [truncated, 12345 bytes total]`.
 - The log charset is the one the `Content-Type` declares (request: the caller's; response: the peer's),
   UTF-8 when absent or unparsable.
-- `measure-*` records what actually flowed, **exact beyond** `max-body-bytes`.
+- `measure-*` records what actually flowed, **exact beyond** `max-body-bytes`. Field and meter are
+  deliberately decoupled on the blocking stack's request side: the interceptor sees the serialized body
+  *before* the wire call, so the **field** shows the body the client handed to the call (evidence, also
+  for a refused connection), while the **meter** records a sample only once a response proves the
+  request went out.
 - `measure-response-body-size` additionally records `adapter.response.body.read` — whether the application
   consumed the body completely, partially, or not at all ([§7.4](#74-meters)).
 - On the reactive stack the captures are **frozen at emission**: a body chunk still in flight after a
@@ -484,7 +491,7 @@ component template; `ClientLogFieldTest` in `legatium-common` keeps the shared e
 | `adapter_slow` | boolean | yes | on | only when the threshold was reached | absence means fast |
 | `adapter_request_headers` | keyword | **no** | off | when selected headers are present | display only, rendered `[Name:"value", …]` |
 | `adapter_response_headers` | keyword | **no** | off | when selected headers are present | display only |
-| `adapter_request_body` | keyword | **no** | off | when `log-request-body` admits the outcome and bytes were sent | display only, bounded |
+| `adapter_request_body` | keyword | **no** | off | when `log-request-body` admits the outcome and the client handed a non-empty body to the wire call (blocking stack — present even when the call was refused) resp. bytes were written to the connector (reactive stack) | display only, bounded |
 | `adapter_response_body` | keyword | **no** | off | when `log-response-body` admits the outcome and bytes were read | display only, bounded |
 
 Each field declares the exact JVM type of its value (`ClientLogField`), which the lockstep test checks
@@ -542,8 +549,8 @@ deliberately left to `http.client.requests` and the log fields.
 | `adapter.logging.events` | counter | `outcome` = `success` \| `failure` \| `timeout` (\| `cancelled` on the reactive stack) | Exchange events actually **emitted** on the exchange logger — after the level gate, arrival lines excluded. The reconciliation ground truth against the log index. |
 | `adapter.logging.exchanges.open` | gauge | `client` = `restclient` \| `webclient` | Exchanges between entry (wiring) and the exactly-once completion — response close, resp. the body's terminal signal. Hovers near the in-flight call count in health. Tagged per twin so that a host carrying both twins gets two gauges instead of Micrometer silently keeping the first one registered; sum over `client` for the total. |
 | `adapter.logging.correlation.id` | counter | `source` = `trace` \| `header` \| `generated` | Origin of each call's request id (ADR-0002). A re-entry by a retrying outer interceptor with the id generated on attempt 1 keeps counting `generated`. |
-| `adapter.response.body.read` | counter | `uri` = template with a placeholder, `UNKNOWN` otherwise; `host`; `state` = `unread` \| `partial` \| `complete` | How far the application **consumed** the response body, opt-in via `measure-response-body-size`. Recorded once per call that received a response — including bodiless consumption, which is the `unread` share the counter exists to show. `partial` = consumption started but the end of the body was never observed (a converter that stopped early, an exception mid-read, a consumer that stopped reading). Created lazily per tag set on first use. |
-| `adapter.request.body.size` / `adapter.response.body.size` | distribution summary, base unit `bytes` | `uri`, `host` | Bytes that **actually flowed**, opt-in via `measure-*-body-size`, independent of body logging and level. Exact beyond `max-body-bytes`. Zero-byte bodies record no sample. Created lazily per tag set on first use. |
+| `adapter.response.body.read` | counter | `uri` = template with a placeholder, `UNKNOWN` otherwise; `host`; `state` = `unread` \| `partial` \| `complete` | How far the application **consumed** the response body, opt-in via `measure-response-body-size`. Recorded once per call that received a response — including bodiless consumption, which is the `unread` share the counter exists to show. `partial` = consumption started but the end of the body was never observed (a converter that stopped early, an exception mid-read, a consumer that stopped reading). On the blocking stack the end is observed either as the EOF or as the byte count reaching a trustworthy declared `Content-Length` (none with a `Content-Encoding`), because Spring's `ByteArrayHttpMessageConverter` reads exactly that many bytes and never asks for the EOF. Created lazily per tag set on first use. |
+| `adapter.request.body.size` / `adapter.response.body.size` | distribution summary, base unit `bytes` | `uri`, `host` | Bytes that **actually flowed**, opt-in via `measure-*-body-size`, independent of body logging and level. Exact beyond `max-body-bytes`. Zero-byte bodies record no sample. On the blocking stack the **request** sample is recorded only for an exchange that received a response: the interceptor copies the serialized body before the wire call and has no seam at the actual write, so a response is its one proof that the bytes went out (a refused connection or connect timeout records nothing; the reactive stack tees at the connector's write and needs no such rule). Created lazily per tag set on first use. |
 
 **One instance per registry and stack.** Micrometer deduplicates meters by id, so a second metrics
 owner against the same registry would share the counters but not the gauge — the second gauge
@@ -555,7 +562,11 @@ reports the total across them.
 meter type. Rather than aborting the context (at construction) or suppressing an exchange event (at the
 lazy body-size registration), the conflicting meter falls back to a private registry, warned once per
 meter name on `eu.inqudium.legatium.common.ClientLoggingMetrics`: the module keeps working and that
-meter is simply not exported.
+meter is simply not exported. The gauge has a second case Micrometer does **not** reject: a gauge of the
+same id already registered by the host or by another copy of the library (another classloader) would be
+returned as-is and the module's state silently dropped — the gauge would show the foreign value. The
+registration therefore checks for an existing meter under its exact name and `client` tag first and takes
+the same private-registry path with the same warning: visibly degraded, never silently wrong.
 
 ### 7.5 Reading the meters together
 

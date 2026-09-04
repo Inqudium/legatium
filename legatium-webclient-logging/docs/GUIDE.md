@@ -177,9 +177,10 @@ five layers:
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Client lifecycle                                                             │
 │   ClientRequestLoggingFilter (ExchangeFilterFunction)                        │
-│     • response Mono: map → onResponse, doOnError, doOnCancel, doFinally      │
-│     • response body (mutated ClientResponse): tee, doOnComplete/Error/Cancel,│
-│       doFinally → complete  ◀ emission                                       │
+│     • response Mono: ObservedResponse — onResponse, DELIVERING → RESPONDED,  │
+│       error / empty / cancel → complete                                       │
+│     • response body (mutated ClientResponse): ObservedBody — tee, read state,│
+│       terminal signal → complete  ◀ emission                                 │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ State and emission                                                           │
 │   Exchange / ExchangeState                                                   │
@@ -199,8 +200,9 @@ five layers:
 |---|---|
 | `ClientLoggingAutoConfiguration` | Registers the filter bean, the default `NanoTimeSource` / `CorrelationIdGenerator`, and — when Boot's `spring-boot-webclient` is present — a late `WebClientCustomizer` that appends the filter. |
 | `ClientLoggingProperties` | The `adapter-logging.*` binding, validated in `init` - shared (legatium-common - §6.11), the very class the RestClient twin binds. `HeaderLogProperties` (shared too) is one header section. |
-| `ClientRequestLoggingFilter` | Everything that decides **what** is logged and counted: activation by host and path, fail-open wiring (identity, the rebuilt request with correlation header and body tee), the arrival line, the signal mapping of the response `Mono`, the response mutation with the body hooks, the exactly-once `complete`. |
-| `Exchange` / `ExchangeState` | Per-exchange state between entry and emission; one atomic `OPEN → RESPONDED → COMPLETED` state instead of loose flags. |
+| `ClientRequestLoggingFilter` | Everything that decides **what** is logged and counted: activation by host and path, fail-open wiring (identity, the rebuilt request with correlation header and body tee), the arrival line, the response mutation with the body hooks, the exactly-once `complete` and the cancel decision. |
+| `ObservedResponse` | The response `Mono` operator: records and wraps the response, moves the state `OPEN → DELIVERING → RESPONDED` around the downstream's `onNext`, and completes the exchange itself for an error, an empty completion, or a cancel by the caller before the body owns it — including a cancel from another thread *during* the handover, which a `doFinally` would have ignored. |
+| `Exchange` / `ExchangeState` | Per-exchange state between entry and emission; one atomic `OPEN → DELIVERING → RESPONDED → COMPLETED` state instead of loose flags. |
 | `ExchangeLogEmitter` | Builds and emits the arrival line and the completion event; freezes the captures first; resolves level and outcome (timeouts via the shared `Timeouts`, `cancelled` on top); records body sizes; opens the emission `MdcScope` with trace ownership. |
 | `ClientLogField` | The wire names and the exact JVM type of each structured field; a wrongly typed value drops the field with a warning, never the event. Shared (legatium-common): one enum for both twins. |
 | `ClientLoggingMetrics` (shared, `legatium-common`) | The six meters, one implementation for both twins parameterised by the `ClientStack` (outcome vocabulary, `client` tag) - the fixed-tag meters pre-registered, the body meters created lazily per tag, per-meter fallback to a private registry on registration conflict. |
@@ -223,7 +225,7 @@ five layers:
 |---|---|---|
 | `NanoTimeSource` | `@ConditionalOnMissingBean` | `NanoTimeSource.SYSTEM` |
 | `CorrelationIdGenerator` | `@ConditionalOnMissingBean` | `CorrelationIdGenerator.DEFAULT` (counting generator — ADR-0004) |
-| `HeaderValueMasker` | `@ConditionalOnMissingBean` | `HeaderValueMasker.DEFAULT` (the `length:hash` fingerprint); the one bean both twins mask with |
+| `HeaderValueMasker` | `@ConditionalOnMissingBean` | `HeaderValueMasker.forKey(properties.maskingKey)` — the `length:hash` fingerprint, HMAC-keyed when `masking-key` is set; the one bean both twins mask with (the filter's constructor defaults to the same, so manual wiring honours the key too) |
 | `ClientRequestLoggingFilter` | `@ConditionalOnMissingBean` | the filter, built from the bound properties and the host's `MeterRegistry` (`ObjectProvider`; private `SimpleMeterRegistry` without one) |
 | `WebClientCustomizer` | `@ConditionalOnClass(WebClientCustomizer)`, `@Order(LOWEST_PRECEDENCE - 10)` | `builder.filter(filter)` on every `WebClient.Builder` Boot hands out |
 
@@ -254,11 +256,15 @@ WebClient.retrieve()/exchangeToMono()/exchange()
                        │
                        ├─ logRequestStartIfEnabled
                        │
-                       └─ Mono.defer { next.exchange(outgoing) }
-                            .map        { response -> onResponse(exchange, response) }   ← state RESPONDED
-                            .doOnError  { exchange.failure = it }
-                            .doOnCancel { exchange.cancelled = true }
-                            .doFinally  { signal -> complete unless a response was delivered }
+                       └─ Mono.defer { ObservedResponse(next.exchange(outgoing), exchange, …) }
+                            onNext(response):  state OPEN → DELIVERING
+                                               observed = onResponse(exchange, response)
+                                               actual.onNext(observed)                 ← the downstream takes it
+                                               state DELIVERING → RESPONDED            ← the body owns the exchange
+                            onError(t):        exchange.failure = t; complete
+                            onComplete():      empty (still OPEN) → failure "no response"; complete unless RESPONDED
+                            cancel():          from another thread while OPEN or DELIVERING → cancelled, complete;
+                                               from within the delivery (a `next()`) or once RESPONDED → ignored
 
  onResponse: response.mutate().body { flux ->
                  Flux.defer { capture.markStarted(); flux }
@@ -286,8 +292,9 @@ filter therefore mutates the delivered response so that its body carries the tee
 
 | Signal | Where | Emission |
 |---|---|---|
-| response `Mono` errors (connection refused, a connector timeout) | `doFinally(ERROR)` on the response Mono | immediately; `-> -`, no status |
-| response `Mono` is cancelled before a response (a downstream `timeout()`, a disposed caller) | `doFinally(CANCEL)` on the response Mono | immediately; `cancelled`, `-> -` |
+| response `Mono` errors (connection refused, a connector timeout) | `ObservedResponse.onError` | immediately; `-> -`, no status |
+| response `Mono` is cancelled before a response (a downstream `timeout()`, a disposed caller) | `ObservedResponse.cancel` in `OPEN` | immediately; `cancelled`, `-> -` |
+| response `Mono` is cancelled from another thread **while the response is being handed to the downstream** (a cancelling downstream drops the response and never subscribes to the body) | `ObservedResponse.cancel` in `DELIVERING` | immediately; `cancelled` with the received status |
 | response delivered, body completes | `doFinally` on the body flux | at completion — status, headers, body and duration final |
 | response delivered, body errors (reset mid-stream) | `doFinally` on the body flux | at the error — `failure` with the received status |
 | response delivered, body subscription cancelled (`take`, a timeout after the status line) | `doFinally` on the body flux | at the cancel — `cancelled` with the received status |
@@ -539,7 +546,9 @@ Rules for manual wiring:
 
 Outside a Spring context the filter is constructed directly. The constructor takes the bound
 properties, the time source, the id generator and a `MeterRegistry`, plus an optional trailing
-`HeaderValueMasker` (the built-in fingerprint when omitted) — all defaults are public:
+`HeaderValueMasker` — when omitted, the masker the properties' `masking-key` selects, exactly as the
+auto-configuration's default bean, so a configured key is honoured however the filter is built — all
+defaults are public:
 
 ```kotlin
 val filter = ClientRequestLoggingFilter(
@@ -644,12 +653,23 @@ Two very different things reach the body publisher as a CANCEL signal, and the f
   not (a cancel of the response `Mono` before the connector answered).
 
 A cancel of the response `Mono` *after* the response was delivered (a host operator such as `next()`
-between this filter and the client) is ignored: from then on the body owns the exchange. Dashboards must
+between this filter and the client) is ignored: from then on the body owns the exchange. The handover
+itself is a race the filter's response operator (`ObservedResponse`) decides atomically: the state moves
+`OPEN → DELIVERING` before the downstream's `onNext` and `DELIVERING → RESPONDED` after it returned. A
+cancel that arrives from **another thread** while the state is `DELIVERING` — a caller's timer or
+disposal firing exactly as the response is handed on — is the caller walking away while the downstream
+may be dropping the response; it completes the exchange as `cancelled` with the received status right
+there, because a dropped response never gets its body subscribed and could otherwise never complete
+(no event, the open-exchanges gauge one too high forever). A cancel from **within** the delivery on the
+same thread — `next()` cancels upstream before it hands the value on — is the downstream taking the
+response, and the body owns the exchange as usual. The same thread-identity rule `ObservedBody` applies
+to the body. Dashboards must
 treat `adapter_outcome` as the authoritative disposition and not assume the status field is always
 present. A connector that completes **without** a response at all — a host filter swallowing an error
 into `Mono.empty()` — is a `failure` at ERROR with the cause WebClient raises for the caller ("completed
 without emitting a response"). Pinned by the filter's unit tests: Spring's skip, a `take`, an
-out-of-band cancel, a `next()`, an empty completion.
+out-of-band cancel, a `next()`, an empty completion, and a barrier-driven cancel from another thread
+during the handover.
 
 ### 4.3 Timeouts: connector vs. operator
 
@@ -784,11 +804,12 @@ legatium-webclient-logging/
 └── src/
     ├── main/kotlin/eu/inqudium/legatium/webclient/logging/
     │   ├── ClientLoggingAutoConfiguration.kt      beans, the late WebClientCustomizer
-    │   ├── ClientRequestLoggingFilter.kt          the filter: activation, wiring, signal mapping, response mutation, complete
+    │   ├── ClientRequestLoggingFilter.kt          the filter: activation, wiring, response mutation, complete, the cancel decision
     │   ├── Exchange.kt                            per-exchange state, ExchangeState
     │   ├── ExchangeLogEmitter.kt                  arrival line and completion event
     │   ├── CapturingDecorators.kt                 tee(), the request decorator, the inserter wrap
-    │   ├── ObservedBody.kt                 the response body operator: tee, read state, terminal signal, consumption vs. cancel
+    │   ├── ObservedResponse.kt                    the response Mono operator: state handover around the downstream's onNext, error/empty/cancel
+    │   ├── ObservedBody.kt                        the response body operator: tee, read state, terminal signal, consumption vs. cancel
     │   └── BoundedBodyCapture.kt                  bounded, freezable capture target, read state
     │   (ClientLoggingProperties, ClientLogFields, Traceparent, Timeouts, Mdc, NanoTimeSource,
     │    CorrelationIdGenerator, HeaderLogProperties, BodyCapture helpers and the fail-open guards

@@ -142,6 +142,34 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
         }
 
         @Test
+        fun `should key the built-in fingerprint from the properties when constructed without a masker`() {
+            // What is tested: the masker default of the public four-argument constructor - the manual
+            //   wiring path the guides recommend - derives from properties.maskingKey through
+            //   HeaderValueMasker.forKey, exactly as the auto-configuration's default bean does.
+            // Success criteria: with masking-key set and no masker passed, the masked Authorization value
+            //   is the keyed HMAC fingerprint and NOT the unkeyed default fingerprint of the same value.
+            // Why it matters: a host that configured a secret and wired the filter by hand silently
+            //   logged unkeyed, guessable fingerprints - the configured guess-resistance depended on how
+            //   the filter was constructed instead of on the property.
+            // Given: keyed properties, the four-argument constructor
+            val manuallyWired =
+                filterWith(
+                    base.copy(
+                        maskingKey = "s3cret",
+                        requestHeaders = HeaderLogProperties(includes = listOf("Authorization"), masked = listOf("Authorization")),
+                    ),
+                )
+
+            // When
+            manuallyWired.call(request { header("Authorization", "Bearer secret-token") }, answering())
+
+            // Then: keyed, not the unkeyed default
+            val rendered = keyValues(log.events.single())["adapter_request_headers"].toString()
+            assertThat(rendered).isEqualTo("[Authorization:\"${HeaderValueMasker.keyed("s3cret").mask("Bearer secret-token")}\"]")
+            assertThat(rendered).doesNotContain(HeaderValueMasker.DEFAULT.mask("Bearer secret-token"))
+        }
+
+        @Test
         fun `should log the selected response headers as the peer sent them`() {
             // What is tested: the response-side selection at emission - a wildcard include, an
             //   exclude that wins over it, and an unmasked name rendered in plaintext.

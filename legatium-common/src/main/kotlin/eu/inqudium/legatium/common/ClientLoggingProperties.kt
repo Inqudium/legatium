@@ -89,7 +89,10 @@ data class ClientLoggingProperties(
      * template and the host). Deliberately independent of [logRequestBody]: a metric must not appear
      * and disappear with a logging flag. Measure-only installs a count-only capture - nothing is
      * buffered. Recorded when the exchange completes (response close resp. the body's terminal
-     * signal), and only for bodies that actually flowed (zero bytes record no sample).
+     * signal), and only for bodies that actually flowed (zero bytes record no sample). On the blocking
+     * stack the interceptor copies the serialized body BEFORE the wire call and has no seam at the
+     * write, so it records the sample only for an exchange that received a response - the one proof
+     * that the bytes went out; the reactive stack tees at the connector's write and needs no such rule.
      */
     val measureRequestBodySize: Boolean = false,
     /**

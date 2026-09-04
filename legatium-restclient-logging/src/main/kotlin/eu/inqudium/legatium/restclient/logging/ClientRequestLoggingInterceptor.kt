@@ -14,6 +14,7 @@ import eu.inqudium.legatium.common.RequestTarget
 import eu.inqudium.legatium.common.reportQuietly
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpRequest
 import org.springframework.http.client.ClientHttpRequestExecution
 import org.springframework.http.client.ClientHttpRequestInterceptor
@@ -83,8 +84,12 @@ class ClientRequestLoggingInterceptor
         private val nanoTime: NanoTimeSource,
         private val correlationIds: CorrelationIdGenerator,
         meterRegistry: MeterRegistry,
-        /** How masked header values render; the auto-configuration passes the host's bean, [HeaderValueMasker.DEFAULT] otherwise. */
-        private val masker: HeaderValueMasker = HeaderValueMasker.DEFAULT,
+        /**
+         * How masked header values render. Defaults to the masker the properties' `masking-key` selects
+         * ([HeaderValueMasker.forKey]) - so a manually constructed interceptor honours a configured key
+         * exactly like the auto-configured one; the auto-configuration passes the host's bean instead.
+         */
+        private val masker: HeaderValueMasker = HeaderValueMasker.forKey(properties.maskingKey),
     ) : ClientHttpRequestInterceptor {
         private val metrics = ClientLoggingMetrics.forRegistry(meterRegistry, ClientStack.RESTCLIENT)
         private val emitter = ExchangeLogEmitter(properties, nanoTime, metrics, masker)
@@ -115,7 +120,7 @@ class ClientRequestLoggingInterceptor
                 return CapturingClientHttpResponse(
                     delegate = response,
                     capture = exchange.responseCapture,
-                    onReadFailure = { e -> exchange.failure = e },
+                    onFailure = { e -> exchange.failure = e },
                     onClose = { completeExchange(exchange) },
                 )
             } catch (e: Exception) {
@@ -212,7 +217,14 @@ class ClientRequestLoggingInterceptor
         /**
          * Status and headers are final at handover and the engine can still answer; snapshot them now,
          * so the emission after the client's close never asks a closed response. A refusing engine costs
-         * the status (`-> -`), counted as wiring, never the event.
+         * the status (`-> -`), counted as wiring, never the event - and the CLIENT's own later access
+         * to the status propagates through the wrapper, which then records the failure on the exchange.
+         *
+         * The headers also tell the response capture the declared body length, so a converter that reads
+         * exactly `Content-Length` bytes without asking for the EOF (`ByteArrayHttpMessageConverter`)
+         * still counts as a complete read. Only a trustworthy length is passed: a `Content-Encoding` means
+         * an engine that decodes transparently may hand the application another number of bytes than the
+         * header names, so the capture then falls back to the EOF observation alone.
          */
         private fun snapshotResponse(
             exchange: Exchange,
@@ -221,7 +233,9 @@ class ClientRequestLoggingInterceptor
             exchange.response = response
             try {
                 exchange.responseStatus = response.statusCode.value()
-                exchange.responseHeaders = response.headers
+                val headers = response.headers
+                exchange.responseHeaders = headers
+                exchange.responseCapture?.expectBytes(declaredBodyLength(headers))
             } catch (e: Exception) {
                 reportQuietly {
                     metrics.wiringFailure()
@@ -233,6 +247,28 @@ class ClientRequestLoggingInterceptor
                     )
                 }
             }
+        }
+
+        /**
+         * The body length the response declares and the engine will deliver unchanged: `Content-Length`
+         * when present and no `Content-Encoding` other than `identity` is on the response;
+         * [BoundedBodyCapture.UNKNOWN_LENGTH] otherwise (chunked, possibly decoded by the engine, or a
+         * value that is not a number). The header is PEER-CONTROLLED input: it only ever feeds the
+         * completeness comparison - never an allocation or a read - and a malformed value (Spring parses
+         * it with `Long.parseLong`) is folded to unknown here rather than counted as a wiring failure.
+         */
+        private fun declaredBodyLength(headers: HttpHeaders): Long {
+            val encoding = headers.getFirst(HttpHeaders.CONTENT_ENCODING)
+            if (encoding != null && !encoding.equals("identity", ignoreCase = true)) {
+                return BoundedBodyCapture.UNKNOWN_LENGTH
+            }
+            val declared =
+                try {
+                    headers.contentLength
+                } catch (e: NumberFormatException) {
+                    return BoundedBodyCapture.UNKNOWN_LENGTH
+                }
+            return declared.takeIf { it >= 0 } ?: BoundedBodyCapture.UNKNOWN_LENGTH
         }
 
         /** The WARN breadcrumb of a thrown call - a host-backend call, guarded so a throwing backend cannot REPLACE the client's exception. */
@@ -273,7 +309,10 @@ class ClientRequestLoggingInterceptor
                 request.attributes[GENERATED_ID_ATTRIBUTE] = identity.requestId
             }
             val captures = newCaptures()
-            // The request body is what the client hands the interceptor: complete, in memory, already final.
+            // The request body is what the client hands the interceptor: the complete serialized body,
+            // in memory, BEFORE the wire call - what the client is about to send, not what reached the
+            // peer. The field documents it as exactly that; the size meter records it only once a response
+            // proves the request went out (see the emitter).
             captures.request?.capture(body, 0, body.size)
             val target = RequestTarget.of(request.uri)
             val exchange =

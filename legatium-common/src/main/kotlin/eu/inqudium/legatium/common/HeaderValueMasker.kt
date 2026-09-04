@@ -65,7 +65,10 @@ fun interface HeaderValueMasker {
         /**
          * The masker the `masking-key` property selects: [DEFAULT] for the empty string (the property's
          * default - unkeyed), [keyed] otherwise. The auto-configurations build their default bean from
-         * this, so keying the fingerprint needs no bean of the host's own.
+         * this, and the entry points' constructors default their masker parameter to it - so keying the
+         * fingerprint needs no bean of the host's own, and a manually constructed interceptor or filter
+         * honours the key exactly like an auto-configured one. The property is the one source of truth;
+         * only an explicitly passed masker (the host's bean) overrides it.
          */
         @JvmStatic
         fun forKey(key: String): HeaderValueMasker = if (key.isEmpty()) DEFAULT else keyed(key)

@@ -43,10 +43,12 @@ internal class Exchange(
 ) {
     /**
      * The lifecycle state - ONE atomic value instead of independent flags, so the legal transitions are
-     * enumerable: `OPEN` from wiring (request sent, no response yet); `RESPONDED` once the response
-     * arrived and the emission waits for the body's terminal signal; `COMPLETED` exactly once, by
-     * whichever terminal callback wins the transition - gauge-close and emission ride that single
-     * transition.
+     * enumerable: `OPEN` from wiring (request sent, no response yet); `DELIVERING` while the response is
+     * being handed to the downstream subscriber; `RESPONDED` once the downstream has taken it and the
+     * emission waits for the body's terminal signal; `COMPLETED` exactly once, by whichever terminal
+     * callback wins the transition - gauge-close and emission ride that single transition. The
+     * `DELIVERING` step exists because a cancel racing the handover from another thread must still find
+     * an owner (see [ObservedResponse]).
      */
     val state = AtomicReference(ExchangeState.OPEN)
 
@@ -76,6 +78,7 @@ internal class Exchange(
 /**
  * See [Exchange.state]. An exchange in [RESPONDED] whose body the application never subscribes to (and
  * never releases) stays open on the gauge - the module's liveness signal - rather than logging a body
- * that was never read as complete.
+ * that was never read as complete. [DELIVERING] is the window between the response's arrival and the
+ * downstream's return from `onNext`, in which a concurrent cancel still completes the exchange itself.
  */
-internal enum class ExchangeState { OPEN, RESPONDED, COMPLETED }
+internal enum class ExchangeState { OPEN, DELIVERING, RESPONDED, COMPLETED }

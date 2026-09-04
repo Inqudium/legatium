@@ -202,7 +202,7 @@ five layers:
 | `ClientLoggingAutoConfiguration` | Registers the interceptor bean, the default `NanoTimeSource` / `CorrelationIdGenerator`, and — when Boot's `spring-boot-restclient` is present — a late `RestClientCustomizer` and `RestTemplateCustomizer` that append the interceptor. |
 | `ClientLoggingProperties` | The `adapter-logging.*` binding, validated in `init` - shared (legatium-common - §6.11), one class for both twins. `HeaderLogProperties` (shared too) is one header section with `includes` / `excludes` / `masked` and the masking fingerprint. |
 | `ClientRequestLoggingInterceptor` | Owns the **client side**: activation by host and path, fail-open wiring, identity resolution (`traceparent` first, correlation header on traceless calls) with the traceless header, the request-body capture, the call-wide `MdcScope`, the breadcrumb, the no-response path, the handoff to the response wrapper. |
-| `CapturingClientHttpResponse` | The response the client gets back: delegates, tees the body the application reads, reports a read failure, and turns `close()` into the emission point. |
+| `CapturingClientHttpResponse` | The response the client gets back: delegates, tees the body the application reads, reports a failure of **any** delegate operation (status, headers, body open/read/close, response close), and turns `close()` into the emission point. |
 | `Exchange` | Per-exchange state from entry to emission; the exactly-once guards. |
 | `ExchangeLogEmitter` | Builds and emits the arrival line and the completion event; resolves level, outcome and cause (timeouts via the shared `Timeouts`); records body sizes; opens the emission `MdcScope` with trace ownership. |
 | `ClientLogField` | The wire names and the exact JVM type of each structured field; a wrongly typed value drops the field with a warning, never the event. Shared (legatium-common): one enum for both twins. |
@@ -225,7 +225,7 @@ client too. It registers:
 |---|---|---|
 | `NanoTimeSource` | `@ConditionalOnMissingBean` | `NanoTimeSource.SYSTEM` |
 | `CorrelationIdGenerator` | `@ConditionalOnMissingBean` | `CorrelationIdGenerator.DEFAULT` (counting generator: random per-instance base-36 prefix + counter, 21 chars — ADR-0004) |
-| `HeaderValueMasker` | `@ConditionalOnMissingBean` | `HeaderValueMasker.DEFAULT` (the `length:hash` fingerprint); the one bean both twins mask with |
+| `HeaderValueMasker` | `@ConditionalOnMissingBean` | `HeaderValueMasker.forKey(properties.maskingKey)` — the `length:hash` fingerprint, HMAC-keyed when `masking-key` is set; the one bean both twins mask with (the interceptor's constructor defaults to the same, so manual wiring honours the key too) |
 | `ClientRequestLoggingInterceptor` | `@ConditionalOnMissingBean` | the interceptor, built from the bound properties and the host's `MeterRegistry` (`ObjectProvider`; private `SimpleMeterRegistry` without one) |
 | `RestClientCustomizer` | `@ConditionalOnClass(RestClientCustomizer)`, `@Order(LOWEST_PRECEDENCE - 10)` | `builder.requestInterceptor(interceptor)` on every `RestClient.Builder` Boot hands out |
 | `RestTemplateCustomizer` | `@ConditionalOnClass(RestTemplateCustomizer)`, same order | appends the interceptor to every `RestTemplate` built through `RestTemplateBuilder` |
@@ -311,12 +311,23 @@ Bodies are never pre-read, buffered or replayed:
 
 - The **request body** is what the interceptor is handed: `RestClient` and `RestTemplate` buffer the
   outgoing body into a byte array before the interceptor chain runs, so the capture simply copies (up to
-  `max-body-bytes`) and counts it at wiring time. It is complete and final by construction; there is no
-  read state on the request side.
+  `max-body-bytes`) and counts it at wiring time — **before the wire call**. It is complete and final by
+  construction, but it is what the client is *about to send*, not what reached the peer: the interceptor
+  API has no seam at the actual write. The field `adapter_request_body` is documented as exactly that (and
+  is the evidence a refused call leaves); the meter `adapter.request.body.size`, documented as bytes that
+  flowed, records its sample only for an exchange that received a response — the one proof this seam has
+  that the request went out. There is no read state on the request side.
 - The **response body** is teed as the application reads it: `CapturingClientHttpResponse.getBody()`
-  wraps the delegate's stream once; every `read` copies (up to the limit) and counts; an EOF return marks
-  the body consumed to its end. Nothing is withheld, so streaming behaviour and the connection pool's
-  view of the body are those of an unwrapped response.
+  wraps the delegate's stream once; every `read` copies (up to the limit) and counts; the body counts as
+  consumed to its end when the application sees the EOF **or** when the byte count reaches the length the
+  response declared — a trustworthy `Content-Length`, i.e. none with a `Content-Encoding`, handed to the
+  capture at handover. The second rule exists because Spring's `ByteArrayHttpMessageConverter` reads
+  exactly `Content-Length` bytes with `readNBytes` and never asks for the EOF (the engines' streams
+  return `0` for that final zero-length read, not `-1`); without it every `byte[]` answer counted as
+  `partial`. The declared length is peer-controlled input and is treated as such: it only ever feeds the
+  completeness comparison — never an allocation, a read or a wait — and a non-numeric value is folded to
+  "unknown" rather than counted as a wiring failure. Nothing is withheld, so streaming behaviour and the
+  connection pool's view of the body are those of an unwrapped response.
 - `BoundedBodyCapture` is the target: a `ByteArrayOutputStream` of at most `max-body-bytes` and a total
   byte counter. With limit `0` it runs in **count-only** mode for the body-size meters. Visibility from
   the reading thread to the closing thread (usually the same; not necessarily) is established by the
@@ -566,7 +577,9 @@ Rules for manual wiring:
 
 Outside a Spring context the interceptor is constructed directly. The constructor takes the bound
 properties, the time source, the id generator and a `MeterRegistry`, plus an optional trailing
-`HeaderValueMasker` (the built-in fingerprint when omitted) — all defaults are public:
+`HeaderValueMasker` — when omitted, the masker the properties' `masking-key` selects, exactly as the
+auto-configuration's default bean, so a configured key is honoured however the interceptor is built — all
+defaults are public:
 
 ```kotlin
 val interceptor = ClientRequestLoggingInterceptor(
@@ -644,7 +657,7 @@ Everything not listed here behaves exactly as in `legatium-webclient-logging`.
 | Disposition vocabulary | `success` / `failure` / `timeout` | plus **`cancelled`** — a cancelled subscription (a downstream `timeout()` operator, a `take`, a disposed caller) is the reactive reality a blocking call cannot have |
 | Emission point | response **close** | the response **body's terminal signal** |
 | Never-completing exchange | a response the application never closes | a response body nobody subscribes to or releases |
-| Request body | the byte array the client hands the interceptor — complete, captured at wiring | teed at the connector's `writeWith` as the inserter writes it |
+| Request body | the byte array the client hands the interceptor — complete, captured at wiring **before** the wire call (the field shows what was about to be sent; the size meter records only once a response proves it went out) | teed at the connector's `writeWith` as the inserter writes it |
 | Call-wide MDC | thread-local, for the wire call | none — the call hops event-loop threads; emission MDC and the message inline only |
 | Read failure mid-body | `IOException` from the tee stream, reported and rethrown | the body `Flux`'s error signal |
 | URI template | recorded by `RestClient`; **never** by `RestTemplate` | recorded by `WebClient` |
@@ -668,13 +681,21 @@ stays **open on the gauge** `adapter.logging.exchanges.open`. A monotonically gr
 signal that responses are leaking — a resource leak in the host, visible through the module's liveness
 meter before it becomes a pool exhaustion.
 
-### 4.4 Failures while reading the body
+### 4.4 Failures on the response the client was handed
 
 The status line arrived, then the connection died mid-body (a reset, a read timeout while streaming). The
 tee reports the `IOException` to the exchange and rethrows it unchanged; at close the event is
 `adapter_outcome=failure` (or `timeout`) **with the status that was received** — "200 but failed" is exactly
 what happened, and hiding either half would mislead. The captured prefix of the body is logged as far as
 it flowed.
+
+The same holds for **every** other operation on the response that can fail the caller: opening the body,
+asking for status, status text or headers (the snapshot at handover tolerates a refusing engine and logs
+`-> -`, but the client's own later access propagates), `available()`, closing the body stream, and the
+response's own `close()` — a pooled connection that cannot be returned throws there, immediately before
+the emission in the `finally`. Each is recorded on the exchange before the exception propagates unchanged,
+so the caller and the event never disagree: a response that failed the caller is never logged as
+`success`, and a throwing close yields exactly one event, a `failure` carrying that exception.
 
 ### 4.5 Timeouts and how they are recognised
 
@@ -781,7 +802,7 @@ legatium-restclient-logging/
     ├── main/kotlin/eu/inqudium/legatium/restclient/logging/
     │   ├── ClientLoggingAutoConfiguration.kt      beans, the two late customizers
     │   ├── ClientRequestLoggingInterceptor.kt     the interceptor: activation, wiring, call scope, no-response path
-    │   ├── CapturingClientHttpResponse.kt         response wrapper: body tee, read-failure report, close = emission
+    │   ├── CapturingClientHttpResponse.kt         response wrapper: body tee, failure report for every delegate call, close = emission
     │   ├── Exchange.kt                            per-exchange state and the exactly-once guards
     │   ├── ExchangeLogEmitter.kt                  arrival line and completion event
     │   └── BoundedBodyCapture.kt                  bounded capture target, read state

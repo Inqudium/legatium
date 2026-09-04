@@ -28,6 +28,8 @@ import reactor.core.publisher.Mono
 import reactor.test.StepVerifier
 import java.io.IOException
 import java.time.Duration
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicLong
 
@@ -738,6 +740,43 @@ class ClientRequestLoggingFilterTest {
             assertThat(body).isEqualTo("payload")
             val event = log.events.single()
             assertThat(keyValues(event)).containsEntry("adapter_outcome", "success").containsEntry("adapter_response_status_code", 200)
+        }
+
+        @Test
+        fun `should complete the exchange as cancelled when the caller cancels while the response is being delivered`() {
+            // What is tested: the handover race - the response is inside the downstream's onNext (state
+            //   DELIVERING) when the caller cancels from ANOTHER thread; a downstream that is cancelling
+            //   drops the response and never subscribes to the body, so the body can never complete the
+            //   exchange. Barrier-driven: the subscriber's onNext waits for the cancel.
+            // Success criteria: exactly one WARN event, outcome cancelled with the received 200, and the
+            //   open-exchanges gauge back at zero - without the body ever being consumed.
+            // Why it matters: with the state set to RESPONDED before the handover, this cancel was
+            //   ignored as "the body owns it" and the exchange stayed open forever: no event, the gauge
+            //   one too high for the life of the process.
+            // Given: a subscriber that holds the delivery until the caller has cancelled
+            val delivering = CountDownLatch(1)
+            val cancelled = CountDownLatch(1)
+            val subscriber =
+                object : BaseSubscriber<ClientResponse>() {
+                    override fun hookOnNext(value: ClientResponse) {
+                        delivering.countDown()
+                        check(cancelled.await(5, TimeUnit.SECONDS)) { "the cancel never arrived" }
+                    }
+                }
+            val worker = Thread { filter.filter(request(), answering(body = "payload")).subscribe(subscriber) }
+            worker.start()
+            check(delivering.await(5, TimeUnit.SECONDS)) { "the response was never delivered" }
+
+            // When: the caller cancels from its own thread, mid-delivery, and the delivery then returns
+            subscriber.cancel()
+            cancelled.countDown()
+            worker.join(5_000)
+
+            // Then
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.WARN)
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "cancelled").containsEntry("adapter_response_status_code", 200)
+            assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
         }
 
         @Test

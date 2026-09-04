@@ -336,6 +336,48 @@ class ClientRequestLoggingMetricsTest {
         }
 
         @Test
+        fun `should keep the gauge private with a warning when the host registry already holds an identical gauge`() {
+            // What is tested: the same-type collision check of the gauge registration - a host (or an
+            //   older library copy) already registered adapter.logging.exchanges.open{client=webclient};
+            //   Micrometer would return that gauge unchanged and drop this owner's state function.
+            // Success criteria: the host's gauge keeps its own value (7) while an exchange is open, the
+            //   registry holds exactly one meter under the id, one WARN on the metrics logger names the
+            //   meter as kept private, and the exchange is still logged.
+            // Why it matters: without the check the liveness gauge showed a foreign value and this
+            //   instance's open exchanges were invisible - no fallback, no warning.
+            // Given: a host gauge under the exact id, and the metrics logger captured
+            val hostRegistry = SimpleMeterRegistry()
+            val hostState = AtomicLong(7)
+            Gauge
+                .builder(ClientLoggingMetrics.OPEN_EXCHANGES_METER, hostState) { it.get().toDouble() }
+                .tag(ClientLoggingMetrics.CLIENT_TAG, "webclient")
+                .register(hostRegistry)
+            val metricsLog = CapturedLogger(ClientLoggingMetrics::class.java.name)
+            try {
+                // When
+                val onCollision = ClientRequestLoggingFilter(properties, { ticker.get() }, { "generated-42" }, hostRegistry)
+                val response = requireNotNull(onCollision.filter(request(), answering()).block())
+                val hostGaugeWhileOpen =
+                    hostRegistry
+                        .get(ClientLoggingMetrics.OPEN_EXCHANGES_METER)
+                        .tag(ClientLoggingMetrics.CLIENT_TAG, "webclient")
+                        .gauge()
+                        .value()
+                response.releaseBody().block()
+
+                // Then
+                assertThat(hostGaugeWhileOpen).isEqualTo(7.0)
+                assertThat(hostRegistry.find(ClientLoggingMetrics.OPEN_EXCHANGES_METER).meters()).hasSize(1)
+                val warning = metricsLog.events.single()
+                assertThat(warning.level).isEqualTo(Level.WARN)
+                assertThat(warning.formattedMessage).contains(ClientLoggingMetrics.OPEN_EXCHANGES_METER).contains("kept private")
+                assertThat(log.events).hasSize(1)
+            } finally {
+                metricsLog.detach()
+            }
+        }
+
+        @Test
         fun `should keep working with a private meter when the host registry rejects a registration`() {
             // What is tested: registerOrFallback in ClientLoggingMetrics - the events counter's
             //   success id is already taken by a Gauge, so Micrometer rejects the counter

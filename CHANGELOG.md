@@ -76,6 +76,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `@JvmStatic`; the RestClient twin's `BoundedBodyCapture` is internal like
   its twin; every test carries the rationale block the contributing guide
   asks for.
+- Code and defect analysis of 2026-09-04 (second, at commit `2ed0ba9`), applied:
+  the public four-argument constructors of both entry points default their
+  masker to `HeaderValueMasker.forKey(properties.maskingKey)`, so a manually
+  wired interceptor or filter honours a configured `masking-key` exactly like
+  the auto-configured one (previously the unkeyed fingerprint, silently); the
+  RestClient twin's request-body contracts are decoupled - the field shows the
+  serialized body the client handed to the wire call (evidence, also for a
+  refused connection), the size meter records a sample only once a response
+  proves the request went out; a response body read exactly to a trustworthy
+  declared `Content-Length` counts as `complete` (Spring's
+  `ByteArrayHttpMessageConverter` never asks for the EOF - every `byte[]`
+  answer was `partial`; a non-numeric `Content-Length` is folded to "unknown"
+  without a fail-open count); every operation on the wrapped response that can fail
+  the caller - status, headers, `available`, body-stream close, response close -
+  marks the exchange failed before it propagates (a throwing close no longer
+  emits `success` immediately before the caller's exception); the WebClient
+  twin's response `Mono` runs through its own operator (`ObservedResponse`) with
+  a `DELIVERING` state around the downstream's `onNext`, so a cancel from
+  another thread during the handover completes the exchange as `cancelled`
+  instead of leaving it open forever with the gauge one too high; the
+  open-exchanges gauge detects a same-type gauge already registered under its
+  exact id (a host gauge, another library copy) and goes to the private
+  registry with a warning instead of counting invisibly. Pinned by tests at
+  each seam: keyed properties through the four-argument constructors (both
+  twins), the real `ByteArrayHttpMessageConverter` on an engine-like stream and
+  a real JDK-engine `byte[]` call, a refused POST with and without a response,
+  a status that cannot be read and a throwing close, a barrier-driven
+  concurrent cancel during delivery, an identical host gauge (both twins).
 - Reactive body consumption vs. abandonment: a consumer that stops reading the
   body from within its own delivery - Spring's body skip for
   `bodyToMono(Void.class)` / `toEntity(Void.class)` / an unsupported media

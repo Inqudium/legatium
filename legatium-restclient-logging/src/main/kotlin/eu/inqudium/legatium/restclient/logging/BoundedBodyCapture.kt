@@ -27,7 +27,10 @@ import java.nio.charset.Charset
  * ([readState]): the tee mirrors consumption, not transmission, so a response body the application never
  * read - or stopped reading half-way - is invisible in the byte count alone. The response tee marks the
  * start of consumption and the end of the stream; the emitter turns the state into the
- * `adapter.response.body.read` counter.
+ * `adapter.response.body.read` counter. The end of the stream is observed in two ways: an EOF the
+ * application saw, or the byte count reaching the length the response DECLARED ([expectBytes]) - a reader
+ * that knows the length asks for exactly that many bytes and never for the EOF (Spring's
+ * `ByteArrayHttpMessageConverter` does), and must not be counted as having stopped early.
  */
 internal class BoundedBodyCapture(
     private val maxBytes: Int,
@@ -52,11 +55,15 @@ internal class BoundedBodyCapture(
     var totalBytes: Long = 0
         private set
 
+    /** The length the response declared, [UNKNOWN_LENGTH] when none is trustworthy - see [expectBytes]. */
+    @Volatile
+    private var expectedBytes: Long = UNKNOWN_LENGTH
+
     fun capture(b: Int) {
         if (buffer.size() < maxBytes) {
             buffer.write(b)
         }
-        totalBytes += 1
+        advance(1)
     }
 
     fun capture(
@@ -68,13 +75,37 @@ internal class BoundedBodyCapture(
         if (room > 0) {
             buffer.write(bytes, offset, minOf(length, room))
         }
-        totalBytes += length
+        advance(length)
     }
 
-    /** The application opened the body stream: from now on the body counts as (at least) partially read. */
+    /** Counts [length] bytes, completing the read state when the declared length is reached; [totalBytes] is written LAST. */
+    private fun advance(length: Int) {
+        val total = totalBytes + length
+        if (expectedBytes != UNKNOWN_LENGTH && total >= expectedBytes) {
+            readState = BodyReadState.COMPLETE
+        }
+        totalBytes = total
+    }
+
+    /**
+     * Tells the capture how many body bytes the response DECLARED (`Content-Length`), so a reader that
+     * consumes exactly that many without asking for the EOF still counts as complete. The caller passes
+     * only a length it can trust: none for a chunked answer, none when a `Content-Encoding` means the
+     * engine may hand the application a transformed body of another length. A declared zero completes
+     * the moment the stream is opened.
+     */
+    fun expectBytes(length: Long) {
+        expectedBytes = length
+    }
+
+    /**
+     * The application opened the body stream: from now on the body counts as (at least) partially read -
+     * or as complete right away when the response declared a zero-length body, which a length-aware
+     * reader consumes without a single read call.
+     */
     fun markStarted() {
         if (readState == BodyReadState.UNREAD) {
-            readState = BodyReadState.PARTIAL
+            readState = if (expectedBytes == 0L) BodyReadState.COMPLETE else BodyReadState.PARTIAL
         }
     }
 
@@ -97,5 +128,10 @@ internal class BoundedBodyCapture(
         } else {
             buffer.toString(charset)
         }
+    }
+
+    companion object {
+        /** No trustworthy declared length: completion is observed through the EOF only. */
+        const val UNKNOWN_LENGTH = -1L
     }
 }

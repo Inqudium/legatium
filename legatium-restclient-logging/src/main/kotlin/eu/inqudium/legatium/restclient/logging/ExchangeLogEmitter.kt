@@ -302,11 +302,18 @@ internal class ExchangeLogEmitter(
     /**
      * The opt-in body measurements: the size samples, and - for the response side - the read-state
      * counter, which is what tells an unread body from an absent one (the size sample cannot: both are
-     * zero bytes and record nothing). The read state is recorded only when a response exists: a call
-     * that never got an answer has no body to consume.
+     * zero bytes and record nothing). Both response measurements need a response: a call that never got
+     * an answer has no body to consume.
+     *
+     * The REQUEST sample needs a response too. The interceptor copies the serialized body BEFORE the
+     * wire call - a connection refused or a connect timeout later means none of those bytes reached the
+     * peer - and the interceptor API offers no seam at the actual write. A response is the one proof this
+     * seam has that the request went out, so the size meter (documented as bytes that flowed) records the
+     * sample only then; the `adapter_request_body` FIELD is documented differently - the body the client
+     * handed to the wire call - and stays on the line of a failed call as the evidence it is.
      */
     private fun recordBodySizes(exchange: Exchange) {
-        if (properties.measureRequestBodySize) {
+        if (properties.measureRequestBodySize && exchange.response != null) {
             exchange.requestCapture?.let { metrics.requestBodySize(exchange.uriTemplate, exchange.host, it.totalBytes) }
         }
         if (properties.measureResponseBodySize) {

@@ -17,7 +17,6 @@ import org.springframework.web.reactive.function.client.ClientResponse
 import org.springframework.web.reactive.function.client.ExchangeFilterFunction
 import org.springframework.web.reactive.function.client.ExchangeFunction
 import reactor.core.publisher.Mono
-import reactor.core.publisher.SignalType
 
 /**
  * The WebClient twin of `legatium-restclient-logging`'s `ClientRequestLoggingInterceptor`: ONE
@@ -81,8 +80,12 @@ class ClientRequestLoggingFilter
         private val nanoTime: NanoTimeSource,
         private val correlationIds: CorrelationIdGenerator,
         meterRegistry: MeterRegistry,
-        /** How masked header values render; the auto-configuration passes the host's bean, [HeaderValueMasker.DEFAULT] otherwise. */
-        private val masker: HeaderValueMasker = HeaderValueMasker.DEFAULT,
+        /**
+         * How masked header values render. Defaults to the masker the properties' `masking-key` selects
+         * ([HeaderValueMasker.forKey]) - so a manually constructed filter honours a configured key
+         * exactly like the auto-configured one; the auto-configuration passes the host's bean instead.
+         */
+        private val masker: HeaderValueMasker = HeaderValueMasker.forKey(properties.maskingKey),
     ) : ExchangeFilterFunction {
         /** Shared with the emitter and exposed for the tests; one owner per registry. */
         internal val metrics = ClientLoggingMetrics.forRegistry(meterRegistry, ClientStack.WEBCLIENT)
@@ -123,42 +126,26 @@ class ClientRequestLoggingFilter
                         abandonExchange(exchange, t)
                         throw t
                     }
-                call
-                    .map { response -> onResponse(exchange, response) }
-                    .doOnError { exchange.failure = it }
-                    // A cancel BEFORE the response is the caller walking away; once the response was
-                    // delivered the body owns the exchange, and a host operator that cancels this Mono
-                    // after onNext (a `next()`, a future bridge) must not end it here.
-                    .doOnCancel { if (exchange.state.get() != ExchangeState.RESPONDED) exchange.cancelled = true }
-                    .doFinally { signal ->
-                        val state = exchange.state.get()
-                        if (state == ExchangeState.RESPONDED) {
-                            // A delivered response hands the completion to the body's terminal signal.
-                            return@doFinally
-                        }
-                        if (signal == SignalType.ON_COMPLETE && state == ExchangeState.OPEN) {
-                            // An EMPTY completion - a broken connector, a host filter that swallowed an error
-                            // into Mono.empty() - is a failure: WebClient raises exactly this for the caller.
-                            exchange.failure = IllegalStateException(NO_RESPONSE_MESSAGE)
-                        }
-                        complete(exchange)
-                    }
+                // The response Mono's own operator (see ObservedResponse): records and wraps the response,
+                // moves the state through DELIVERING to RESPONDED only once the downstream has TAKEN the
+                // response, and completes the exchange itself for an error, an empty completion or a
+                // cancel by the caller before the body owns it.
+                ObservedResponse(call, exchange, ::onResponse, ::cancelUnlessResponded, ::complete)
             }
         }
 
         /**
-         * The response arrived: records it on the exchange, moves the state to `RESPONDED`, and returns the
-         * response with its body wrapped - the tee (when a capture exists) and the terminal hooks that
-         * complete the exchange. `mutate()` copies status, headers, cookies and request; the body flux is
-         * transformed lazily, so nothing is read here. Pure assembly, no host call: nothing in it can fail
-         * and strand the response.
+         * The response arrived: records it on the exchange and returns the response with its body wrapped -
+         * the tee (when a capture exists) and the terminal hooks that complete the exchange. `mutate()`
+         * copies status, headers, cookies and request; the body flux is transformed lazily, so nothing is
+         * read here. Pure assembly, no host call: nothing in it can fail and strand the response. The
+         * state transitions belong to [ObservedResponse], which calls this between them.
          */
         private fun onResponse(
             exchange: Exchange,
             response: ClientResponse,
         ): ClientResponse {
             exchange.response = response
-            exchange.state.compareAndSet(ExchangeState.OPEN, ExchangeState.RESPONDED)
             val capture = exchange.responseCapture
             return response
                 .mutate()
@@ -222,6 +209,32 @@ class ClientRequestLoggingFilter
             if (exchange.state.getAndSet(ExchangeState.COMPLETED) == ExchangeState.COMPLETED) {
                 return
             }
+            finish(exchange)
+        }
+
+        /**
+         * The caller cancelled the response Mono. Before a response (`OPEN`) or while the response is being
+         * handed to a downstream that may drop it (`DELIVERING`) this ends the exchange as `cancelled`; once
+         * the downstream has taken the response (`RESPONDED`) the body owns the completion and the cancel
+         * is ignored - a host operator such as `next()` cancels the Mono right after taking the value. The
+         * CAS loop makes the decision atomic against the delivering thread's own transitions.
+         */
+        private fun cancelUnlessResponded(exchange: Exchange) {
+            while (true) {
+                val state = exchange.state.get()
+                if (state == ExchangeState.RESPONDED || state == ExchangeState.COMPLETED) {
+                    return
+                }
+                if (exchange.state.compareAndSet(state, ExchangeState.COMPLETED)) {
+                    exchange.cancelled = true
+                    finish(exchange)
+                    return
+                }
+            }
+        }
+
+        /** Gauge close and emission, after the exactly-once transition was won. */
+        private fun finish(exchange: Exchange) {
             try {
                 metrics.exchangeCompleted()
             } catch (e: Exception) {

@@ -33,7 +33,12 @@ internal fun answering(
         MockClientHttpResponse(body.toByteArray(StandardCharsets.UTF_8), status).also(onExecute)
     }
 
-/** Reads the whole body, as a message converter would, then closes the response - the client's normal path. */
+/**
+ * Reads the whole body to its EOF (`readAllBytes` - the path of the String converter and of every
+ * converter without a known length), then closes the response - the client's normal path. NOT the path
+ * of `ByteArrayHttpMessageConverter`, which reads exactly `Content-Length` bytes and never sees the EOF;
+ * the metrics test drives that converter for real.
+ */
 internal fun ClientHttpResponse.consumeAndClose(): String =
     use { response ->
         response.body.readAllBytes().toString(StandardCharsets.UTF_8)

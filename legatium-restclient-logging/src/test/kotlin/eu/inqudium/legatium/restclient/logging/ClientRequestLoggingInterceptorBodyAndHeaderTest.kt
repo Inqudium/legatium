@@ -117,6 +117,34 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
         }
 
         @Test
+        fun `should key the built-in fingerprint from the properties when constructed without a masker`() {
+            // What is tested: the masker default of the public four-argument constructor - the manual
+            //   wiring path the guides recommend - derives from properties.maskingKey through
+            //   HeaderValueMasker.forKey, exactly as the auto-configuration's default bean does.
+            // Success criteria: with masking-key set and no masker passed, the masked Authorization value
+            //   is the keyed HMAC fingerprint and NOT the unkeyed default fingerprint of the same value.
+            // Why it matters: a host that configured a secret and wired the interceptor by hand silently
+            //   logged unkeyed, guessable fingerprints - the configured guess-resistance depended on how
+            //   the interceptor was constructed instead of on the property.
+            // Given: keyed properties, the four-argument constructor
+            val keyedProperties =
+                base.copy(
+                    maskingKey = "s3cret",
+                    requestHeaders = HeaderLogProperties(includes = listOf("Authorization"), masked = listOf("Authorization")),
+                )
+            val manuallyWired = ClientRequestLoggingInterceptor(keyedProperties, NanoTimeSource { ticker.get() }, CorrelationIdGenerator { "generated-42" }, SimpleMeterRegistry())
+            val request = request().apply { headers.set("Authorization", "Bearer secret-token") }
+
+            // When
+            manuallyWired.intercept(request, ByteArray(0), answering()).consumeAndClose()
+
+            // Then: keyed, not the unkeyed default
+            val rendered = keyValues(log.events.single())["adapter_request_headers"].toString()
+            assertThat(rendered).isEqualTo("[Authorization:\"${HeaderValueMasker.keyed("s3cret").mask("Bearer secret-token")}\"]")
+            assertThat(rendered).doesNotContain(HeaderValueMasker.DEFAULT.mask("Bearer secret-token"))
+        }
+
+        @Test
         fun `should log the selected response headers as the peer sent them`() {
             // What is tested: response-side selection at emission from the SNAPSHOTTED headers - a
             //   wildcard include over the names the peer sent, an exclude that wins over it, and an
@@ -370,7 +398,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
                 CapturingClientHttpResponse(
                     MockClientHttpResponse("ab".toByteArray(), HttpStatus.OK),
                     capture,
-                    onReadFailure = {},
+                    onFailure = {},
                     onClose = {},
                 )
 
@@ -450,7 +478,9 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
         fun `should log the buffered request body of a call that threw in on-failure mode`() {
             // What is tested: the no-response completion path with on-failure - the request body
             //   was copied at wiring time before the wire call, so it is available for the event
-            //   emitted from the catch block.
+            //   emitted from the catch block. The FIELD is documented as the body the client handed
+            //   to the wire call, not as bytes that reached the peer (the size METER is the one that
+            //   claims that, and stays silent here - see the metrics test).
             // Success criteria: the IOException propagates unchanged, the event carries outcome
             //   failure and the request body, and no response body key exists.
             // Why it matters: for a call that never got an answer the request body is the only
