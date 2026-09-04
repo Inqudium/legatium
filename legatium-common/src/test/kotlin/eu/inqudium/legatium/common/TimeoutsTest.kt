@@ -45,6 +45,21 @@ class TimeoutsTest {
     }
 
     @Test
+    fun `should recognise a Netty connect timeout by its class name`() {
+        // What is tested: the by-name match for io.netty.channel.ConnectTimeoutException - Reactor Netty's
+        //   connect timeout, which extends java.net.ConnectException and so is NOT covered by any JDK
+        //   timeout type in the list.
+        // Success criteria: a throwable of that name classifies as a timeout.
+        // Why it matters: an unreachable peer that trips the connect timeout would otherwise log as a
+        //   plain failure, indistinguishable from a refused connection.
+        // Given: a stand-in class under the Netty name
+        val nettyLike = NettyNamedTimeout.create(NettyNamedTimeout.CONNECT_TIMEOUT)
+
+        // When/Then
+        assertThat(Timeouts.isTimeout(RuntimeException("wrapped", nettyLike))).isTrue()
+    }
+
+    @Test
     fun `should not classify ordinary failures or a missing throwable as a timeout`() {
         // Given/When/Then: I/O errors, state errors and null are plain failures
         assertThat(Timeouts.isTimeout(IOException("connection reset"))).isFalse()

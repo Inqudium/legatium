@@ -431,7 +431,7 @@ module's tests drive from an `AtomicLong` / a fixed string / a lambda without an
 | **Spring Boot 4.x**, Java 21 | the auto-configuration hooks Boot 4's `org.springframework.boot.webclient.WebClientCustomizer`; on Boot 3 the filter bean would exist but never be attached |
 | **Boot's `spring-boot-webclient`** — via `spring-boot-starter-webclient`, `spring-boot-starter-webflux`, or transitively | the `WebClient.Builder` bean and the customizer contract the wiring rests on; it is *optional* for this module, so a host without it keeps the filter bean and must attach it by hand ([§3.4](#34-manual-wiring)). `spring-webflux` itself (`WebClient`, `ExchangeFilterFunction`) comes transitively and is not the condition |
 | **Clients built through Boot** | the filter is attached to the injected `WebClient.Builder` bean (and to every HTTP service client group built from one) — [§3.3](#33-automatic-wiring); a client built with `WebClient.create()` or the static `WebClient.builder()` gets no filter unless the host adds it — [§3.4](#34-manual-wiring) |
-| **A connector** | Reactor Netty (the starters' default), the JDK `HttpClient`, Jetty, ... — `spring-webflux` alone carries none; the module is connector-agnostic, the timeout classification ([§6.3](#63-timeouts-connector-vs-operator)) recognises the JDK and Netty types |
+| **A connector** | Reactor Netty (the starters' default), the JDK `HttpClient`, Jetty or Apache HttpComponents 5 — `spring-webflux` alone carries none; the module is connector-agnostic by construction and pinned against all four by the connector suites ([§6.3](#63-timeouts-connector-vs-operator)) |
 | **SLF4J 2.x binding** with an encoder that renders key-value pairs and the MDC | the fields ride SLF4J's fluent `addKeyValue`, the identity rides the MDC; Boot's default console pattern prints only the message — `%kvp`/`%mdc` or Boot's structured logging make the `adapter_*` fields visible ([§3.7](#37-logging-backend-and-structured-output)) |
 | **A `MeterRegistry` in the host** (actuator) — optional | the six meters are consumed from it, never exported; without one a private `SimpleMeterRegistry` absorbs the counts unseen |
 | **The index mapping composed before the first event** — for an ELK target | the component template in [`/docs/elk/`](../../docs/elk/README.md) keeps body and header fields out of the dynamic mapping ([§3.8](#38-index-mapping-elk)) |
@@ -1128,17 +1128,28 @@ status field is always present.
 
 Two things are both called "timeout" and reach this filter as different signals:
 
-- A timeout the **connector** raises — Reactor Netty's `responseTimeout`, a JDK connector's request
-  timeout — arrives as an **error** whose cause chain carries a timeout type; the shared `Timeouts`
-  classification recognises the JDK types and Netty's `io.netty.handler.timeout.TimeoutException` family
+- A timeout the **connector** raises — a response timeout while waiting for the status line, or a
+  connect timeout while the TCP handshake never completes — arrives as an **error** whose cause chain
+  carries a timeout type; the shared `Timeouts` classification recognises the JDK types as types and
+  Netty's `io.netty.handler.timeout.TimeoutException` family plus `io.netty.channel.ConnectTimeoutException`
   by name (no Netty dependency in the module), and the event is `adapter_outcome=timeout` at WARN.
+  What each connector really raises, pinned by the connector suites:
+
+  | Connector | Response timeout | Connect timeout |
+  |---|---|---|
+  | Reactor Netty | `ReadTimeoutException` (a Netty `TimeoutException`) | `io.netty.channel.ConnectTimeoutException` — a `ConnectException`, matched by name |
+  | JDK `HttpClient` | `HttpTimeoutException` | `HttpConnectTimeoutException` (an `HttpTimeoutException`) |
+  | Jetty | `java.util.concurrent.TimeoutException` (idle timeout) | `SocketTimeoutException` |
+  | Apache HttpComponents 5 | `SocketTimeoutException` | `ConnectTimeoutException` (a `SocketTimeoutException`) |
+
+  A refused connection stays a `failure` on every connector — the suites keep it as the control.
 - A timeout the **caller** applies with the `timeout()` operator **cancels** the upstream subscription;
   this filter sees a CANCEL, never the `TimeoutException` the operator raises downstream, and the event is
   `adapter_outcome=cancelled`. That is truthful — from the exchange's point of view the caller walked away
   — and it is why the `cancelled` share is the number to watch when a service tunes its operator timeouts.
 
 A host that wants every timeout to read `timeout` configures it on the connector, where it belongs. Pinned
-by the integration test in both variants.
+by the Reactor Netty integration test in both variants and by the connector suites for the connector side.
 
 ### 6.4 A body nobody consumes
 
@@ -1260,6 +1271,7 @@ lists every test with its rationale):
 | Unit suites (`ClientRequestLoggingFilterTest`, `…BodyAndHeaderTest`, `…MetricsTest`, `BoundedBodyCaptureTest`) | hand-built request/response driven, every signal synchronous: line format, identity, levels/outcomes including `cancelled`, emission at the body's terminal signal, activation, tees, meters, fail-open stages |
 | `ClientLoggingAutoConfigurationTest` | the shipped activation: beans, the customizer attaching the filter to Boot's builder, back-off, the optional-dependency boundary |
 | `ClientRequestLoggingFilterIntegrationTest` | end to end through Boot's `WebClient.Builder` and Reactor Netty against a real HTTP peer: templates, bodies on pooled buffers, the wire correlation header, refused connection, the connector's response timeout, a downstream timeout operator |
+| Connector suites (`ConnectorContract` run as `ReactorNettyConnectorIntegrationTest`, `JdkHttpClientConnectorIntegrationTest`, `JettyConnectorIntegrationTest`, `HttpComponentsConnectorIntegrationTest`) | the connector-agnosticism contract against every connector Spring ships: the body tees on the engine's own buffers and the wire correlation header, the engine's real response and connect timeout types classified as `timeout` (the connect timeout provoked by a loopback tarpit, `Tarpit`), a refused connection as the `failure` control |
 | `ClientRequestLoggingTracingIntegrationTest` | ADR-0002 beside a real Brave bridge: the injected `traceparent`, the log-to-trace join, no correlation header on traced calls, every call traced |
 | Lockstep/contract tests (`TwinContractTest`, `UriTemplateAttributeTest`) | pin the twin contracts and the mirrored `WebClient` attribute; the field/template and configuration/reference lockstep (`ClientLogFieldTest`, `ClientLoggingReferenceConfigTest`, `ClientLoggingPropertiesTest`) lives once in legatium-common |
 

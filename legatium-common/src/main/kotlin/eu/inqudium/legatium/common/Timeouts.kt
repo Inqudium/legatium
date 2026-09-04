@@ -9,8 +9,13 @@ package eu.inqudium.legatium.common
  * The decision walks the CAUSE chain (clients wrap: `ResourceAccessException` over
  * `SocketTimeoutException`, `WebClientRequestException` over Netty's `ReadTimeoutException`) and, per
  * link, the class hierarchy BY NAME - the JDK's timeout types are matched as types, Netty's
- * `io.netty.handler.timeout.TimeoutException` family by its fully qualified name, so neither twin needs
- * a Netty dependency to recognise a Netty timeout. Anything else is a plain failure.
+ * `io.netty.handler.timeout.TimeoutException` family and its CONNECT timeout
+ * (`io.netty.channel.ConnectTimeoutException`, a `java.net.ConnectException` that no JDK timeout type
+ * covers) by their fully qualified names, so neither twin needs a Netty dependency to recognise a Netty
+ * timeout. The other connectors Spring ships need no name of their own: the JDK client's connect timeout
+ * is an `HttpTimeoutException`, Jetty raises `SocketTimeoutException` / `TimeoutException`, and Apache
+ * HttpComponents 5's `ConnectTimeoutException` IS a `SocketTimeoutException` - pinned per connector by the
+ * WebClient twin's connector suites. Anything else is a plain failure.
  */
 internal object Timeouts {
     private val timeoutClassNames =
@@ -19,6 +24,7 @@ internal object Timeouts {
             "java.net.SocketTimeoutException",
             "java.net.http.HttpTimeoutException",
             "io.netty.handler.timeout.TimeoutException",
+            "io.netty.channel.ConnectTimeoutException",
         )
 
     /** True when [throwable] or any cause is a timeout as defined on this object. Null is never a timeout. */

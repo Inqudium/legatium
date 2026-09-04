@@ -1220,8 +1220,9 @@ peer is slow, not broken), so it has its own outcome value at WARN. The shared `
 walks the exception's **cause chain** and, per link, the class hierarchy by name: the JDK's
 `SocketTimeoutException`, `java.net.http.HttpTimeoutException` (and its connect subtype) and
 `java.util.concurrent.TimeoutException` are matched as types; Netty's `io.netty.handler.timeout.
-TimeoutException` family by its fully qualified name, so the WebClient twin recognises a Reactor Netty
-read timeout without a Netty dependency here. Engines wrap their timeouts (`IOException` over
+TimeoutException` family and its connect timeout `io.netty.channel.ConnectTimeoutException` (a
+`ConnectException`, which no JDK timeout type covers) by their fully qualified names, so the WebClient
+twin recognises Reactor Netty's read and connect timeouts without a Netty dependency here. Engines wrap their timeouts (`IOException` over
 `SocketTimeoutException`; `RestClient` wraps once more into `ResourceAccessException` *after* the
 interceptor saw the original) — hence the chain walk. Anything else is a plain `failure`.
 

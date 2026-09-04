@@ -53,6 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `http-adapter-exchange`, namespace `adapter-logging.*`. Code names keep
   their `Client*` form. Chosen over `client` (ECS names the remote party so),
   `upstream` (hop-relative) and `dependency` (Maven).
+- Connector-agnostic WebClient twin, pinned: the shared timeout classification
+  recognises Reactor Netty's connect timeout (`io.netty.channel.ConnectTimeoutException`,
+  a `ConnectException` no JDK timeout type covers) by name, next to Netty's
+  `TimeoutException` family and the JDK types; per-connector integration suites
+  run one contract against Reactor Netty, the JDK `HttpClient`, Jetty and Apache
+  HttpComponents 5 - body tees, the wire correlation header, the engine's real
+  response and connect timeout types as `timeout`, a refused connection as the
+  `failure` control.
 - Shared twin core `legatium-common`, inlined by Shade
   ([ADR-0003](docs/adr/ADR-0003-legatium-common-inlined-by-shade.md)), including
   the cross-stack timeout classification and - unlike Limesium - the field enum

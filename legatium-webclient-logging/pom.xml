@@ -82,6 +82,27 @@
             <artifactId>reactor-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- The other three connectors Spring ships, for the per-connector integration suites: the
+             module is connector-agnostic by construction (ExchangeFilterFunction, decorator tee), and
+             the suites pin that the body tees and the timeout classification hold against each real
+             engine, including the exception types their connect and response timeouts actually raise.
+             The JDK connector needs nothing; Jetty needs its reactive client bridge, Apache HC5 the
+             async client plus the reactive core. Versions from the Boot BOM. -->
+        <dependency>
+            <groupId>org.eclipse.jetty</groupId>
+            <artifactId>jetty-reactive-httpclient</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.httpcomponents.client5</groupId>
+            <artifactId>httpclient5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.httpcomponents.core5</groupId>
+            <artifactId>httpcore5-reactive</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- Real Micrometer Tracing (Brave bridge) for the tracing integration test: pins the whole
              convention chain the trace capture rests on - the client observation opens the span and
              injects the outgoing traceparent BEFORE the filter functions run - so a Boot upgrade that changes

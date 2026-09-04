@@ -4,33 +4,34 @@ import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 
 /**
- * Test-only: defines a class named `io.netty.handler.timeout.TimeoutException` (a subclass of
- * `java.lang.Exception`) in a throwaway classloader, so the by-name classification can be proven without
- * a Netty dependency on this module's test classpath. The bytecode is a minimal, hand-assembled class
- * file - a public no-arg constructor calling `Exception.<init>()` - whose constant pool is static, so no
+ * Test-only: defines a class under a Netty timeout name (a subclass of `java.lang.Exception`) in a
+ * throwaway classloader, so the by-name classification can be proven without a Netty dependency on this
+ * module's test classpath. The bytecode is a minimal, hand-assembled class file - a public no-arg
+ * constructor calling `Exception.<init>()` - whose constant pool is static apart from the name, so no
  * bytecode library is needed either.
  */
 internal object NettyNamedTimeout {
-    private const val NAME = "io.netty.handler.timeout.TimeoutException"
+    const val READ_TIMEOUT = "io.netty.handler.timeout.TimeoutException"
+    const val CONNECT_TIMEOUT = "io.netty.channel.ConnectTimeoutException"
 
-    fun create(): Throwable {
+    fun create(name: String = READ_TIMEOUT): Throwable {
         val loader =
             object : ClassLoader(NettyNamedTimeout::class.java.classLoader) {
-                override fun findClass(name: String): Class<*> {
-                    if (name != NAME) throw ClassNotFoundException(name)
-                    val bytes = classFile()
-                    return defineClass(name, bytes, 0, bytes.size)
+                override fun findClass(requested: String): Class<*> {
+                    if (requested != name) throw ClassNotFoundException(requested)
+                    val bytes = classFile(name)
+                    return defineClass(requested, bytes, 0, bytes.size)
                 }
             }
-        return loader.loadClass(NAME).getConstructor().newInstance() as Throwable
+        return loader.loadClass(name).getConstructor().newInstance() as Throwable
     }
 
     /**
-     * A minimal class file: `public class io/netty/handler/timeout/TimeoutException extends
-     * java/lang/Exception { public <init>() { super(); } }`, class-file version 52 (Java 8) - old enough
-     * for every JVM this project targets, and verifiable without a StackMapTable.
+     * A minimal class file: `public class <name> extends java/lang/Exception { public <init>() { super(); } }`,
+     * class-file version 52 (Java 8) - old enough for every JVM this project targets, and verifiable
+     * without a StackMapTable.
      */
-    private fun classFile(): ByteArray {
+    private fun classFile(name: String): ByteArray {
         val out = ByteArrayOutputStream()
         val d = DataOutputStream(out)
         d.writeInt(0xCAFEBABE.toInt())
@@ -41,7 +42,7 @@ internal object NettyNamedTimeout {
         d.writeByte(7) // #1 Class -> #2
         d.writeShort(2)
         d.writeByte(1) // #2 Utf8 this class
-        d.writeUTF(NAME.replace('.', '/'))
+        d.writeUTF(name.replace('.', '/'))
         d.writeByte(7) // #3 Class -> #4
         d.writeShort(4)
         d.writeByte(1) // #4 Utf8 super class
