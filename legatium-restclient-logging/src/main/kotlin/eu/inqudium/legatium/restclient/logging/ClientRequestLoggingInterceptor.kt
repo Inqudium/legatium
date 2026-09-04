@@ -1,6 +1,9 @@
 package eu.inqudium.legatium.restclient.logging
 
+import eu.inqudium.legatium.common.ClientActivation
+import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
+import eu.inqudium.legatium.common.ClientStack
 import eu.inqudium.legatium.common.CorrelationHeader
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.HeaderValueMasker
@@ -15,10 +18,6 @@ import org.springframework.http.HttpRequest
 import org.springframework.http.client.ClientHttpRequestExecution
 import org.springframework.http.client.ClientHttpRequestInterceptor
 import org.springframework.http.client.ClientHttpResponse
-import org.springframework.http.server.PathContainer
-import org.springframework.web.util.pattern.PathPattern
-import org.springframework.web.util.pattern.PathPatternParser
-import java.net.URI
 
 /**
  * Logs ONE structured line per outbound HTTP exchange - method, target, status, duration, request id,
@@ -87,52 +86,18 @@ class ClientRequestLoggingInterceptor
         /** How masked header values render; the auto-configuration passes the host's bean, [HeaderValueMasker.DEFAULT] otherwise. */
         private val masker: HeaderValueMasker = HeaderValueMasker.DEFAULT,
     ) : ClientHttpRequestInterceptor {
-        private val metrics = ClientLoggingMetrics.forRegistry(meterRegistry)
+        private val metrics = ClientLoggingMetrics.forRegistry(meterRegistry, ClientStack.RESTCLIENT)
         private val emitter = ExchangeLogEmitter(properties, nanoTime, metrics, masker)
 
-        // Parsed ONCE at construction: an invalid pattern is a configuration error and fails the context
-        // start with the parser's message, instead of failing per call.
-        private val includePathPatterns: List<PathPattern> =
-            properties.includePathPatterns.map { PathPatternParser.defaultInstance.parse(it) }
-        private val excludedHosts: Set<String> = properties.excludeHosts.map { it.lowercase() }.toSet()
-
-        /**
-         * The interceptor is active for a call when its host is not excluded, its path matches ANY include
-         * pattern (empty includes = every call) and NO exclude prefix - an exclude always wins. Path
-         * matching runs on the raw request path parsed into segments that DECODE for matching, the exclude
-         * prefixes compare against the decoded path rebuilt from those segments (path parameters dropped) -
-         * so a percent-encoded variant cannot slip past an exclude, identical in semantics with the
-         * WebClient twin.
-         */
-        internal fun shouldNotFilter(uri: URI): Boolean {
-            if (excludedHosts.isNotEmpty() && uri.host?.lowercase() in excludedHosts) {
-                return true
-            }
-            // Nothing configured to match (the shipped default): active for every call, so the answer
-            // needs no PathContainer.
-            if (includePathPatterns.isEmpty() && properties.excludePathPrefixes.isEmpty()) {
-                return false
-            }
-            val container = PathContainer.parsePath(uri.rawPath ?: "")
-            if (includePathPatterns.isNotEmpty() && includePathPatterns.none { it.matches(container) }) {
-                return true
-            }
-            if (properties.excludePathPrefixes.isEmpty()) {
-                return false
-            }
-            val decodedPath =
-                container.elements().joinToString("") { element ->
-                    if (element is PathContainer.PathSegment) element.valueToMatch() else element.value()
-                }
-            return properties.excludePathPrefixes.any { decodedPath.startsWith(it) }
-        }
+        // Activation is the shared implementation (ADR-0003): identical semantics on both stacks by construction.
+        private val activation = ClientActivation(properties)
 
         override fun intercept(
             request: HttpRequest,
             body: ByteArray,
             execution: ClientHttpRequestExecution,
         ): ClientHttpResponse {
-            if (shouldNotFilter(request.uri)) {
+            if (activation.shouldNotFilter(request.uri)) {
                 return execution.execute(request, body)
             }
             // The WIRING is fail-open too, not only the emission: identity resolution and the time source

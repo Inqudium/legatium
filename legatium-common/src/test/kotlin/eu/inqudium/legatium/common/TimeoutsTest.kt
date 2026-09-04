@@ -1,5 +1,7 @@
 package eu.inqudium.legatium.common
 
+import io.netty.channel.ConnectTimeoutException
+import io.netty.handler.timeout.ReadTimeoutException
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import java.io.IOException
@@ -32,31 +34,20 @@ class TimeoutsTest {
     }
 
     @Test
-    fun `should recognise a Netty timeout by its class name without a Netty dependency`() {
-        // What is tested: the by-name match for io.netty.handler.timeout.TimeoutException, which the
-        //   WebClient twin meets as Reactor Netty's ReadTimeoutException but neither twin depends on.
-        // Success criteria: a throwable whose superclass chain carries that name is a timeout.
-        // Why it matters: the WebClient twin's most common timeout would otherwise log as a plain failure.
-        // Given: a stand-in class under the Netty name, defined in this test's own classloader
-        val nettyLike = NettyNamedTimeout.create()
+    fun `should recognise Netty's read and connect timeouts by their class names`() {
+        // What is tested: the by-name matches for io.netty.handler.timeout.TimeoutException (Reactor
+        //   Netty's ReadTimeoutException is one) and io.netty.channel.ConnectTimeoutException (a
+        //   java.net.ConnectException that no JDK timeout type covers) - against the REAL classes, Netty
+        //   being a test-scoped dependency here while neither twin depends on it.
+        // Success criteria: both, wrapped the way the WebClient twin meets them, classify as a timeout.
+        // Why it matters: the WebClient twin's most common timeouts would otherwise log as plain failures.
+        // Given
+        val read = RuntimeException("wrapped", ReadTimeoutException.INSTANCE)
+        val connect = RuntimeException("wrapped", ConnectTimeoutException("connection timed out after 200 ms"))
 
         // When/Then
-        assertThat(Timeouts.isTimeout(RuntimeException("wrapped", nettyLike))).isTrue()
-    }
-
-    @Test
-    fun `should recognise a Netty connect timeout by its class name`() {
-        // What is tested: the by-name match for io.netty.channel.ConnectTimeoutException - Reactor Netty's
-        //   connect timeout, which extends java.net.ConnectException and so is NOT covered by any JDK
-        //   timeout type in the list.
-        // Success criteria: a throwable of that name classifies as a timeout.
-        // Why it matters: an unreachable peer that trips the connect timeout would otherwise log as a
-        //   plain failure, indistinguishable from a refused connection.
-        // Given: a stand-in class under the Netty name
-        val nettyLike = NettyNamedTimeout.create(NettyNamedTimeout.CONNECT_TIMEOUT)
-
-        // When/Then
-        assertThat(Timeouts.isTimeout(RuntimeException("wrapped", nettyLike))).isTrue()
+        assertThat(Timeouts.isTimeout(read)).isTrue()
+        assertThat(Timeouts.isTimeout(connect)).isTrue()
     }
 
     @Test

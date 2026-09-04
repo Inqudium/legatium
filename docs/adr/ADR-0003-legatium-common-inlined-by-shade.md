@@ -140,3 +140,32 @@ holds. The price is explicit:
   the application does not start. A single twin on the module path is fine.
   (The build itself runs Surefire with `useModulePath=false` for the same
   reason.)
+
+## Amendment (2026-09-04, second): the metrics owner and the activation move; a threshold; the 1.0 decision
+
+The architecture review of 2026-09-04 measured the "deliberately duplicated
+remainder" with stack names neutralised: the two `ClientLoggingMetrics`
+classes were 95 % identical (the differences were the outcome list, one tag
+value and two descriptions - data, not design) and the activation logic 96 %
+(identical). Both now live in `legatium-common`: `ClientLoggingMetrics`
+parameterised by a `ClientStack` (the `client` tag, the outcome vocabulary,
+the gauge's wording; the per-registry cache is keyed by registry and stack)
+and `ClientActivation` built from the properties. The emitters (72 %), the
+exchanges and the two `BoundedBodyCapture`s remain duplicated - they differ in
+design, not in data.
+
+**Threshold, so this is a rule rather than a review:** a twin-paired file
+that reaches **90 % line similarity** after neutralising the stack names is
+byte-identical enough to move to `legatium-common`, parameterised where it
+must differ. Below that, a copy stays a copy and the both-directions port is
+the accepted cost.
+
+**The inlining stays through 1.0 (review finding 4, decided).** Publishing
+`legatium-common` as a regular artifact would remove the friend-path build
+coupling, the duplicate classes and the JPMS split-package exclusion, at the
+price of one more artifact in every consumer's tree and a public API surface
+for the shared types. The one-artifact shape and `internal` shared types are
+kept for the first release; the documented costs (above) are accepted. The
+decision is re-opened by the first of: a consumer that needs the module path
+with both twins, a third twin, or a shared-type API change that would break
+consumers of both jars.

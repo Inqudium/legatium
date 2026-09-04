@@ -30,45 +30,25 @@ code wins.
    7. [Fail-open contract](#27-fail-open-contract)
    8. [Injectable collaborators](#28-injectable-collaborators)
 3. [Using it in a foreign project](#3-using-it-in-a-foreign-project)
-   1. [Prerequisites](#31-prerequisites)
-   2. [Adding the dependency](#32-adding-the-dependency)
-   3. [Automatic wiring](#33-automatic-wiring)
-   4. [Manual wiring](#34-manual-wiring)
-   5. [Interceptor order and other interceptors](#35-interceptor-order-and-other-interceptors)
-   6. [Overriding beans](#36-overriding-beans)
-   7. [Logging backend and structured output](#37-logging-backend-and-structured-output)
-   8. [Index mapping (ELK)](#38-index-mapping-elk)
-   9. [Verifying the integration](#39-verifying-the-integration)
-4. [Configuration](#4-configuration)
-   1. [Property reference](#41-property-reference)
-   2. [Header sections](#42-header-sections)
-   3. [Body logging and body measuring](#43-body-logging-and-body-measuring)
-   4. [Activation: hosts and paths](#44-activation-hosts-and-paths)
-   5. [Logger levels](#45-logger-levels)
-   6. [Validation at startup](#46-validation-at-startup)
-   7. [Example configurations](#47-example-configurations)
-5. [Metrics and observation](#5-metrics-and-observation)
-   1. [Log fields](#51-log-fields)
-   2. [MDC keys](#52-mdc-keys)
-   3. [Levels and outcomes](#53-levels-and-outcomes)
-   4. [Meters](#54-meters)
-   5. [Reading the meters together](#55-reading-the-meters-together)
-   6. [Trace correlation](#56-trace-correlation)
-6. [Special characteristics](#6-special-characteristics)
-   1. [Differences to the WebClient twin](#61-differences-to-the-webclient-twin)
-   2. [Duration is response occupancy](#62-duration-is-response-occupancy)
-   3. [A response that is never closed](#63-a-response-that-is-never-closed)
-   4. [Failures while reading the body](#64-failures-while-reading-the-body)
-   5. [Timeouts and how they are recognised](#65-timeouts-and-how-they-are-recognised)
-   6. [RestTemplate has no URI template](#66-resttemplate-has-no-uri-template)
-   7. [Retries yield one line per attempt](#67-retries-yield-one-line-per-attempt)
-   8. [Tracing makes every call traced](#68-tracing-makes-every-call-traced)
-   9. [One metrics instance per registry](#69-one-metrics-instance-per-registry)
-   10. [Masking is a fingerprint, not a secret](#610-masking-is-a-fingerprint-not-a-secret)
-   11. [Shared code: legatium-common, inlined by Shade](#611-shared-code-legatium-common-inlined-by-shade)
-7. [Appendix](#7-appendix)
-   1. [File map](#71-file-map)
-   2. [Related documents](#72-related-documents)
+   1. [Automatic wiring](#31-automatic-wiring)
+   2. [Manual wiring](#32-manual-wiring)
+   3. [Interceptor order and other interceptors](#33-interceptor-order-and-other-interceptors)
+   4. [Verifying the integration](#34-verifying-the-integration)
+4. [Special characteristics](#4-special-characteristics)
+   1. [Differences to the WebClient twin](#41-differences-to-the-webclient-twin)
+   2. [Duration is response occupancy](#42-duration-is-response-occupancy)
+   3. [A response that is never closed](#43-a-response-that-is-never-closed)
+   4. [Failures while reading the body](#44-failures-while-reading-the-body)
+   5. [Timeouts and how they are recognised](#45-timeouts-and-how-they-are-recognised)
+   6. [RestTemplate has no URI template](#46-resttemplate-has-no-uri-template)
+   7. [Retries yield one line per attempt](#47-retries-yield-one-line-per-attempt)
+   8. [Tracing makes every call traced](#48-tracing-makes-every-call-traced)
+   9. [One metrics instance per registry](#49-one-metrics-instance-per-registry)
+   10. [Masking is a fingerprint, not a secret](#410-masking-is-a-fingerprint-not-a-secret)
+   11. [Shared code: legatium-common, inlined by Shade](#411-shared-code-legatium-common-inlined-by-shade)
+5. [Appendix](#5-appendix)
+   1. [File map](#51-file-map)
+   2. [Related documents](#52-related-documents)
 
 ---
 
@@ -105,17 +85,17 @@ emission, metrics — can ever fail, delay or alter the call it describes.
 
 - **No request rates, latencies or status distributions as metrics.** Boot's `http.client.requests` and
   the structured log fields cover those; the module's meters observe only what those cannot show
-  ([§5.4](#54-meters)).
+  ([Legatium guide §7.4](../../docs/GUIDE.md#74-meters)).
 - **No retries, no circuit breaking, no request rewriting.** The module observes; the one thing it adds to
-  a request is the correlation header on a traceless call without one ([§5.6](#56-trace-correlation)).
+  a request is the correlation header on a traceless call without one ([Legatium guide §7.6](../../docs/GUIDE.md#76-trace-correlation)).
 - **No body masking transformers and no per-key response sampling.** Bodies are logged verbatim up to the
-  capture limit, and the logger level is the only volume control ([§4.5](#45-logger-levels)).
+  capture limit, and the logger level is the only volume control ([Legatium guide §6.5](../../docs/GUIDE.md#65-logger-levels)).
 - **No replaying body cache.** The response tee is passive; an unread response body is logged as absent.
 - **No exporting of a `MeterRegistry`.** The host's registry is consumed if present; otherwise a private
   `SimpleMeterRegistry` absorbs the values.
 - **No clients built by hand.** The customizers cover every client built through Boot's builders (and the
   HTTP service client groups built from them); a hand-built `RestClient` gets the interceptor bean added
-  by the host ([§3.4](#34-manual-wiring)).
+  by the host ([§3.2](#32-manual-wiring)).
 
 ### 1.3 The exchange line
 
@@ -152,7 +132,7 @@ key-values that a structured encoder turns into fields:
 ```
 
 The `adapter_request_id` / `adapter_method` / `adapter_route` / `traceId` / `spanId` entries come from the
-MDC ([§5.2](#52-mdc-keys)); the `adapter_*` key-values are the field family of [§5.1](#51-log-fields). The
+MDC ([Legatium guide §7.2](../../docs/GUIDE.md#72-mdc-keys)); the `adapter_*` key-values are the field family of [Legatium guide §7.1](../../docs/GUIDE.md#71-log-fields). The
 `endpoint_request_id` in the example is not this module's: it is the ambient MDC of the inbound request
 the call was made from (Limesium), which the additive emission scope leaves in place — this is how the
 client line joins the server line without any coupling between the two libraries. How MDC entries land
@@ -226,7 +206,8 @@ five layers:
 | `Exchange` | Per-exchange state from entry to emission; the exactly-once guards. |
 | `ExchangeLogEmitter` | Builds and emits the arrival line and the completion event; resolves level, outcome and cause (timeouts via the shared `Timeouts`); records body sizes; opens the emission `MdcScope` with trace ownership. |
 | `ClientLogField` | The wire names and the exact JVM type of each structured field; a wrongly typed value drops the field with a warning, never the event. Shared (legatium-common): one enum for both twins. |
-| `ClientLoggingMetrics` | The six meters - the fixed-tag meters pre-registered, the body meters created lazily per tag - with per-meter fallback to a private registry on registration conflict. |
+| `ClientLoggingMetrics` (shared, `legatium-common`) | The six meters, one implementation for both twins parameterised by the `ClientStack` (outcome vocabulary, `client` tag) - the fixed-tag meters pre-registered, the body meters created lazily per tag, per-meter fallback to a private registry on registration conflict. |
+| `ClientActivation` (shared, `legatium-common`) | Which calls are logged at all: host exclusion, include patterns, exclude prefixes - one implementation, so the semantics are identical on both stacks by construction. |
 | `BoundedBodyCapture` | The bounded capture target; count-only mode with limit `0`; the response-side read state (`BodyReadState`); single-writer/late-reader visibility via a volatile total. |
 | `MdcScope` | Puts identity (and, for the emission, trace keys) into the MDC and restores the previous values on close. |
 | `Traceparent` / `Timeouts` | Strict W3C `traceparent` parsing to `(traceId, spanId)`; the cause-chain walk that classifies a failure as a timeout. |
@@ -250,8 +231,8 @@ client too. It registers:
 | `RestTemplateCustomizer` | `@ConditionalOnClass(RestTemplateCustomizer)`, same order | appends the interceptor to every `RestTemplate` built through `RestTemplateBuilder` |
 
 Because the interceptor is its own bean, a host can replace it while keeping the customizers
-([§3.6](#36-overriding-beans)). Boot's `spring-boot-restclient` module is an **optional** dependency:
-without it the interceptor bean still exists and the host attaches it by hand ([§3.4](#34-manual-wiring)).
+([Legatium guide §3](../../docs/GUIDE.md#3-overriding-beans)). Boot's `spring-boot-restclient` module is an **optional** dependency:
+without it the interceptor bean still exists and the host attaches it by hand ([§3.2](#32-manual-wiring)).
 
 ### 2.3 Lifecycle of one exchange
 
@@ -291,7 +272,7 @@ InterceptingClientHttpRequest ──▶ [earlier interceptors] ──▶ ClientR
 
 The emitter computes duration, reads the **final** status and headers off the real response, classifies
 level/outcome/cause, records body sizes, gates on the logger level, opens the emission `MdcScope` (with
-trace ownership, see [§5.6](#56-trace-correlation)), selects the response headers, decodes the captured
+trace ownership, see [Legatium guide §7.6](../../docs/GUIDE.md#76-trace-correlation)), selects the response headers, decodes the captured
 bodies and writes one event.
 
 ### 2.4 Emission point: response close
@@ -311,14 +292,14 @@ a duration that excludes the read, and — for the client's own error handling, 
 So the logged status, response headers and captures are final. Two consequences:
 
 1. `adapter_duration_ms` measures **response occupancy** including the body read, not bare round-trip
-   time ([§6.2](#62-duration-is-response-occupancy)).
+   time ([§4.2](#42-duration-is-response-occupancy)).
 2. Everything rests on the response being closed. The gauge `adapter.logging.exchanges.open` makes that
-   assumption measurable ([§6.3](#63-a-response-that-is-never-closed)); the exactly-once CAS on
+   assumption measurable ([§4.3](#43-a-response-that-is-never-closed)); the exactly-once CAS on
    `Exchange.completed` makes a double close harmless.
 
 A call that produces **no response** — connection refused, DNS failure, a timeout before the status line
 — emits right away from the interceptor's catch block: `-> -` in the message, no status field,
-`adapter_outcome=failure` (or `timeout`, [§6.5](#65-timeouts-and-how-they-are-recognised)), the exception
+`adapter_outcome=failure` (or `timeout`, [§4.5](#45-timeouts-and-how-they-are-recognised)), the exception
 attached as the cause. A short **WARN breadcrumb** with the exception's `toString` is logged first on the
 module's own logger (`eu.inqudium.legatium.restclient.logging.ClientRequestLoggingInterceptor`) — not on
 the exchange logger (one event per call is that stream's contract) — and the exception is rethrown
@@ -341,7 +322,7 @@ Bodies are never pre-read, buffered or replayed:
   the reading thread to the closing thread (usually the same; not necessarily) is established by the
   capture itself: the volatile `totalBytes` is written last in every mutation.
 
-The captures exist only when a body is logged (in any mode — `on-failure` needs the bytes before the outcome is known, [§4.3](#43-body-logging-and-body-measuring)) **or** measured; without either, the response wrapper still
+The captures exist only when a body is logged (in any mode — `on-failure` needs the bytes before the outcome is known, [Legatium guide §6.3](../../docs/GUIDE.md#63-body-logging-and-body-measuring)) **or** measured; without either, the response wrapper still
 exists (the close hook is the emission point), but the body stream passes through with the read-failure
 guard only.
 
@@ -352,7 +333,7 @@ body read only partially is captured to exactly that extent, and the `[truncated
 counts what flowed, not `Content-Length`. This is the deliberate trade-off against a replaying buffer —
 the log tells the truth about what the application processed, and streaming stays untouched. Because of
 that, the log cannot tell a body the peer sent but the application dropped from one that was never sent;
-the counter `adapter.response.body.read` ([§5.4](#54-meters)) exists for exactly that distinction.
+the counter `adapter.response.body.read` ([Legatium guide §7.4](../../docs/GUIDE.md#74-meters)) exists for exactly that distinction.
 
 ### 2.6 MDC coverage
 
@@ -396,13 +377,13 @@ itself (a throwing `Counter`, a throwing appender that also covers the internal 
 
 Failures of the logging are reported on the module's **own** loggers
 (`eu.inqudium.legatium.restclient.logging.ClientRequestLoggingInterceptor`, `…ExchangeLogEmitter`,
-`…ClientLoggingMetrics`), never on the exchange logger, so the exchange stream stays parseable.
+`eu.inqudium.legatium.common.ClientLoggingMetrics`), never on the exchange logger, so the exchange stream stays parseable.
 
 **Security note.** Fail-open is the inverse of what an audit log needs: a host-side fault silently
 removes the call from the log instead of failing it. The exchange log is therefore an **observability**
 feature with no completeness guarantee; a regulatory audit trail of outbound calls must come from a
 fail-closed component. The compensating controls are `adapter.logging.failopen` and the
-`exchanges.open` gauge ([§5.5](#55-reading-the-meters-together)) — alert on them.
+`exchanges.open` gauge ([Legatium guide §7.5](../../docs/GUIDE.md#75-reading-the-meters-together)) — alert on them.
 
 **The boundary is `Exception`, not `Throwable` — a decision.** Every guard confines an `Exception` and
 lets an `Error` propagate: a `VirtualMachineError`, a `LinkageError` from a broken logging backend or a
@@ -424,10 +405,10 @@ Time and randomness are injected, not ambient:
 - `CorrelationIdGenerator` — the id for traceless calls without a correlation header; `DEFAULT` (the
   counting generator, ADR-0004) by default. Never consulted for a traced call (ADR-0002: the
   `traceparent` trace id is the request id) — and in a host with tracing configured, never at all
-  ([§6.8](#68-tracing-makes-every-call-traced)).
+  ([§4.8](#48-tracing-makes-every-call-traced)).
 
 - `HeaderValueMasker` — how a header listed in a `masked` section renders on the line; `DEFAULT` is the
-  stable `length:hash` fingerprint ([§6.10](#610-masking-is-a-fingerprint-not-a-secret)). The
+  stable `length:hash` fingerprint ([§4.10](#410-masking-is-a-fingerprint-not-a-secret)). The
   properties decide WHICH values are masked, the bean decides HOW - a keyed HMAC for a compliance regime,
   a fixed `***` for a host that wants no correlation at all.
 
@@ -438,49 +419,13 @@ module's tests drive from an `AtomicLong` / a fixed string / a lambda without an
 
 ## 3. Using it in a foreign project
 
-### 3.1 Prerequisites
+Everything that is one contract for both twins — prerequisites, the dependency, overriding beans, the
+logging backend and structured output, the index mapping, the configuration and the metrics — is written
+once, in the [Legatium guide](../../docs/GUIDE.md). This chapter holds what is specific to the interceptor:
+how it is wired into a Boot application, how to wire it by hand, where it sits in the chain, and how to verify
+the integration.
 
-| Requirement | Notes |
-|---|---|
-| Spring Boot 4.x application using `RestClient` and/or `RestTemplate` | any application type — servlet, reactive, or none; the module is a client-side library |
-| Boot's `spring-boot-restclient` (via `spring-boot-starter-restclient` or transitively) | provides `RestClient.Builder`, `RestTemplateBuilder` and the customizer contracts the auto-configuration hooks; **optional** for the module — without it the interceptor bean is attached by hand ([§3.4](#34-manual-wiring)); note that since Boot 4 the web starters do not pull it |
-| Java 21, Kotlin stdlib | the module is written in Kotlin; a Java host only needs `kotlin-stdlib`, which the jar pulls transitively |
-| SLF4J 2.x binding (Logback by default in Boot) | the module uses the fluent `LoggingEventBuilder` API (`addKeyValue`) |
-| Micrometer core | present via any Boot starter; an actuator `MeterRegistry` is optional |
-| An HTTP engine | whatever the host's request factory uses (JDK `HttpClient` by default, Apache HttpComponents, ...) — the module is engine-agnostic |
-
-The module is a **library**, not a starter: it declares `spring-boot-autoconfigure`, `slf4j-api`,
-`spring-web`, `micrometer-core`, `kotlin-stdlib` and the optional `spring-boot-restclient` — no logging
-backend, no YAML, no HTTP engine are forced onto the host.
-
-### 3.2 Adding the dependency
-
-```xml
-<dependency>
-    <groupId>eu.inqudium</groupId>
-    <artifactId>legatium-restclient-logging</artifactId>
-    <version><!-- current release: see the badge below --></version>
-</dependency>
-```
-
-The current release is shown live by the Maven Central badge:
-[![Maven Central](https://img.shields.io/maven-central/v/eu.inqudium/legatium-restclient-logging.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/eu.inqudium/legatium-restclient-logging)
-
-That is all: the auto-configuration registers the interceptor and the customizers
-([§3.3](#33-automatic-wiring); clients outside Boot's builders: [§3.4](#34-manual-wiring)), every call
-through a Boot-built `RestClient` or `RestTemplate` is logged on the `http-adapter-exchange` logger at INFO, the
-request id comes from the `traceparent` trace id (traceless calls send an `X-Correlation-Id` instead —
-ADR-0002), the `adapter_*` keys are in the MDC for the wire call, and the six meters are registered in
-the host's `MeterRegistry` if one exists.
-
-To remove the module again without touching the classpath:
-
-```yaml
-adapter-logging:
-  enabled: false
-```
-
-### 3.3 Automatic wiring
+### 3.1 Automatic wiring
 
 The shipped activation is not the interceptor bean but the two customizers that attach it. The hooks are
 Boot's **builder Spring beans**, both defined in the `spring-boot-restclient` module:
@@ -494,7 +439,7 @@ This module contributes one customizer of each kind, both ordered at `Ordered.LO
 the `RestClientCustomizer` does exactly `builder.requestInterceptor(interceptor)`, the
 `RestTemplateCustomizer` appends the interceptor to the template's interceptor list — in both cases the
 interceptor lands at the **end** of the list, innermost
-([§3.5](#35-interceptor-order-and-other-interceptors)).
+([§3.3](#33-interceptor-order-and-other-interceptors)).
 
 Consequently the rule for the host is: **every adapter obtains its client from the injected builder
 bean.** Constructor injection is the usual form; a `@Bean` method parameter or a builder obtained from
@@ -536,7 +481,7 @@ Covered by the automatic wiring:
 - a `RestTemplate` constructed directly (`RestTemplate()`, `RestTemplate(requestFactory)`);
 - a builder the host constructs and then customises itself.
 
-For those, [§3.4](#34-manual-wiring) applies.
+For those, [§3.2](#32-manual-wiring) applies.
 
 The automatic wiring is conditional on two things, both pinned by `ClientLoggingAutoConfigurationTest`:
 `adapter-logging.enabled` (default `true`; `false` removes the interceptor bean and both customizers
@@ -558,7 +503,7 @@ val builder: RestClient.Builder = context.getBean(RestClient.Builder::class.java
 builder.requestInterceptors { interceptors -> check(interceptors.last() is ClientRequestLoggingInterceptor) }
 ```
 
-### 3.4 Manual wiring
+### 3.2 Manual wiring
 
 The interceptor bean `ClientRequestLoggingInterceptor` exists in every enabled context; only its
 **attachment** depends on Boot's builders. Attach it yourself when a client does not pass through them:
@@ -567,7 +512,7 @@ The interceptor bean `ClientRequestLoggingInterceptor` exists in every enabled c
 |---|---|
 | The host builds clients by hand — `RestClient.create(...)`, the static `RestClient.builder()`, a `RestTemplate` constructed directly, or a builder it constructs itself | Boot's customizers run only on the builder beans Boot defines; a client built elsewhere never sees them |
 | `spring-boot-restclient` is absent — the host depends on `spring-web` directly, or only on `spring-boot-starter-web`, without `spring-boot-starter-restclient` | both nested customizer configurations are `@ConditionalOnClass` and back off; there are no builder beans either, so every client is hand-built anyway |
-| A builder obtained from Boot is customised **after** the customizers ran and the logging interceptor must stay innermost | interceptors the host appends on that builder land behind this one and run *inside* it ([§3.5](#35-interceptor-order-and-other-interceptors)); where the logged request must be what those later interceptors produce, the host takes over the ordering |
+| A builder obtained from Boot is customised **after** the customizers ran and the logging interceptor must stay innermost | interceptors the host appends on that builder land behind this one and run *inside* it ([§3.3](#33-interceptor-order-and-other-interceptors)); where the logged request must be what those later interceptors produce, the host takes over the ordering |
 | A client is built outside a Spring context — a library's own client, an integration test without Boot | there is no context to hold the bean, so the interceptor is constructed directly (below) |
 
 The mechanics are one line per client: inject the bean and append it as the **last** interceptor, so it
@@ -596,7 +541,7 @@ Rules for manual wiring:
 - **Reuse the one bean; do not construct a second interceptor in a Boot context.** The meters are
   identified by name, so every interceptor on one `MeterRegistry` shares one metrics owner and the
   `adapter.logging.exchanges.open` gauge reports the total across them
-  ([§6.9](#69-one-metrics-instance-per-registry)). A second instance would not break anything, but it
+  ([§4.9](#49-one-metrics-instance-per-registry)). A second instance would not break anything, but it
   buys nothing.
 - **Honour the switch.** With `adapter-logging.enabled=false` the bean does not exist, and a plain
   injection point fails to start the context. A client configuration that must survive the switch takes
@@ -614,7 +559,7 @@ Rules for manual wiring:
 
 - **Activation is not the host's business.** Host and path activation (`adapter-logging.exclude-hosts`,
   `include-path-patterns`, `exclude-path-prefixes`) is evaluated inside the interceptor
-  ([§4.4](#44-activation-hosts-and-paths)), so a manually attached interceptor applies the same rules as
+  ([Legatium guide §6.4](../../docs/GUIDE.md#64-activation-hosts-and-paths)), so a manually attached interceptor applies the same rules as
   an automatically attached one. There is no need to attach it selectively.
 - **Ordering is the host's business.** The automatic wiring guarantees "innermost" by its late
   customizers; a manual `requestInterceptor(...)` call is appended wherever it is made. Put it last.
@@ -637,7 +582,7 @@ Everything else is unchanged by the way the interceptor was attached: emission p
 the call-wide MDC, header sections, body capture and the fail-open contract behave exactly as under the
 automatic wiring — the interceptor does not know how it got onto the chain.
 
-### 3.5 Interceptor order and other interceptors
+### 3.3 Interceptor order and other interceptors
 
 The customizers are ordered at `Ordered.LOWEST_PRECEDENCE - 10`, so the interceptor is appended **behind**
 the interceptors of earlier customizers and of the builder's own configuration, and runs **inside** them —
@@ -646,157 +591,18 @@ closest to the wire:
 - an authentication interceptor outside it has already added its header, so the logged (and masked)
   request headers are what the peer receives;
 - a retrying interceptor outside it invokes it once per attempt — one line per attempt, each an honest
-  crossing ([§6.7](#67-retries-yield-one-line-per-attempt));
+  crossing ([§4.7](#47-retries-yield-one-line-per-attempt));
 - interceptors a host adds **after** the customizers ran (directly on a builder it obtained from Boot)
   run inside this one and are outside that guarantee — they see the request after this interceptor did.
 
 The `traceparent` header is not affected by the order at all: the client observation Boot registers
-injects it into the request **before** any interceptor runs ([§5.6](#56-trace-correlation)).
+injects it into the request **before** any interceptor runs ([Legatium guide §7.6](../../docs/GUIDE.md#76-trace-correlation)).
 
 Activation is evaluated **in the interceptor** (`shouldNotFilter`), so its semantics are byte-identical
 with the WebClient twin. If the host needs a different position, it attaches the bean itself
-([§3.4](#34-manual-wiring)).
+([§3.2](#32-manual-wiring)).
 
-### 3.6 Overriding beans
-
-Every default is `@ConditionalOnMissingBean`:
-
-```kotlin
-@Configuration(proxyBeanMethods = false)
-class ClientLoggingCustomisation {
-
-    /** Deterministic ids in a test profile, or a different id format (a peer that insists on UUIDs). */
-    @Bean
-    fun correlationIdGenerator(): CorrelationIdGenerator =
-        CorrelationIdGenerator { UUID.randomUUID().toString() }
-
-    /** A keyed fingerprint where an unkeyed hash is not acceptable; both twins mask with this one bean. */
-    @Bean
-    fun headerValueMasker(secrets: Secrets): HeaderValueMasker =
-        HeaderValueMasker { value -> "hmac:" + secrets.hmacSha256Hex(value).take(16) }
-
-    /** Only if the host owns a monotonic clock abstraction already. */
-    @Bean
-    fun nanoTimeSource(clock: MonotonicClock): NanoTimeSource =
-        NanoTimeSource { clock.nanos() }
-}
-```
-
-A host-defined `ClientRequestLoggingInterceptor` bean replaces the **interceptor**, not the wiring: the
-auto-configured customizers still attach it to every Boot-built client. The constructor takes
-`(ClientLoggingProperties, NanoTimeSource, CorrelationIdGenerator, MeterRegistry)` plus an optional
-trailing `HeaderValueMasker` (the built-in fingerprint when omitted):
-
-```kotlin
-@Bean
-fun clientRequestLoggingInterceptor(
-    properties: ClientLoggingProperties,
-    nanoTime: NanoTimeSource,
-    ids: CorrelationIdGenerator,
-    registry: MeterRegistry,
-): ClientRequestLoggingInterceptor = ClientRequestLoggingInterceptor(properties, nanoTime, ids, registry)
-```
-
-Attaching the (default or replaced) interceptor to a client that does not pass through Boot's builders
-is [§3.4](#34-manual-wiring).
-
-### 3.7 Logging backend and structured output
-
-The module emits through SLF4J's fluent API. Every exchange event carries its data in **two places**, and
-an encoder treats them differently:
-
-| Data | Carried as | Examples |
-|---|---|---|
-| The field family | SLF4J **key-value pairs** (`addKeyValue`) | `adapter_outcome`, `adapter_duration_ms`, `adapter_url_host`, `adapter_response_body` |
-| The identity and trace context | **MDC** entries, set by the emission scope (and, for the call, by the call scope) | `adapter_request_id`, `adapter_method`, `adapter_route`, `traceId`, `spanId` (from the `traceparent` header) |
-
-A plain `%msg` pattern shows neither — only the message, which repeats the gist inline
-(`… -> 200 [adapter_request_id=…]`) precisely for that case. Logback offers three ways to render the
-rest; which one fits depends on where the output goes.
-
-#### Option 1 — `PatternLayout` with `%kvp` and `%mdc` (text, for terminals and files)
-
-```xml
-<appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-    <encoder>
-        <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg %kvp{NONE} [%mdc]%n</pattern>
-    </encoder>
-</appender>
-```
-
-```
-13:54:58.534 INFO  [http-nio-8080-exec-3] http-adapter-exchange - Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf9… traceId=4bf9… spanId=00f0…] adapter_outcome=success adapter_duration_ms=17 adapter_request_method=POST adapter_response_status_code=200 adapter_url_host=api.example.com adapter_url_path=/things/42 adapter_url_template=https://api.example.com/things/{id} [adapter_method=POST, adapter_request_id=4bf9…, adapter_route=https://api.example.com/things/42, endpoint_request_id=4bf9…, traceId=4bf9…, spanId=00f0…]
-```
-
-- `%kvp` quotes values with double quotes by default; `%kvp{NONE}` leaves them bare.
-- `%X{adapter_request_id:-}` prints one key and nothing when it is absent; `%mdc` prints every entry
-  that is present as `key=value`, so the trace keys appear only on traced calls.
-- In Spring Boot the same pattern goes into `logging.pattern.console` without any XML.
-- This is the module's own test configuration (`src/test/resources/logback-test.xml`).
-- **Text output renders values raw.** The logged path and query are percent-encoded as sent, but bodies
-  (opt-in) may contain line breaks — mind that before pointing a text appender at a pipeline that parses
-  lines.
-
-#### Option 2 — Logback's `JsonEncoder` (JSON without an extra dependency, Logback ≥ 1.4.3)
-
-```xml
-<appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-    <encoder class="ch.qos.logback.classic.encoder.JsonEncoder">
-        <withSequenceNumber>false</withSequenceNumber>
-        <withNanoseconds>false</withNanoseconds>
-    </encoder>
-</appender>
-```
-
-One JSON object per event, control characters escaped — but the key-value pairs arrive as a **list of
-single-key objects** and the MDC nested under `"mdc":{…}`. Correct and safe, yet awkward to map onto the
-flat `adapter_*` fields of the index template; suitable for local JSON inspection, not for an index.
-
-#### Option 3 — Spring Boot structured logging (JSON, flat, typed — recommended for an index)
-
-```yaml
-logging:
-  structured:
-    format:
-      console: ecs      # or logstash, gelf
-  level:
-    http-adapter-exchange: INFO
-    eu.inqudium.legatium.restclient.logging: WARN
-```
-
-Key-value pairs and MDC entries become **flat top-level fields**, and values keep their JVM type —
-`adapter_duration_ms` is a number, `adapter_response_status_code` a number, which is what the type
-assertion in `ClientLogField` guarantees on the producing side. This is the shape the component template
-in [§3.8](#38-index-mapping-elk) is written for. `logging.structured.json.include` / `exclude` / `rename`
-control the field selection (e.g. to drop `adapter_route`, which duplicates host and path).
-
-| Option | Output | Key-value pairs | MDC | Typed values | Escapes control chars | Use for |
-|---|---|---|---|---|---|---|
-| 1 `PatternLayout` `%kvp` `%mdc` | text | inline `k=v` | inline `k=v` | no (all text) | **no** | terminals, local files, tests |
-| 2 `JsonEncoder` | JSON | list of objects | nested `mdc` | partly | yes | local JSON inspection |
-| 3 `StructuredLogEncoder` | JSON | flat fields | flat fields | **yes** | yes | **log index (ELK etc.)** |
-
-Whatever the option, keep the `eu.inqudium.legatium.restclient.logging` logger at WARN or lower: it
-carries the WARN breadcrumb on a thrown call and the module's own failure reports.
-
-### 3.8 Index mapping (ELK)
-
-The thirteen `adapter_*` fields have a ready-made Elasticsearch component template in
-[`/docs/elk/`](../../docs/elk/README.md):
-
-```bash
-curl -X PUT "$ES/_component_template/legatium-restclient-logging-fields" \
-     -H 'Content-Type: application/json' \
-     --data-binary @docs/elk/legatium-restclient-logging-fields.component-template.json
-```
-
-Compose it into the data-stream mapping **before** the first event arrives — an unmapped body or header
-field would be mapped dynamically and become searchable, which the payload fields' `index: false`
-deliberately prevents. The MDC-carried keys are intentionally not in the template: where they land
-depends on the host's encoder layout; map them where the encoder configuration lives. The template
-composes beside Limesium's `endpoint_*` template without collision.
-
-### 3.9 Verifying the integration
+### 3.4 Verifying the integration
 
 1. Make any call through a Boot-built `RestClient`:
 
@@ -827,370 +633,9 @@ composes beside Limesium's `endpoint_*` template without collision.
 
 ---
 
-## 4. Configuration
+## 4. Special characteristics
 
-All properties live under `adapter-logging.*`. The complete, commented reference with every default is
-[`/docs/adapter-logging-reference.yml`](../../docs/adapter-logging-reference.yml);
-`ClientLoggingReferenceConfigTest` (in `legatium-common`) binds it against the shared
-`ClientLoggingProperties` and fails the build on any drift — every key must exist, every value must be
-the built-in default. Both twins bind that one class, so the namespace is identical across the stacks
-by construction.
-
-### 4.1 Property reference
-
-| Property | Type | Default | Meaning |
-|---|---|---|---|
-| `enabled` | boolean | `true` | Master switch. `false` makes the auto-configuration back off — no interceptor, no customizers, no beans. A context-start decision, not a runtime toggle. |
-| `logger-name` | string | `http-adapter-exchange` | Logger of the arrival line and the exchange event. Its level is the runtime volume control ([§4.5](#45-logger-levels)). Distinct from Limesium's `http-exchange` by design. |
-| `correlation-id-header` | string (RFC 9110 token) | `X-Correlation-Id` | Header read from a **traceless** request (no conformant `traceparent` — ADR-0002); when absent or blank, an id is generated and ADDED to the request under this name so the peer can quote it. A traced call takes its request id from the `traceparent` trace id, ignores this header and adds nothing. |
-| `include-query-string` | boolean | `true` | Log the query string as its own field `adapter_url_query` (never part of the path). Disable when query parameters may carry personal data. |
-| `log-request-start` | boolean | `false` | Additionally log an arrival line before the wire call, at INFO, under the emission MDC. Carries no outcome/status/duration. |
-| `include-path-patterns` | list of `PathPattern` | `[]` | Request paths the interceptor is active for at all, whatever the host; empty = every call. Parsed once at startup; an invalid pattern fails the context. |
-| `exclude-path-prefixes` | list of strings | `[]` | Request-path prefixes the interceptor skips entirely — no event, no MDC, no correlation header, no gauge movement. Prefix match against the decoded path. An exclude always wins over an include. |
-| `exclude-hosts` | list of strings | `[]` | Peer hosts the interceptor skips entirely (case-insensitive, without port) — the outbound counterpart of excluding a health probe. |
-| `slow-request-threshold` | duration | `5s` | At/above this duration an INFO call escalates to WARN and is flagged `adapter_slow: true`; the outcome stays `success`. Measured as response occupancy ([§6.2](#62-duration-is-response-occupancy)). Must be ≥ 1 ms. |
-| `request-headers.includes` / `.excludes` / `.masked` | lists of header names | `[]` | See [§4.2](#42-header-sections). |
-| `response-headers.includes` / `.excludes` / `.masked` | lists of header names | `[]` | See [§4.2](#42-header-sections). |
-| `log-request-body` | `never` \| `on-failure` \| `always` | `never` | Log the request body the client hands the interceptor into `adapter_request_body`, up to `max-body-bytes` — on every line (`always`) or only when the outcome is not `success` or the status is a 4xx (`on-failure`, [§4.3](#43-body-logging-and-body-measuring)). |
-| `log-response-body` | `never` \| `on-failure` \| `always` | `never` | Tee the response body into `adapter_response_body` as the application reads it, up to `max-body-bytes` — on every line or only when the outcome is not `success` or the status is a 4xx. |
-| `measure-request-body-size` | boolean | `false` | Record `adapter.request.body.size`; independent of `log-request-body`. |
-| `measure-response-body-size` | boolean | `false` | Record `adapter.response.body.size` and `adapter.response.body.read`; independent of `log-response-body`. |
-| `max-body-bytes` | int > 0 | `16384` | Capture limit per body. Bounds **memory**, not the exchange: bytes beyond it still flow; the logged value is truncated with a note of the total size. |
-| `masking-key` | string | *(empty)* | Keys the masking fingerprint: empty keeps the unkeyed `length:hash`, any other value turns it into an HMAC-SHA256 under the key — same shape, same stability under the same key, guess-proof without it. A **secret**: supply it like one; the properties' `toString` redacts it. Ignored when a host pins its own `HeaderValueMasker` bean. |
-
-### 4.2 Header sections
-
-Each direction has one section with four lists; matching is case-insensitive throughout. The section
-is **masked by default** (ADR-0005): whatever it logs is rendered as a fingerprint unless the name is
-explicitly allowed in plaintext, so the debugging move `includes: ["*"]` costs readability, never
-confidentiality.
-
-| List | Semantics |
-|---|---|
-| `includes` | Names to log. **Empty logs nothing** (the safe default). The entry `*` logs every header the message carries, deduplicated case-insensitively. |
-| `excludes` | Names removed from the included set — meaningful mainly with `*`. An exclude always wins. `*` is rejected here at binding time (an empty `includes` already logs nothing). |
-| `masked` | Names whose **value** is replaced by what the `HeaderValueMasker` bean renders — by default a fingerprint `length:hex`, the character length plus the first 64 bits of the SHA-256 of the UTF-8 value, e.g. `18:930bbdc51b6aed5c` (a **pseudonym**, not anonymisation: equal values stay recognisable as equal; key it with `masking-key` to stop guess confirmation). **Default `["*"]`: every logged header is masked** (ADR-0005). Narrow it to names, or empty it to switch masking off — a visible decision. Masking affects only headers that are logged; listing a name here does not include it. |
-| `unmasked` | Names that appear in **plaintext** although `masked` covers them — the explicit allowlist of harmless names (`Content-Type`, `Accept`, a correlation id). An unmasked name always wins over a masked one. `*` is rejected here: the plaintext set is a list of names by design; to log everything in plaintext, empty `masked` instead. |
-
-Multi-valued headers are joined with `, `. The selected pairs are rendered into one display-only field
-per direction as `[Name:"value", Name2:"value2"]`; nothing is emitted when the selection is empty or no
-selected header is present.
-
-Request headers are selected at **wiring time**, after the correlation header was added, so a selected
-`X-Correlation-Id` shows what actually went out; response headers at **close**, so they reflect the
-response as received.
-
-### 4.3 Body logging and body measuring
-
-Per direction, a **mode** decides whether a body is logged and a **flag** decides whether its size is
-measured — independent of each other:
-
-| `log-*-body` | `measure-*-body-size` | Capture installed | Buffered | Effect |
-|---|---|---|---|---|
-| `never` | off | no | — | request body untouched; response stream passes through (read-failure guard only) |
-| `always` | off | yes, limit `max-body-bytes` | up to the limit | field logged on every line; no size sample |
-| `on-failure` | off | yes, limit `max-body-bytes` | up to the limit | field logged only when `adapter_outcome` is not `success` or the status is a 4xx; no size sample |
-| `never` | on | yes, limit `0` (count-only) | nothing | size sample recorded; no field |
-| `always` / `on-failure` | on | yes, limit `max-body-bytes` | up to the limit | both |
-
-**`on-failure` is the volume switch** ([ADR-0006](../../docs/adr/ADR-0006-bodies-logged-by-outcome.md)).
-`always` means every body of every call; what is nearly always wanted is bodies for the calls that went
-wrong — `failure`, `timeout` — which cuts the volume by orders of magnitude and hits exactly the
-lines a body is wanted for. The response side decides at emission, when the outcome is final. The request
-body flows before the outcome is known, so `on-failure` captures it exactly like `always` does (bounded by
-`max-body-bytes`) and discards it for a success: the capture is paid, the output is saved — and the output
-is what burdens the log pipeline. The gate is wider than the outcome vocabulary ([§5.3](#53-levels-and-outcomes)) by one status
-class: a `4xx` answer keeps its `success` outcome — the peer answered — but its bodies are logged in
-`on-failure`, because the client's error is exactly what the body explains; a `5xx` is `failure` and logs as
-well. A slow but healthy call stays `success` and logs no bodies.
-
-Rules that hold for every combination:
-
-- The request body is copied from the byte array the client hands over — complete and final; the
-  response tee is passive: bytes are counted and (up to the limit) copied as the application reads them.
-- An **unread response body** is logged as absent; no size sample is recorded.
-- Zero-byte bodies produce no field and no sample — the distribution describes bodies that exist.
-- Truncation is **byte-bounded**, and the decoder leaves an incomplete trailing multi-byte sequence
-  undecoded rather than rendering a replacement character: `…<prefix>... [truncated, 12345 bytes total]`.
-- The log charset is the one the `Content-Type` declares (request: the caller's; response: the peer's),
-  UTF-8 when absent or unparsable.
-- `measure-*` records what actually flowed, **exact beyond** `max-body-bytes`.
-- `measure-response-body-size` additionally records `adapter.response.body.read` — whether the application
-  consumed the body completely, partially, or not at all ([§5.4](#54-meters)).
-
-**Cardinality of the body meters.** The size summaries and the read-state counter are tagged `uri` and
-`host`. The `uri` tag is the URI template the client recorded — and only when it carries a placeholder:
-`RestClient` records whatever string was passed to `uri(String, ...)`, so a concatenated
-`uri("/things/" + id)` would otherwise put one tag value per id on the meter; such values fold to
-`UNKNOWN` (as does every `RestTemplate` call, which records no template). The `host` tag is
-caller-controlled and is **not** folded: a host that fans out to many peer hosts (webhooks, per-tenant
-endpoints) should leave the measuring properties off or accept one tag set per host in its registry.
-
-### 4.4 Activation: hosts and paths
-
-```
-active(uri) = uri.host not in exclude-hosts
-              AND (include-path-patterns is empty  OR  any pattern matches uri.path)
-              AND no exclude-path-prefix is a prefix of uri.path
-```
-
-An inactive call passes through **without any trace**: no correlation header, no MDC, no event, no gauge
-movement, no counters. Typical use:
-
-```yaml
-adapter-logging:
-  exclude-hosts:
-    - pushgateway.monitoring.svc
-    - config-server
-  exclude-path-prefixes:
-    - /internal/
-```
-
-`include-path-patterns` uses Spring's `PathPattern` syntax (`/api/**`, `/api/{*rest}`) against the request
-**path** whatever the host; `exclude-path-prefixes` is a prefix match; `exclude-hosts` an exact,
-case-insensitive match on the URI's host without port. Path matching sees the target the way a server
-router would — segments **decode for matching** — so `/%61pi/things` is included by `/api/**`,
-`/api%2Fthings` is not, and `/%61ctuator/health` is excluded by `/actuator/health`. The logged
-`adapter_url_path` stays raw.
-
-### 4.5 Logger levels
-
-Severity and semantic are decoupled: the level only decides how loud — and whether — a line is emitted;
-`adapter_outcome` carries the disposition ([§5.3](#53-levels-and-outcomes)). The level of the
-`logger-name` logger therefore acts as the runtime volume control:
-
-| `http-adapter-exchange` level | Emitted |
-|---|---|
-| `INFO` | every call |
-| `WARN` | failures (5xx), timeouts, slow calls — and thrown calls |
-| `ERROR` | only calls that threw (no response, or the body read failed) |
-| `OFF` | nothing — and no event is even assembled |
-
-Level and outcome are resolved **before** the event is built, so a disabled level costs no assembly, no
-header selection, no body decoding. Metrics are recorded **before** the level gate and are unaffected by
-it — except `adapter.logging.events`, which by definition counts emitted events only.
-
-### 4.6 Validation at startup
-
-`ClientLoggingProperties.init` and `HeaderLogProperties.init` reject, with a message naming the property:
-
-- blank `logger-name` or `correlation-id-header`;
-- a `correlation-id-header` that is not an RFC 9110 token (it is written onto every traceless request; an
-  engine that validates field names — the JDK client does — would reject a non-token per call, failing
-  the CALL, not merely the log line);
-- `max-body-bytes` ≤ 0;
-- a blank (whitespace-only) `masking-key` - empty means unkeyed, whitespace is a worthless secret;
-- `slow-request-threshold` < 1 ms (the logged duration has millisecond resolution);
-- blank entries in any list (`exclude-hosts` included);
-- `*` in an `excludes` or an `unmasked` list;
-- an unparsable `include-path-patterns` entry (parsed once at interceptor construction).
-
-### 4.7 Example configurations
-
-**Minimal production profile** — everything logged, telemetry peers excluded, slow threshold tightened:
-
-```yaml
-adapter-logging:
-  exclude-hosts:
-    - pushgateway.monitoring.svc
-  slow-request-threshold: 2s
-logging:
-  level:
-    http-adapter-exchange: INFO
-    eu.inqudium.legatium.restclient.logging: WARN
-```
-
-**Diagnostics profile** — headers with masked credentials, both bodies, arrival lines:
-
-```yaml
-adapter-logging:
-  log-request-start: true
-  log-request-body: always
-  log-response-body: always
-  max-body-bytes: 16384
-  request-headers:
-    includes: ["*"]
-    excludes: [Cookie]
-    unmasked: [Accept, Content-Type, X-Correlation-Id]   # everything else stays a fingerprint
-  response-headers:
-    includes: [Content-Type, Content-Length, Retry-After]
-    unmasked: [Content-Type, Content-Length, Retry-After]
-```
-
-**Production profile with bodies** — bodies only for the calls that went wrong; the request body is
-buffered up to `max-body-bytes` per call and dropped on success:
-
-```yaml
-adapter-logging:
-  log-request-body: on-failure
-  log-response-body: on-failure
-  max-body-bytes: 4096
-```
-
-**Metrics without log volume** — body sizes and consumption measured, only failures logged:
-
-```yaml
-adapter-logging:
-  measure-request-body-size: true
-  measure-response-body-size: true
-logging:
-  level:
-    http-adapter-exchange: WARN
-```
-
----
-
-## 5. Metrics and observation
-
-### 5.1 Log fields
-
-The structured fields of the completion event (the arrival line carries method, host, path, template,
-query and request headers without outcome/duration/status). The index types are those of the shared
-component template; `ClientLogFieldTest` in `legatium-common` keeps the shared enum in lockstep with it.
-
-| Field | Type | Index | doc_values | When present | Notes |
-|---|---|---|---|---|---|
-| `adapter_outcome` | keyword | yes | on | always | `success` / `failure` / `timeout` — the field dashboards split by; decoupled from the level |
-| `adapter_duration_ms` | long | yes | on | always | from the injected monotonic source; until response close |
-| `adapter_request_method` | keyword | yes | on | always | |
-| `adapter_response_status_code` | short | yes | on | when a response arrived | absent for a refused connection or a timeout before the status line (`-> -`) |
-| `adapter_url_host` | keyword | yes | on | when the URI has a host | `host` or `host:port` — the outbound coordinate |
-| `adapter_url_template` | keyword | yes | on | when `RestClient` recorded a template | the aggregation half of the path pair, e.g. `https://api.example.com/things/{id}` |
-| `adapter_url_path` | keyword | yes | **off** | always | the **raw** path as sent, ids and all — filter exactly, never group |
-| `adapter_url_query` | keyword | yes | **off** | when the request had one and `include-query-string` is on | raw, as sent |
-| `adapter_slow` | boolean | yes | on | only when the threshold was reached | absence means fast |
-| `adapter_request_headers` | keyword | **no** | off | when selected headers are present | display only, rendered `[Name:"value", …]` |
-| `adapter_response_headers` | keyword | **no** | off | when selected headers are present | display only |
-| `adapter_request_body` | keyword | **no** | off | when `log-request-body` admits the outcome and bytes were sent | display only, bounded |
-| `adapter_response_body` | keyword | **no** | off | when `log-response-body` admits the outcome and bytes were read | display only, bounded |
-
-Each field asserts the exact JVM type of its value (`ClientLogField.format`): a wrongly typed value
-drops **that field** with a warning on `eu.inqudium.legatium.common.ClientLogField`, never the event.
-
-The throwable of a failed call is attached to the event as its cause (`setCause`), so a structured
-encoder renders the stack trace alongside the fields.
-
-### 5.2 MDC keys
-
-Set by `MdcScope` around each emission and around the wire call ([§2.6](#26-mdc-coverage)):
-
-| Key | Value | Scope |
-|---|---|---|
-| `adapter_request_id` | the request id: the `traceparent` trace id, or the accepted/generated correlation id (ADR-0002) — always set | call; emission |
-| `adapter_method` | the HTTP method | same |
-| `adapter_route` | the request **target**: `scheme://host[:port]/path`, query excluded — for an outbound call the host is as much part of the route as the path | same |
-| `traceId` | trace id from `traceparent` | emission only (owned) |
-| `spanId` | parent-id from `traceparent` — the **local client span** the peer will see as its parent | emission only (owned) |
-
-`MdcScope` restores the previous value of every key on close, rolls back a partial install if the
-adapter throws mid-put, and restores best-effort on close with the first failure rethrown and later ones
-suppressed. It never removes keys it does not own: an inbound request's identity stays.
-
-### 5.3 Levels and outcomes
-
-Resolved in this order in `ExchangeLogEmitter`:
-
-| Condition | Level | `adapter_outcome` |
-|---|---|---|
-| the call threw and a timeout is in the cause chain ([§6.5](#65-timeouts-and-how-they-are-recognised)) | `WARN` | `timeout` |
-| the call threw (no response), or the body read threw | `ERROR` | `failure` |
-| status ≥ 500 without an exception (the peer answered; the application decides) | `WARN` | `failure` |
-| otherwise | `INFO` | `success` |
-| … and the duration reached `slow-request-threshold` | `INFO → WARN` | unchanged, plus `adapter_slow: true` |
-
-A 4xx is a `success` at INFO: the peer answered as designed, and whether a 404 is a problem is the
-application's call — the status is on the line for the dashboard to split by. Slowness raises severity;
-it never turns a completed call into a failure.
-
-### 5.4 Meters
-
-Six meters, all **consumed** from the host's `MeterRegistry` (an `ObjectProvider`; without one a private
-`SimpleMeterRegistry` absorbs the values). All fixed-tag meters are **pre-registered at construction**,
-so a `rate()` alert sees the zero before the first occurrence. Rates, latencies and status distributions
-are deliberately left to `http.client.requests` and the log fields.
-
-| Meter | Type | Tags | Meaning |
-|---|---|---|---|
-| `adapter.logging.failopen` | counter | `stage` = `emission` \| `arrival` \| `wiring` | Logging failures the fail-open path swallowed. `emission`: an exchange event was **lost**. `arrival`: a start line was lost. `wiring`: bookkeeping failed (pass-through degradation, a lost sample or counter) — the event usually still follows. A lost log line cannot report itself through the same pipeline; this counter is the independent channel. |
-| `adapter.logging.events` | counter | `outcome` = `success` \| `failure` \| `timeout` | Exchange events actually **emitted** on the exchange logger — after the level gate, arrival lines excluded. The reconciliation ground truth against the log index. |
-| `adapter.logging.exchanges.open` | gauge | `client=restclient` | Exchanges between interceptor entry (wiring) and response close. Hovers near the in-flight call count in health. Tagged per twin so that a host carrying both twins gets two gauges instead of Micrometer silently keeping the first one registered; sum over `client` for the total. |
-| `adapter.logging.correlation.id` | counter | `source` = `trace` \| `header` \| `generated` | Origin of each call's request id (ADR-0002). |
-| `adapter.response.body.read` | counter | `uri` = template, `UNKNOWN` without one; `host`; `state` = `unread` \| `partial` \| `complete` | How far the application **consumed** the response body, opt-in via `measure-response-body-size`. Recorded once per call that received a response — including bodiless consumption (`toBodilessEntity`), which is the `unread` share the counter exists to show. `partial` = the stream was opened but EOF was never observed (a converter that stopped early, an exception mid-read). Created lazily per tag set on first use. |
-| `adapter.request.body.size` / `adapter.response.body.size` | distribution summary, base unit `bytes` | `uri`, `host` | Bytes that **actually flowed**, opt-in via `measure-*-body-size`, independent of body logging and level. Exact beyond `max-body-bytes`. Zero-byte bodies record no sample. Created lazily per tag set on first use. |
-
-**Registration conflicts.** Micrometer rejects a registration whose id already exists with a different
-meter type. Rather than aborting the context (at construction) or suppressing an exchange event (at the
-lazy body-size registration), the conflicting meter falls back to a private registry, warned once per
-meter name on `eu.inqudium.legatium.restclient.logging.ClientLoggingMetrics`: the module keeps working and
-that meter is simply not exported.
-
-### 5.5 Reading the meters together
-
-The meters are designed to cover each other's blind spots:
-
-| Question | Signal |
-|---|---|
-| Are exchange events being lost **loudly** (something threw)? | `failopen{stage=emission}` > 0 |
-| Are exchange events being lost **silently** (nothing threw, a response was never closed)? | `exchanges.open` baseline grows monotonically instead of returning towards 0 |
-| Is the **log pipeline** (appender, broker, index) losing events? | `sum(adapter.logging.events)` over a window ≠ count of indexed `http-adapter-exchange` documents for the same window |
-| Did the application stop propagating identity onto its calls? | the `generated` share of `correlation.id` rises (in a host with tracing configured it is zero by construction — [§6.8](#68-tracing-makes-every-call-traced)) |
-| Is a call site discarding the payload it paid for? | the `unread` or `partial` share of `response.body.read{uri=...,host=...}` rises |
-| Are payloads growing beyond what the log captures? | `body.size` percentiles vs. `max-body-bytes` |
-| Which dependency is slow, or failing? | `adapter_url_host` on the log line, split by `adapter_outcome` — not a meter of this module; `http.client.requests` has the latency histogram |
-
-A suggested alert set:
-
-```promql
-# lost exchange events (hard failure)
-increase(adapter_logging_failopen_total{stage="emission"}[5m]) > 0
-
-# silently stuck exchanges (liveness) - tune the bound to the service's outbound concurrency
-min_over_time(adapter_logging_exchanges_open[15m]) > 50
-
-# timeouts per peer (from the log index, not a meter): adapter_outcome=timeout by adapter_url_host
-```
-
-Note on the gauge: a response the application holds open deliberately (a streaming download) is
-**intended** to stay open — that is the liveness signal working, not a leak to suppress
-([§6.3](#63-a-response-that-is-never-closed)).
-
-### 5.6 Trace correlation
-
-The module reads the **outgoing W3C `traceparent` header**, put on the request by the host's tracing
-propagation:
-
-```
-traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
-                 └──────── traceId ───────────────┘ └──── spanId ────┘
-```
-
-- `traceId` is the trace the client span runs under, published under Boot's logging-correlation key
-  `traceId`, so the log-to-trace join holds.
-- The header's parent-id is the span the peer will treat as its parent — which IS the local client span
-  of this call. It is published under Boot's local-span key `spanId`. (Inbound, Limesium publishes the
-  same header field as `parentSpanId`, because there it is the caller's span; the two projects are
-  consistent, not identical.)
-- Parsing follows the W3C Trace Context Recommendation strictly: lowercase hex of fixed length, no
-  all-zero ids, version `ff` forbidden, version `00` exactly four fields, higher versions parsed by the
-  version-00 rules for their first four fields. A non-conformant header is ignored — nothing is logged,
-  and the call counts as traceless for the identity decision. The conformance is pinned by
-  `traceparent/conformance.txt`, the same fixture Limesium uses.
-- Since ADR-0002 the trace id also **is** the call's `adapter_request_id`, and a traced call gets no
-  correlation header — the identity decision and the trace fields share the one strict parse.
-
-**Where the header comes from.** With Micrometer Tracing on the classpath, Boot's
-`RestClientObservationAutoConfiguration` (resp. the `RestTemplate` variant) registers the client
-observation; when the observation starts, the tracing handler opens the client span and **injects
-`traceparent` into the request headers** — and `RestClient` starts the observation *before* the
-interceptor chain runs, so every interceptor, this one included, sees the header. The tracing integration
-test pins that order beside a real Brave bridge; a Boot upgrade that changes it breaks the build rather
-than silently dropping trace ids.
-
----
-
-## 6. Special characteristics
-
-### 6.1 Differences to the WebClient twin
+### 4.1 Differences to the WebClient twin
 
 Everything not listed here behaves exactly as in `legatium-webclient-logging`.
 
@@ -1205,14 +650,14 @@ Everything not listed here behaves exactly as in `legatium-webclient-logging`.
 | URI template | recorded by `RestClient`; **never** by `RestTemplate` | recorded by `WebClient` |
 | Attachment | `RestClientCustomizer` + `RestTemplateCustomizer` | `WebClientCustomizer` |
 
-### 6.2 Duration is response occupancy
+### 4.2 Duration is response occupancy
 
 `adapter_duration_ms` runs from wiring (before the wire call) to response close (after the body was read
 and the client was done). A peer that answers the status line fast but streams the body slowly is slow
 by this measure — which is the truth an operator wants, and the same rule Limesium applies inbound
 (request occupancy). Bare round-trip latency is what `http.client.requests` already measures.
 
-### 6.3 A response that is never closed
+### 4.3 A response that is never closed
 
 The emission rests on the response being closed. `RestClient`'s `retrieve()`, `body(...)`, `toEntity(...)`
 and `exchange(..., close = true)` (the default) close in a `finally`; `RestTemplate` closes in
@@ -1223,7 +668,7 @@ stays **open on the gauge** `adapter.logging.exchanges.open`. A monotonically gr
 signal that responses are leaking — a resource leak in the host, visible through the module's liveness
 meter before it becomes a pool exhaustion.
 
-### 6.4 Failures while reading the body
+### 4.4 Failures while reading the body
 
 The status line arrived, then the connection died mid-body (a reset, a read timeout while streaming). The
 tee reports the `IOException` to the exchange and rethrows it unchanged; at close the event is
@@ -1231,7 +676,7 @@ tee reports the `IOException` to the exchange and rethrows it unchanged; at clos
 what happened, and hiding either half would mislead. The captured prefix of the body is logged as far as
 it flowed.
 
-### 6.5 Timeouts and how they are recognised
+### 4.5 Timeouts and how they are recognised
 
 A timeout is the one client-side disposition an operator reads differently from every other failure (the
 peer is slow, not broken), so it has its own outcome value at WARN. The shared `Timeouts` classification
@@ -1244,7 +689,7 @@ twin recognises Reactor Netty's read and connect timeouts without a Netty depend
 `SocketTimeoutException`; `RestClient` wraps once more into `ResourceAccessException` *after* the
 interceptor saw the original) — hence the chain walk. Anything else is a plain `failure`.
 
-### 6.6 RestTemplate has no URI template
+### 4.6 RestTemplate has no URI template
 
 `RestClient` records the URI template of a call made through `uri(String, Object...)` as a request
 attribute (`org.springframework.web.client.RestClient.uriTemplate`, mirrored by the module and pinned
@@ -1254,9 +699,9 @@ on the request, so `RestTemplate` calls log the path alone and their body meters
 `uri=UNKNOWN`. A host that wants the template on `RestTemplate` calls migrates to `RestClient`; the
 module does not reconstruct templates by guessing.
 
-### 6.7 Retries yield one line per attempt
+### 4.7 Retries yield one line per attempt
 
-The interceptor sits innermost ([§3.5](#35-interceptor-order-and-other-interceptors)), so a retrying
+The interceptor sits innermost ([§3.3](#33-interceptor-order-and-other-interceptors)), so a retrying
 interceptor (or a resilience decorator around the client) invokes it once per attempt. Each attempt is a
 crossing and gets its own line — with the same `adapter_request_id` under a trace, or a **new** generated
 id per attempt on a traceless call (each attempt wires afresh and the retried request already carries the
@@ -1264,7 +709,7 @@ first attempt's correlation header only if the retrying layer reuses the mutated
 request gets a new id). Dashboards counting calls per peer count attempts; `http.client.requests` does
 the same.
 
-### 6.8 Tracing makes every call traced
+### 4.8 Tracing makes every call traced
 
 With Micrometer Tracing configured, the client observation roots a trace whenever none is active, so
 **every** outbound call carries a `traceparent` — sampled or not (an unsampled trace still propagates,
@@ -1274,7 +719,7 @@ with flags `00`). Consequences: the module never generates a correlation id in s
 matter for the host's propagation configuration (baggage), not for this module — which stays neutral.
 Pinned by the tracing integration test.
 
-### 6.9 One metrics instance per registry
+### 4.9 One metrics instance per registry
 
 Micrometer deduplicates meters by id. A second `ClientLoggingMetrics` instance against the same registry
 would share the **counters** (increments merge) but not the **gauge**: the second gauge registration is
@@ -1282,7 +727,7 @@ silently ignored. Every interceptor therefore obtains its metrics owner through 
 several interceptors on one registry (a host wiring extra instances by hand) share one owner and the
 gauge reports the total across them.
 
-### 6.10 Masking is a fingerprint, not a secret
+### 4.10 Masking is a fingerprint, not a secret
 
 By default `masked` replaces a header value with `length:sha256-prefix64` — stable, so a masked token
 can still be correlated across events, across the two twins, and across the Limesium server line (same
@@ -1296,30 +741,34 @@ masker is the `HeaderValueMasker` bean ([§2.8](#28-injectable-collaborators)): 
 fixed `***` for no correlation at all) once, and both twins mask with it. The contract a replacement
 must keep: never return the plaintext.
 
-### 6.11 Shared code: legatium-common, inlined by Shade
+### 4.11 Shared code: legatium-common, inlined by Shade
 
 The byte-identical part of the twins' shared layer lives in the `legatium-common` module
 ([ADR-0003](../../docs/adr/ADR-0003-legatium-common-inlined-by-shade.md)): the `Traceparent` parser (with
 its tests and fuzz target), `HeaderLogProperties` (selection and masking fingerprint, with unit test and
 fuzz target), the `ClientLogField` enum with its builder extensions and the `ClientLoggingProperties`
-binding (ADR-0003 amendments), `Timeouts`,
-`NanoTimeSource`, `CorrelationIdGenerator`, `reportQuietly`/`failOpen`, the MDC keys and scope, and
-`BodyReadState`/`decodeTruncated`. The Maven Shade plugin inlines those classes into THIS jar at package
-time, the dependency-reduced POM drops the dependency, and `legatium-common` is never
-published — consumers keep adding exactly one artifact, and the shared classes stay `internal`
-(`-Xfriend-paths`; build from the reactor root or with `-am`).
+binding, `Timeouts`, `NanoTimeSource`, `CorrelationIdGenerator`, `CorrelationHeader`,
+`reportQuietly`/`failOpen`, the MDC keys and scope, `BodyReadState`/`decodeTruncated` - and, since the
+amendment of 2026-09-04, the metrics owner `ClientLoggingMetrics` (parameterised by the `ClientStack`:
+outcome vocabulary and `client` tag) and the activation `ClientActivation`, whose twin copies had
+converged to near-identity. The Maven Shade plugin inlines those classes into THIS jar at package time,
+the dependency-reduced POM drops the dependency, and `legatium-common` is never published — consumers
+keep adding exactly one artifact, and the shared classes stay `internal` (`-Xfriend-paths`; build from
+the reactor root or with `-am`).
 
-Everything whose twin copies genuinely differ stays deliberately duplicated: the metrics (per-stack
-outcome vocabulary and meter descriptions), the emitters and exchanges, interceptor vs. filter, and
-`BoundedBodyCapture` (two different concurrency designs). For those the accepted cost is
-unchanged: a change is a conscious port in both directions, and the lockstep tests catch *named* contract
-drift (keys, field names, meter names, message text), not behavioural drift inside near-identical code.
+Everything whose twin copies genuinely differ stays deliberately duplicated: the emitters and exchanges,
+interceptor vs. filter, and `BoundedBodyCapture` (two different concurrency designs).
+ADR-0003 names the threshold: a twin-paired file that reaches 90 % line similarity after neutralising the
+stack names is byte-identical enough to move, parameterised where it must differ. For the remainder the
+accepted cost is unchanged: a change is a conscious port in both directions, and the lockstep tests catch
+*named* contract drift (keys, field names, meter names, message text), not behavioural drift inside
+near-identical code.
 
 ---
 
-## 7. Appendix
+## 5. Appendix
 
-### 7.1 File map
+### 5.1 File map
 
 ```
 legatium-restclient-logging/
@@ -1335,7 +784,6 @@ legatium-restclient-logging/
     │   ├── CapturingClientHttpResponse.kt         response wrapper: body tee, read-failure report, close = emission
     │   ├── Exchange.kt                            per-exchange state and the exactly-once guards
     │   ├── ExchangeLogEmitter.kt                  arrival line and completion event
-    │   ├── ClientLoggingMetrics.kt                the six meters
     │   └── BoundedBodyCapture.kt                  bounded capture target, read state
     │   (ClientLoggingProperties, ClientLogFields, Traceparent, Timeouts, Mdc, NanoTimeSource,
     │    CorrelationIdGenerator, HeaderLogProperties, BodyCapture helpers and the fail-open guards
@@ -1359,11 +807,11 @@ lists every test with its rationale):
 Fuzzing of the shared `Traceparent` parser and header masking lives in legatium-common; the bounded
 capture's fuzz target lives here.
 
-### 7.2 Related documents
+### 5.2 Related documents
 
 - [`README.md`](../README.md) — module summary, field family, property table, meters.
 - [`legatium-webclient-logging/README.md`](../../legatium-webclient-logging/README.md) — the twin's
-  documentation; everything not listed in [§6.1](#61-differences-to-the-webclient-twin) applies there
+  documentation; everything not listed in [§4.1](#41-differences-to-the-webclient-twin) applies there
   unchanged.
 - [`/docs/adapter-logging-reference.yml`](../../docs/adapter-logging-reference.yml) — the complete commented
   configuration reference, bound by both twins.

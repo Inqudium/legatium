@@ -1,6 +1,9 @@
 package eu.inqudium.legatium.webclient.logging
 
+import eu.inqudium.legatium.common.ClientActivation
+import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
+import eu.inqudium.legatium.common.ClientStack
 import eu.inqudium.legatium.common.CorrelationHeader
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.HeaderValueMasker
@@ -9,16 +12,12 @@ import eu.inqudium.legatium.common.Traceparent
 import eu.inqudium.legatium.common.reportQuietly
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
-import org.springframework.http.server.PathContainer
 import org.springframework.web.reactive.function.client.ClientRequest
 import org.springframework.web.reactive.function.client.ClientResponse
 import org.springframework.web.reactive.function.client.ExchangeFilterFunction
 import org.springframework.web.reactive.function.client.ExchangeFunction
-import org.springframework.web.util.pattern.PathPattern
-import org.springframework.web.util.pattern.PathPatternParser
 import reactor.core.publisher.Mono
 import reactor.core.publisher.SignalType
-import java.net.URI
 
 /**
  * The WebClient twin of `legatium-restclient-logging`'s `ClientRequestLoggingInterceptor`: ONE
@@ -86,46 +85,17 @@ class ClientRequestLoggingFilter
         private val masker: HeaderValueMasker = HeaderValueMasker.DEFAULT,
     ) : ExchangeFilterFunction {
         /** Shared with the emitter and exposed for the tests; one owner per registry. */
-        internal val metrics = ClientLoggingMetrics.forRegistry(meterRegistry)
+        internal val metrics = ClientLoggingMetrics.forRegistry(meterRegistry, ClientStack.WEBCLIENT)
         private val emitter = ExchangeLogEmitter(properties, nanoTime, metrics, masker)
 
-        // Parsed ONCE at construction: an invalid pattern is a configuration error and fails the context
-        // start with the parser's message, instead of failing per call.
-        private val includePathPatterns: List<PathPattern> =
-            properties.includePathPatterns.map { PathPatternParser.defaultInstance.parse(it) }
-        private val excludedHosts: Set<String> = properties.excludeHosts.map { it.lowercase() }.toSet()
-
-        /**
-         * The filter is active for a call when its host is not excluded, its path matches ANY include
-         * pattern (empty includes = every call) and NO exclude prefix - an exclude always wins; identical
-         * semantics with the RestClient twin (decoded segments for matching, raw path in the log).
-         */
-        internal fun shouldNotFilter(uri: URI): Boolean {
-            if (excludedHosts.isNotEmpty() && uri.host?.lowercase() in excludedHosts) {
-                return true
-            }
-            if (includePathPatterns.isEmpty() && properties.excludePathPrefixes.isEmpty()) {
-                return false
-            }
-            val container = PathContainer.parsePath(uri.rawPath ?: "")
-            if (includePathPatterns.isNotEmpty() && includePathPatterns.none { it.matches(container) }) {
-                return true
-            }
-            if (properties.excludePathPrefixes.isEmpty()) {
-                return false
-            }
-            val decodedPath =
-                container.elements().joinToString("") { element ->
-                    if (element is PathContainer.PathSegment) element.valueToMatch() else element.value()
-                }
-            return properties.excludePathPrefixes.any { decodedPath.startsWith(it) }
-        }
+        // Activation is the shared implementation (ADR-0003): identical semantics on both stacks by construction.
+        private val activation = ClientActivation(properties)
 
         override fun filter(
             request: ClientRequest,
             next: ExchangeFunction,
         ): Mono<ClientResponse> {
-            if (shouldNotFilter(request.url())) {
+            if (activation.shouldNotFilter(request.url())) {
                 return next.exchange(request)
             }
             // Mono.defer around EVERYTHING, not only the connector call: wiring, the arrival line and the

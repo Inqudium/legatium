@@ -34,6 +34,11 @@ MODULE_DOCS = {
     "legatium-restclient-logging": ["GUIDE.md"],
     "legatium-webclient-logging": ["GUIDE.md"],
 }
+# The shared Legatium guide lives in the docs_dir itself (docs/GUIDE.md) so it renders on GitHub
+# with relative links to the module guides and READMEs; those links resolve on the site only in
+# a rewritten copy, so it is excluded from the build (mkdocs.yml exclude_docs) and generated to
+# docs/guides/GUIDE.md like a module guide with src_dir = docs/.
+SHARED_DOCS = ["GUIDE.md"]
 GITHUB_BLOB = "https://github.com/Inqudium/legatium/blob/main/"
 
 # Inline markdown links: ](target) or ](target#anchor). The guides use
@@ -48,12 +53,13 @@ PAGE_SOURCES = {
     for module, docs in MODULE_DOCS.items()
     for doc in docs
 }
+PAGE_SOURCES.update({(DOCS / doc).resolve(): ("", doc) for doc in SHARED_DOCS})
 
 
 def rewrite_doc(module: str, doc: str) -> None:
-    src_dir = REPO / module / "docs"
+    src_dir = (REPO / module / "docs") if module else DOCS
     src = src_dir / doc
-    out_dir = OUT_BASE / module
+    out_dir = (OUT_BASE / module) if module else OUT_BASE
     out_dir.mkdir(parents=True, exist_ok=True)
     referenced_assets: set[Path] = set()
 
@@ -64,7 +70,10 @@ def rewrite_doc(module: str, doc: str) -> None:
         resolved = (src_dir / target).resolve()
         if not resolved.exists():
             sys.exit(f"{src}: relative link target does not exist: {target}")
-        if resolved.is_relative_to(DOCS):
+        if resolved in PAGE_SOURCES and PAGE_SOURCES[resolved][0] == "":
+            # The shared guide: its generated copy is the page, not its excluded source.
+            new = os.path.relpath(OUT_BASE / PAGE_SOURCES[resolved][1], out_dir)
+        elif resolved.is_relative_to(DOCS):
             # Already a site page/file: point at it site-relatively.
             new = os.path.relpath(resolved, out_dir)
         elif resolved.parent == src_dir and resolved.suffix != ".md":
@@ -96,6 +105,8 @@ def rewrite_doc(module: str, doc: str) -> None:
 def main() -> None:
     if OUT_BASE.exists():
         shutil.rmtree(OUT_BASE)
+    for doc in SHARED_DOCS:
+        rewrite_doc("", doc)
     for module, docs in MODULE_DOCS.items():
         for doc in docs:
             rewrite_doc(module, doc)

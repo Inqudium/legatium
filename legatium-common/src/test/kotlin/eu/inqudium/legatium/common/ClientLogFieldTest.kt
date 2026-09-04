@@ -1,17 +1,9 @@
 package eu.inqudium.legatium.common
 
-import ch.qos.logback.classic.Level
-import ch.qos.logback.classic.Logger
-import ch.qos.logback.classic.spi.ILoggingEvent
-import ch.qos.logback.core.read.ListAppender
 import com.jayway.jsonpath.JsonPath
 import org.assertj.core.api.Assertions.assertThat
-import org.assertj.core.api.Assertions.catchThrowable
-import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
-import org.slf4j.LoggerFactory
 import org.springframework.core.io.ClassPathResource
 import java.nio.charset.StandardCharsets
 
@@ -149,7 +141,7 @@ class ClientLogFieldTest {
 
         @Test
         fun `should map the numeric and boolean shapes the code guarantees`() {
-            // Given / When / Then: the shape format() enforces in code and the type the index expects
+            // Given / When / Then: the shape each field declares and the type the index expects
             //   must describe the same value - long duration, short status (three digits, a label never
             //   summed), boolean flags
             assertThat(properties[ClientLogField.DURATION_MS.wireName]).containsEntry("type", "long")
@@ -169,85 +161,22 @@ class ClientLogFieldTest {
     }
 
     @Nested
-    inner class `Type guarantee` {
+    inner class `Declared shape` {
         @Test
-        fun `should pass a correctly typed value through unchanged`() {
-            // Given/When: values of the shape each field declares
-            // Then: format returns the identical value - checked, never converted
-            assertThat(ClientLogField.OUTCOME.format("success")).isEqualTo("success")
-            assertThat(ClientLogField.DURATION_MS.format(42L)).isEqualTo(42L)
-            assertThat(ClientLogField.RESPONSE_STATUS_CODE.format(200)).isEqualTo(200)
-            assertThat(ClientLogField.SLOW.format(true)).isEqualTo(true)
-        }
-
-        @Test
-        fun `should reject a value of the wrong type naming the field`() {
-            // Given/When: an Int where the mapping says long
-            val thrown = catchThrowable { ClientLogField.DURATION_MS.format(42) }
-
-            // Then: the rejection names the field and both types
-            assertThat(thrown)
-                .isInstanceOf(IllegalArgumentException::class.java)
-                .hasMessageContaining("adapter_duration_ms")
-                .hasMessageContaining("Long")
-                .hasMessageContaining("Int")
-        }
-    }
-
-    @Nested
-    inner class `Drop the field not the event` {
-        private val logger = LoggerFactory.getLogger("client-log-field-test") as Logger
-        private lateinit var appender: ListAppender<ILoggingEvent>
-
-        @BeforeEach
-        fun setUp() {
-            appender = ListAppender<ILoggingEvent>().apply { start() }
-            logger.addAppender(appender)
-            logger.level = Level.INFO
-        }
-
-        @AfterEach
-        fun tearDown() {
-            logger.detachAppender(appender)
-            appender.stop()
-        }
-
-        @Test
-        fun `should drop a badly typed field but keep the event and its other fields`() {
-            // What is tested: the fail-open contract of the addKeyValue(field, value) overload.
-            // Success criteria: the event is logged, the well-typed field survives, the ill-typed field is
-            //   absent - the statement never throws.
-            // Why it matters: the exchange line is the observability of the request path; a type slip in
-            //   one field must not take the whole statement (and the surrounding request) down with it.
-            // Given: the field logger observed as well, so the promised warning is verifiable
-            val fieldLogger = LoggerFactory.getLogger(ClientLogField::class.java) as Logger
-            val fieldAppender = ListAppender<ILoggingEvent>().apply { start() }
-            fieldLogger.addAppender(fieldAppender)
-            try {
-                // When: one well-typed and one ill-typed field on the same event
-                logger
-                    .atInfo()
-                    .setMessage("exchange")
-                    .addKeyValue(ClientLogField.OUTCOME, "success")
-                    .addKeyValue(ClientLogField.DURATION_MS, "not-a-long")
-                    .log()
-
-                // Then: the event survived with only the well-typed field, and ONE warning names the dropped one
-                val keyValues =
-                    appender.list
-                        .single()
-                        .keyValuePairs
-                        .associate { it.key to it.value }
-                assertThat(keyValues)
-                    .containsEntry("adapter_outcome", "success")
-                    .doesNotContainKey("adapter_duration_ms")
-                val warning = fieldAppender.list.single()
-                assertThat(warning.level).isEqualTo(Level.WARN)
-                assertThat(warning.formattedMessage).contains("adapter_duration_ms")
-            } finally {
-                fieldLogger.detachAppender(fieldAppender)
-                fieldAppender.stop()
-            }
+        fun `should accept exactly the JVM type each field declares`() {
+            // What is tested: the shape each field declares for the index template - what the lockstep
+            //   test maps and what the emitters pass.
+            // Success criteria: a value of the declared type is accepted, a value of another type (an Int
+            //   where the mapping says long) or null is not.
+            // Why it matters: the declared shape is what the component template maps; the emitters are
+            //   the only writers, so the declaration is a pin, not a runtime gate.
+            // Given/When/Then
+            assertThat(ClientLogField.OUTCOME.accepts("success")).isTrue()
+            assertThat(ClientLogField.DURATION_MS.accepts(42L)).isTrue()
+            assertThat(ClientLogField.RESPONSE_STATUS_CODE.accepts(200)).isTrue()
+            assertThat(ClientLogField.SLOW.accepts(true)).isTrue()
+            assertThat(ClientLogField.DURATION_MS.accepts(42)).isFalse()
+            assertThat(ClientLogField.OUTCOME.accepts(null)).isFalse()
         }
     }
 }

@@ -67,6 +67,9 @@ guides, Elasticsearch mapping, generated [test evidence](https://inqudium.github
 [API](https://inqudium.github.io/legatium/api/legatium-restclient-logging/)
 [references](https://inqudium.github.io/legatium/api/legatium-webclient-logging/).
 
+- [Legatium guide](docs/GUIDE.md) — everything that is one contract for both twins, written once:
+  prerequisites, dependency, overriding beans, logging backend, index mapping, configuration, fields,
+  MDC keys, meters, trace correlation.
 - [RestClient guide](legatium-restclient-logging/docs/GUIDE.md) — the long-form guide of the
   reference implementation: architecture, integration, configuration, metrics.
 - [WebClient guide](legatium-webclient-logging/docs/GUIDE.md) — the twin's guide, including

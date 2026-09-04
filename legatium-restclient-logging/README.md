@@ -21,15 +21,15 @@ code it inlines:
   `ClientLoggingReferenceConfigTest` in `legatium-common` against the one `ClientLoggingProperties`
   class both twins inline, so the namespace cannot drift from the code, and the twins cannot drift
   from each other by construction. The properties are explained in the guide's
-  [§4](docs/GUIDE.md#4-configuration).
+  [Legatium guide §6](../docs/GUIDE.md#6-configuration).
 - **Index mapping:** the one component template for both stacks is the repository-shared
   [`/docs/elk/`](../docs/elk/README.md) — bound by `ClientLogFieldTest` in `legatium-common` against
   the one `ClientLogField` enum both twins inline. The field table is the guide's
-  [§5.1](docs/GUIDE.md#51-log-fields).
+  [Legatium guide §7.1](../docs/GUIDE.md#71-log-fields).
 - **Metrics:** the same six meters (`adapter.logging.failopen`, `adapter.logging.events`,
   `adapter.logging.exchanges.open`, `adapter.logging.correlation.id`, `adapter.request/response.body.size`,
   `adapter.response.body.read`), consumed from the host's `MeterRegistry`, never exported. The meter
-  table is the guide's [§5.4](docs/GUIDE.md#54-meters).
+  table is the guide's [Legatium guide §7.4](../docs/GUIDE.md#74-meters).
 
 ## Deliberate stack differences
 
@@ -58,15 +58,16 @@ contract both twins ship, documented here and in this module's guide.
 
 The **byte-identical** part of the twins' shared layer (the `traceparent` parser with its fuzz target,
 the injectable time/id interfaces, the fail-open helpers, the MDC keys and scope, the header sections
-with the masking fingerprint, the timeout classification, the `adapter_*` field enum and the
-`adapter-logging.*` properties class) lives in the internal `legatium-common` module and is **inlined
+with the masking fingerprint, the timeout classification, the `adapter_*` field enum, the
+`adapter-logging.*` properties class, the metrics owner parameterised by the stack and the activation)
+lives in the internal `legatium-common` module and is **inlined
 into this jar** by the Maven Shade plugin
 ([ADR-0003](../docs/adr/ADR-0003-legatium-common-inlined-by-shade.md)): consumers add exactly one
 artifact, the published POM carries no extra dependency, and `legatium-common` itself is never
 published.
 
-Everything whose twin copies genuinely differ (metrics with their per-stack outcome vocabulary,
-emitters, exchanges, interceptor vs. filter, body capture with its own concurrency design)
+Everything whose twin copies genuinely differ (emitters, exchanges, interceptor vs. filter, body capture
+with its own concurrency design)
 stays **deliberately duplicated**: one twin per client, standalone jars, contract-level code that changes
 rarely. For that remainder every change is a conscious port in both directions; the pins in
 `TwinContractTest` (and, in `legatium-common`, `ClientLogFieldTest` / `ClientLoggingReferenceConfigTest`) catch *named* contract
@@ -78,8 +79,8 @@ near-identical code.
 The host must be a **Spring Boot 4.x** application on Java 21 with an SLF4J 2.x binding, an HTTP engine
 behind the request factory, and — for the automatic wiring below — Boot's `spring-boot-restclient`
 module. No web application is required: a batch job that calls out is a client too. The full list with
-the reasons is the guide's [prerequisites table](docs/GUIDE.md#31-prerequisites); how the `adapter_*`
-fields become visible in the log output is [§3.7](docs/GUIDE.md#37-logging-backend-and-structured-output).
+the reasons is the guide's [prerequisites table](../docs/GUIDE.md#1-prerequisites); how the `adapter_*`
+fields become visible in the log output is [Legatium guide §4](../docs/GUIDE.md#4-logging-backend-and-structured-output).
 
 ```xml
 <dependency>
@@ -97,7 +98,7 @@ logged, in one format); keep them at the same version, both jars inline the same
 
 ### Automatic wiring
 
-The long form is the guide's [§3.3](docs/GUIDE.md#33-automatic-wiring).
+The long form is the guide's [§3.1](docs/GUIDE.md#31-automatic-wiring).
 
 With `spring-boot-restclient` on the classpath (it comes with `spring-boot-starter-restclient` — since
 Boot 4 the web starters no longer pull it, so a host that only has `spring-boot-starter-web` must add
@@ -128,12 +129,12 @@ class LegacyThingsAdapter(builder: RestTemplateBuilder) { // Boot's RestTemplate
 The customizers are ordered late (`Ordered.LOWEST_PRECEDENCE - 10`), so the interceptor runs inside the
 interceptors of earlier customizers, closest to the wire: an authentication interceptor has already
 added its header, a retrying interceptor invokes it once per attempt
-([§3.5](docs/GUIDE.md#35-interceptor-order-and-other-interceptors)).
+([§3.3](docs/GUIDE.md#33-interceptor-order-and-other-interceptors)).
 
 ### Manual wiring
 
 The long form — including the switch-safe `ObjectProvider` variant and construction outside a Spring
-context — is the guide's [§3.4](docs/GUIDE.md#34-manual-wiring).
+context — is the guide's [§3.2](docs/GUIDE.md#32-manual-wiring).
 
 The interceptor bean `ClientRequestLoggingInterceptor` exists in every case; only its *attachment*
 depends on Boot's builders. Attach it yourself when a client does not pass through them:
@@ -170,9 +171,9 @@ class ThingsClientConfiguration {
 Reuse the one bean rather than constructing a second interceptor: the meters are identified by name,
 so all interceptors on one `MeterRegistry` share one metrics owner and the
 `adapter.logging.exchanges.open` gauge reports the total across them
-([§6.9](docs/GUIDE.md#69-one-metrics-instance-per-registry)). Replacing the interceptor itself (a
+([§4.9](docs/GUIDE.md#49-one-metrics-instance-per-registry)). Replacing the interceptor itself (a
 host-defined `ClientRequestLoggingInterceptor` bean) is a different thing: the automatic wiring still
-attaches the replacement ([§3.6](docs/GUIDE.md#36-overriding-beans)) — as it does for the other
+attaches the replacement ([Legatium guide §3](../docs/GUIDE.md#3-overriding-beans)) — as it does for the other
 overridable beans, `NanoTimeSource`, `CorrelationIdGenerator` and `HeaderValueMasker` (how masked header
 values render — a keyed HMAC, a fixed `***`), whose types live in the package
 `eu.inqudium.legatium.common`.
@@ -218,8 +219,8 @@ carries the request id alone and has sent it to the peer as `X-Correlation-Id`. 
 response shows `-> -` and no status field. Optional fields (`adapter_url_query`, `adapter_slow`, the
 header and body sections) are present only when they apply. Which encoder produces which shape — and
 why the default console pattern shows none of the fields — is the guide's
-[§3.7](docs/GUIDE.md#37-logging-backend-and-structured-output); the field family itself is documented
-once, in the guide's [§5.1](docs/GUIDE.md#51-log-fields), and mapped by the component template in
+[Legatium guide §4](../docs/GUIDE.md#4-logging-backend-and-structured-output); the field family itself is documented
+once, in the guide's [Legatium guide §7.1](../docs/GUIDE.md#71-log-fields), and mapped by the component template in
 [`/docs/elk/`](../docs/elk/README.md).
 
 ## Configuration (`adapter-logging.*`)
@@ -230,7 +231,7 @@ key at its default is the repository-shared
 [`/docs/adapter-logging-reference.yml`](../docs/adapter-logging-reference.yml) — copy the block and
 change only what you need; `ClientLoggingReferenceConfigTest` in `legatium-common` fails the build on
 any drift between that file and the class. The properties are explained in the guide's
-[§4](docs/GUIDE.md#4-configuration): the property reference, header sections, body logging and
+[Legatium guide §6](../docs/GUIDE.md#6-configuration): the property reference, header sections, body logging and
 measuring, activation by host and path, logger levels, validation at startup, and example
 configurations. `adapter-logging.enabled=false` removes the module without touching the classpath.
 
@@ -245,6 +246,6 @@ identity came from (trace, header, or generated), and — opt-in — how large t
 the application actually read them. Rates, latencies and status distributions are deliberately left to
 Boot's own `http.client.requests` and to the structured log fields.
 
-Every meter with its type, tags and meaning is the guide's [§5.4](docs/GUIDE.md#54-meters); how to read
-them together, with a suggested alert set, is [§5.5](docs/GUIDE.md#55-reading-the-meters-together). The
+Every meter with its type, tags and meaning is the guide's [Legatium guide §7.4](../docs/GUIDE.md#74-meters); how to read
+them together, with a suggested alert set, is [Legatium guide §7.5](../docs/GUIDE.md#75-reading-the-meters-together). The
 names are identical in both twins and pinned by `TwinContractTest`.

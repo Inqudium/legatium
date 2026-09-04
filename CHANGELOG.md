@@ -53,6 +53,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `http-adapter-exchange`, namespace `adapter-logging.*`. Code names keep
   their `Client*` form. Chosen over `client` (ECS names the remote party so),
   `upstream` (hop-relative) and `dependency` (Maven).
+- Architecture review of 2026-09-04, applied: the metrics owner
+  (`ClientLoggingMetrics`, parameterised by `ClientStack`) and the activation
+  (`ClientActivation`) are shared in `legatium-common` - the twin copies had
+  converged to 95 % / 96 % identity; ADR-0003 names the 90 % threshold and
+  decides the inlining stays through 1.0. The documentation follows the
+  content cut: one shared [Legatium guide](docs/GUIDE.md) for integration,
+  configuration, fields and meters, the module guides keep architecture,
+  wiring and stack specifics. The by-name timeout tests use the real Netty
+  classes (test-scoped) instead of a hand-assembled class file; the
+  RestClient twin has one exactly-once guard; the field enum declares its
+  wire shape for the lockstep test instead of gating at emission; the id
+  generator's narrative moved into ADR-0004.
 - Reactive body consumption vs. abandonment: a consumer that stops reading the
   body from within its own delivery - Spring's body skip for
   `bodyToMono(Void.class)` / `toEntity(Void.class)` / an unsupported media

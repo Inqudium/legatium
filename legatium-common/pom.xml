@@ -37,9 +37,32 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot</artifactId>
         </dependency>
+        <!-- The shared activation (PathPattern) and the shared metrics owner: both twins already
+             declare spring-web and micrometer-core themselves, so the inlined classes add nothing to a
+             consumer's dependency tree. -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.jetbrains.kotlin</groupId>
             <artifactId>kotlin-stdlib</artifactId>
+        </dependency>
+        <!-- Test-scoped, for the by-name timeout classification: the REAL Netty exception types
+             (versions from the Boot BOM) instead of a hand-assembled stand-in class file. -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-handler</artifactId>
+            <scope>test</scope>
         </dependency>
 
         <!-- JUnit + AssertJ + a real MDC-capable backend (Logback) for the

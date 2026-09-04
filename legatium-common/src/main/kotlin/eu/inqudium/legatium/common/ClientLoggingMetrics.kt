@@ -1,7 +1,5 @@
-package eu.inqudium.legatium.webclient.logging
+package eu.inqudium.legatium.common
 
-import eu.inqudium.legatium.common.BodyReadState
-import eu.inqudium.legatium.common.reportQuietly
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.DistributionSummary
 import io.micrometer.core.instrument.Gauge
@@ -10,34 +8,76 @@ import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.slf4j.LoggerFactory
 import java.lang.ref.WeakReference
+import java.util.EnumMap
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * The module's meters (the `*_METER` constants below), all fed from the host's registry. Every meter
- * here observes what neither `http.client.requests` nor the log fields can show; rates, latencies and
- * status distributions are deliberately left to those.
+ * The client stack a twin serves - the ONLY facts of the shared metrics owner that differ per twin: the
+ * `client` tag of the open-exchanges gauge, the outcome vocabulary of the events counter, and the
+ * wording of the gauge's description. Everything else about the six meters is one cross-stack contract
+ * (ADR-0003, amendment of 2026-09-04).
+ */
+internal enum class ClientStack(
+    /** The `client` tag value of the open-exchanges gauge. */
+    val tag: String,
+    /** The closed outcome vocabulary of this stack, pre-registered on the events counter. */
+    val outcomes: List<String>,
+    /** The stack's own wording of what an open exchange is. */
+    val openExchangesDescription: String,
+) {
+    RESTCLIENT(
+        "restclient",
+        listOf(ClientLoggingMetrics.OUTCOME_SUCCESS, ClientLoggingMetrics.OUTCOME_FAILURE, ClientLoggingMetrics.OUTCOME_TIMEOUT),
+        "Exchanges between interceptor entry and response close; a growing baseline means " +
+            "responses are not being closed and exchange events are silently lost",
+    ),
+    WEBCLIENT(
+        "webclient",
+        listOf(
+            ClientLoggingMetrics.OUTCOME_SUCCESS,
+            ClientLoggingMetrics.OUTCOME_FAILURE,
+            ClientLoggingMetrics.OUTCOME_TIMEOUT,
+            ClientLoggingMetrics.OUTCOME_CANCELLED,
+        ),
+        "Exchanges between filter entry and the response body's terminal signal; a growing " +
+            "baseline means response bodies are never consumed or released and exchange events " +
+            "are silently lost",
+    ),
+}
+
+/**
+ * The module's meters (the `*_METER` constants below), all fed from the host's registry - ONE
+ * implementation for both twins, parameterised by the [ClientStack] (ADR-0003, amendment of
+ * 2026-09-04: the two copies had converged to 95 % identity). Every meter here observes what neither
+ * `http.client.requests` nor the log fields can show; rates, latencies and status distributions are
+ * deliberately left to those.
  *
  * All fixed-tag meters are PRE-registered at construction: a `rate()` alert must see the zero before the
  * first occurrence, not a meter that springs into existence at the very moment it should already fire.
  *
- * ONE INSTANCE PER REGISTRY, enforced by [forRegistry]: Micrometer deduplicates meters by id, so a
- * second instance of this class against the same registry would share the counters (harmless -
+ * ONE INSTANCE PER REGISTRY AND STACK, enforced by [forRegistry]: Micrometer deduplicates meters by id,
+ * so a second instance of this class against the same registry would share the counters (harmless -
  * increments merge) but NOT the gauge: the second gauge registration is silently ignored and that
- * instance's open-exchange movements become invisible. Every filter therefore obtains its metrics
- * through [forRegistry], and filters on one registry share one owner - the gauge then reports the
- * total open exchanges across them.
+ * instance's open-exchange movements become invisible. Every interceptor or filter therefore obtains its
+ * metrics through [forRegistry], and entry points on one registry share one owner - the gauge then
+ * reports the total open exchanges across them. The two twins' gauges carry different `client` tags
+ * and therefore different ids, so a host carrying both twins gets both.
  *
- * FAIL-OPEN REGISTRATION: Micrometer rejects a registration whose id already exists with a different
- * meter type (a host or another library owning a `adapter.*` name). Unguarded, that throw at
- * construction would abort the application context - a logging library must not - and at the lazy
- * body-size registration would suppress the exchange event. Every registration therefore falls back to a
- * private [SimpleMeterRegistry] for the conflicting meter, logged once per meter name: the module keeps
- * working and the affected meter is simply not exported (twin parity with the RestClient module).
+ * FAIL-OPEN REGISTRATION - a decided trade: Micrometer rejects a registration whose id already exists
+ * with a different meter type (a host or another library owning an `adapter.*` name). Unguarded, that
+ * throw at construction would abort the application context - a logging library must not - and at the
+ * lazy body-size registration would suppress the exchange event. Every registration therefore falls
+ * back to a private [SimpleMeterRegistry] for the conflicting meter, logged once per meter name: the
+ * module keeps working and the affected meter is simply not exported. The alternatives were weighed
+ * (architecture review of 2026-09-04, finding 7): failing the context start contradicts the fail-open
+ * promise, and "not registering" needs a per-type no-op meter and is not simpler than one private
+ * registry. The scenario is rare; the shape stays because it is the cheapest one that never throws.
  */
 internal class ClientLoggingMetrics private constructor(
     private val meterRegistry: MeterRegistry,
+    private val stack: ClientStack,
 ) {
     private val fallbackRegistry = SimpleMeterRegistry()
     private val reportedConflicts: MutableSet<String> = ConcurrentHashMap.newKeySet()
@@ -84,7 +124,7 @@ internal class ClientLoggingMetrics private constructor(
     // ground truth to reconcile against the log index: any difference is loss in the log pipeline
     // (appender overflow, broker loss, index rejection), isolated from application behavior.
     private val eventCounters =
-        listOf(OUTCOME_SUCCESS, OUTCOME_FAILURE, OUTCOME_TIMEOUT, OUTCOME_CANCELLED).associateWith { outcome ->
+        stack.outcomes.associateWith { outcome ->
             registerOrFallback(EVENTS_METER) { registry ->
                 Counter
                     .builder(EVENTS_METER)
@@ -96,11 +136,11 @@ internal class ClientLoggingMetrics private constructor(
             }
         }
 
-    // The liveness check of the emission architecture itself: since the event is emitted at the body's
-    // terminal signal, everything rests on the application subscribing to (or releasing) every response
-    // body it was handed. A body that is never subscribed loses the event SILENTLY - nothing throws, so
-    // not even the fail-open counter sees it. This gauge (up at filter entry, down at completion) makes
-    // the assumption measurable.
+    // The liveness check of the emission architecture itself: the event is emitted when the exchange
+    // truly ends (response close, or the body's terminal signal), and everything rests on the
+    // application closing or consuming every response it was handed. A response that never ends loses
+    // the event SILENTLY - nothing throws, so not even the fail-open counter sees it. This gauge (up at
+    // entry, down at completion) makes the assumption measurable.
     private val openExchanges =
         AtomicLong(0).also { open ->
             registerOrFallback(OPEN_EXCHANGES_METER) { registry ->
@@ -109,12 +149,9 @@ internal class ClientLoggingMetrics private constructor(
                     // Tagged per twin: Micrometer deduplicates by id and would silently keep the FIRST
                     // gauge registered under a bare name, so in a host carrying both twins the second
                     // twin's open exchanges would vanish. Two ids, two gauges; sum over the tag for the total.
-                    .tag(CLIENT_TAG, "webclient")
-                    .description(
-                        "Exchanges between filter entry and the response body's terminal signal; a growing " +
-                            "baseline means response bodies are never consumed or released and exchange events " +
-                            "are silently lost",
-                    ).register(registry)
+                    .tag(CLIENT_TAG, stack.tag)
+                    .description(stack.openExchangesDescription)
+                    .register(registry)
             }
         }
 
@@ -141,9 +178,9 @@ internal class ClientLoggingMetrics private constructor(
     fun wiringFailure() = failOpenCounters.getValue(STAGE_WIRING).increment()
 
     /**
-     * Counts one EMITTED exchange event; [outcome] must be one of the [OUTCOME_SUCCESS] family. Guarded:
-     * the event is already on the logger when this runs, so a failing host counter must neither be
-     * reported as a lost emission nor disturb the caller.
+     * Counts one EMITTED exchange event; [outcome] must be one of this stack's [ClientStack.outcomes].
+     * Guarded: the event is already on the logger when this runs, so a failing host counter must
+     * neither be reported as a lost emission nor disturb the caller.
      */
     fun eventEmitted(outcome: String) = updateQuietly(EVENTS_METER) { eventCounters.getValue(outcome).increment() }
 
@@ -199,12 +236,11 @@ internal class ClientLoggingMetrics private constructor(
 
     /**
      * Counts one exchange under how far the application consumed the RESPONSE body, tagged by the
-     * low-cardinality URI template and the peer host - see [RESPONSE_BODY_READ_METER]. Created per
-     * `uri`/`host`/`state` on first use, like the body-size summaries (Micrometer deduplicates by id);
-     * recorded whenever a response capture exists in measuring mode and a response was received,
-     * INCLUDING answers the application released without reading - that is exactly the `unread` share
-     * the counter exists to show (a `releaseBody` DOES subscribe and drain, and counts as `complete`;
-     * only a body nobody ever subscribed to is `unread`).
+     * URI template and the peer host - see [RESPONSE_BODY_READ_METER]. Created per `uri`/`host`/`state`
+     * on first use, like the body-size summaries (Micrometer deduplicates by id); recorded whenever a
+     * response capture exists in measuring mode and a response was received, INCLUDING answers the
+     * application released without reading - that is exactly the `unread` share the counter exists to
+     * show.
      */
     fun responseBodyRead(
         template: String?,
@@ -252,24 +288,27 @@ internal class ClientLoggingMetrics private constructor(
         private val internalLog = LoggerFactory.getLogger(ClientLoggingMetrics::class.java)
 
         // Both sides weak: the KEY must not pin a host registry that outlives its context, and the
-        // VALUE is exactly what every filter already holds strongly - the owner lives as long as a
-        // filter using it does. Residual (accepted): when every filter of a still-live registry has
-        // been collected and a NEW one is wired against it afterwards, the fresh owner meets its own
-        // pre-registered meter ids again and the ignored-gauge case resurfaces - a churn pattern
-        // neither the auto-configuration nor per-test registries produce.
-        private val perRegistry = WeakHashMap<MeterRegistry, WeakReference<ClientLoggingMetrics>>()
+        // VALUE is exactly what every entry point already holds strongly - the owner lives as long as
+        // an interceptor or filter using it does. Residual (accepted): when every entry point of a
+        // still-live registry has been collected and a NEW one is wired against it afterwards, the
+        // fresh owner meets its own pre-registered meter ids again and the ignored-gauge case
+        // resurfaces - a churn pattern neither the auto-configurations nor per-test registries produce.
+        private val perRegistry = WeakHashMap<MeterRegistry, EnumMap<ClientStack, WeakReference<ClientLoggingMetrics>>>()
 
         /**
-         * The metrics owner for [registry] - created on first use, SHARED by every later caller with
-         * the same registry. Sharing is what keeps the open-exchanges gauge truthful when several
-         * filters run against one registry: a duplicate owner's gauge registration would be silently
-         * ignored (see the class documentation), a shared owner makes the gauge the total across its
-         * filters while the counters merge as before.
+         * The metrics owner for [registry] and [stack] - created on first use, SHARED by every later
+         * caller with the same registry and stack. Sharing is what keeps the open-exchanges gauge
+         * truthful when several entry points run against one registry: a duplicate owner's gauge
+         * registration would be silently ignored (see the class documentation), a shared owner makes
+         * the gauge the total across its entry points while the counters merge as before.
          */
-        fun forRegistry(registry: MeterRegistry): ClientLoggingMetrics =
+        fun forRegistry(
+            registry: MeterRegistry,
+            stack: ClientStack,
+        ): ClientLoggingMetrics =
             synchronized(perRegistry) {
-                perRegistry[registry]?.get()
-                    ?: ClientLoggingMetrics(registry).also { perRegistry[registry] = WeakReference(it) }
+                val owners = perRegistry.getOrPut(registry) { EnumMap(ClientStack::class.java) }
+                owners[stack]?.get() ?: ClientLoggingMetrics(registry, stack).also { owners[stack] = WeakReference(it) }
             }
 
         /**
@@ -299,11 +338,10 @@ internal class ClientLoggingMetrics private constructor(
          * Counter of exchanges by response-body consumption, tagged `uri` (template), `host` and `state`
          * (`unread` | `partial` | `complete`, see [BodyReadState]). The body tee mirrors CONSUMPTION,
          * not transmission: the logged body and the size sample describe the bytes the application read,
-         * so neither can tell a body the peer sent but the application ignored (a `toBodilessEntity`, an
-         * error status whose body was dropped) from one that was never sent. This counter is the one
-         * place that distinction is visible - a call site with a rising `unread` or `partial` share is
-         * discarding payload it paid for. Opt-in with `measure-response-body-size`, like the size
-         * summary.
+         * so neither can tell a body the peer sent but the application ignored from one that was never
+         * sent. This counter is the one place that distinction is visible - a call site with a rising
+         * `unread` or `partial` share is discarding payload it paid for. Opt-in with
+         * `measure-response-body-size`, like the size summary.
          */
         const val RESPONSE_BODY_READ_METER = "adapter.response.body.read"
 
@@ -314,21 +352,21 @@ internal class ClientLoggingMetrics private constructor(
          */
         const val UNTEMPLATED_URI = "UNKNOWN"
 
+        /** The `host` tag value for exchanges whose request URI carries no host. */
+        const val UNKNOWN_HOST = "UNKNOWN"
+
         /** The `client` tag of the open-exchanges gauge, distinguishing the two twins' gauges in one registry. */
         const val CLIENT_TAG = "client"
 
         /** The `uri` tag for a recorded template: the template itself when it carries a placeholder, [UNTEMPLATED_URI] otherwise. */
         fun uriTag(template: String?): String = template?.takeIf { '{' in it } ?: UNTEMPLATED_URI
 
-        /** The `host` tag value for exchanges whose request URI carries no host. */
-        const val UNKNOWN_HOST = "UNKNOWN"
-
         /**
-         * Gauge of exchanges between filter entry (wiring) and the exactly-once completion at the
-         * response body's terminal signal. Hovers near the in-flight call count in health; a
-         * monotonically growing baseline means response bodies are never subscribed to or released and
-         * exchange events are being lost SILENTLY - the one failure mode neither the fail-open counter
-         * (nothing throws) nor the events counter (no baseline) can see.
+         * Gauge of exchanges between entry (wiring) and the exactly-once completion, tagged `client`
+         * (`restclient` | `webclient`). Hovers near the in-flight call count in health; a monotonically
+         * growing baseline means exchanges never end and exchange events are being lost SILENTLY - the
+         * one failure mode neither the fail-open counter (nothing throws) nor the events counter (no
+         * baseline) can see.
          */
         const val OPEN_EXCHANGES_METER = "adapter.logging.exchanges.open"
 
@@ -339,17 +377,19 @@ internal class ClientLoggingMetrics private constructor(
          */
         const val CORRELATION_METER = "adapter.logging.correlation.id"
 
-        /** The closed outcome vocabulary - shared with the emitter, so counter keys and log field agree. */
+        /** The closed outcome vocabulary - shared with the emitters, so counter keys and log field agree. */
         const val OUTCOME_SUCCESS = "success"
         const val OUTCOME_FAILURE = "failure"
         const val OUTCOME_TIMEOUT = "timeout"
+
+        /** The reactive stack's own disposition - a subscription the caller abandoned; never emitted by the blocking twin. */
         const val OUTCOME_CANCELLED = "cancelled"
 
         private const val STAGE_EMISSION = "emission"
         private const val STAGE_ARRIVAL = "arrival"
         private const val STAGE_WIRING = "wiring"
 
-        /** The closed request-id source vocabulary of [CORRELATION_METER] - shared with the filter. */
+        /** The closed request-id source vocabulary of [CORRELATION_METER] - shared with the entry points. */
         const val REQUEST_ID_SOURCE_TRACE = "trace"
         const val REQUEST_ID_SOURCE_HEADER = "header"
         const val REQUEST_ID_SOURCE_GENERATED = "generated"

@@ -1,6 +1,5 @@
 package eu.inqudium.legatium.common
 
-import org.slf4j.LoggerFactory
 import org.slf4j.spi.LoggingEventBuilder
 import kotlin.reflect.KClass
 
@@ -20,9 +19,8 @@ import kotlin.reflect.KClass
  * in both directions.
  *
  * **Why an enum rather than string literals.** A literal repeated across call sites is a typo away from a
- * second, near-identical field no dashboard knows about; and beyond the name, a field owns its wire SHAPE,
- * so two call sites cannot disagree about the JSON type a field carries. [format] converts nothing - every
- * field goes on the wire exactly as supplied - it only GUARANTEES the type.
+ * second, near-identical field no dashboard knows about; and beyond the name, a field declares its wire
+ * SHAPE (the JVM type the index template maps), pinned by the lockstep test.
  *
  * The `adapter_` prefix keeps the family disjoint from the `endpoint_*` family the sibling project
  * limesium writes for INBOUND exchanges: one document may carry both (a client line emitted inside a
@@ -134,42 +132,23 @@ internal enum class ClientLogField(
 
     ;
 
-    /** Where a rejected value is reported, since [addKeyValue] swallows the rejection rather than propagating it. */
-    val log = LoggerFactory.getLogger(ClientLogField::class.java)
-
     /**
-     * The exact shape this field puts on the wire: [value] itself with its type asserted - see the class
-     * comment. No conversion, by design: a value of the wrong type is rejected, never coerced.
+     * Whether [value] has the exact JVM type this field puts on the wire - the shape the index template
+     * maps. Consulted by `ClientLogFieldTest` for the lockstep pin, not at emission: the emitters are the
+     * only callers of [addKeyValue] and pass values of the declared types, so a runtime gate over the
+     * module's own code guarded a case the tests already exclude (architecture review of 2026-09-04).
      */
-    fun format(value: Any?): Any =
-        if (value != null && type.isInstance(value)) {
-            value
-        } else {
-            throw IllegalArgumentException(
-                "Structured log field $wireName expects ${type.simpleName}, got ${value?.let { it::class.simpleName } ?: "null"}",
-            )
-        }
+    fun accepts(value: Any?): Boolean = value != null && type.isInstance(value)
 }
 
 /**
- * Adds a field to a log event under its wire name, rendered by the field itself. The overload exists so a
- * call site names the field rather than a string, and cannot reach the event with an unrendered value by
- * spelling the key by hand.
- *
- * A rejected value costs THIS FIELD and a warning naming it, never the log call it was part of: the
- * exchange line is the observability of the outbound call, and letting a type slip take the whole
- * statement down would remove it exactly when it is needed.
+ * Adds a field to a log event under its wire name. The overload exists so a call site names the field
+ * rather than a string, and cannot reach the event with a misspelled key.
  */
 internal fun LoggingEventBuilder.addKeyValue(
     field: ClientLogField,
     value: Any?,
-): LoggingEventBuilder =
-    try {
-        addKeyValue(field.wireName, field.format(value))
-    } catch (e: IllegalArgumentException) {
-        field.log.warn(e.toString())
-        this
-    }
+): LoggingEventBuilder = addKeyValue(field.wireName, value)
 
 /** As [addKeyValue], but leaves the field off the event when [value] is null - for optional fields in a single builder chain. */
 internal fun LoggingEventBuilder.addKeyValueIfPresent(

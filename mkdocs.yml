@@ -32,6 +32,9 @@ theme:
 
 # Internal analysis reports - not site pages (tabellarium template pattern).
 exclude_docs: |
+  # The shared guide's SOURCE: it links to the module guides and READMEs relatively, which
+  # only the generated copy under guides/ (links rewritten) can resolve on the site.
+  GUIDE.md
   assessment/
 
 nav:
@@ -42,6 +45,7 @@ nav:
   # Docs workflow; not checked in - run the script before building
   # locally, or the --strict build fails (which is the guard against a
   # hand-maintained, drifting copy).
+  - Legatium guide: guides/GUIDE.md
   - RestClient guide: guides/legatium-restclient-logging/GUIDE.md
   - WebClient guide: guides/legatium-webclient-logging/GUIDE.md
   - Elasticsearch mapping: elk/README.md

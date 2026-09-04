@@ -43,14 +43,11 @@ internal class Exchange(
     val traceId: String? = null,
     val spanId: String? = null,
 ) {
-    /** The exactly-once guard of the emission; whoever wins the CAS emits. */
-    val logged = AtomicBoolean(false)
-
     /**
-     * The exactly-once guard of the COMPLETION bookkeeping (gauge close + emission trigger): the
-     * response close and the no-response failure path can never both happen for one exchange, but a
-     * response closed twice can - whoever wins this CAS completes. [logged] stays the emitter's own
-     * inner backstop.
+     * The exactly-once guard of the COMPLETION (gauge close + emission): the response close and the
+     * no-response failure path can never both happen for one exchange, but a response closed twice can -
+     * whoever wins this CAS completes, and the emitter trusts it (one guard, like the reactive twin's
+     * state machine).
      */
     val completed = AtomicBoolean(false)
 

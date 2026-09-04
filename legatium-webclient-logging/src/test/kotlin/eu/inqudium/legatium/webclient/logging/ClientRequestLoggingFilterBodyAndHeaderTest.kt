@@ -1,6 +1,7 @@
 package eu.inqudium.legatium.webclient.logging
 
 import eu.inqudium.legatium.common.BodyLogMode
+import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.HeaderLogProperties

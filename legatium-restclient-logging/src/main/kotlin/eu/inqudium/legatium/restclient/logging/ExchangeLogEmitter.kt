@@ -1,6 +1,7 @@
 package eu.inqudium.legatium.restclient.logging
 
 import eu.inqudium.legatium.common.ClientLogField
+import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.MdcKeys
@@ -101,8 +102,8 @@ internal class ExchangeLogEmitter(
     /**
      * The single emission point of the completion event, called exclusively from the interceptor's
      * exactly-once completion - at response close, or right away when the call produced no response -
-     * so status, response headers and captures are FINAL. The [Exchange.logged] guard backstops to
-     * exactly-once.
+     * so status, response headers and captures are FINAL; the interceptor's [Exchange.completed] CAS is
+     * the one exactly-once guard.
      *
      * The emission runs under the exchange's MDC (an ADDITIVE overlay: an inbound request's identity or
      * a bridge's keys on the thread stay visible beside it), so the encoder emits the request id as an
@@ -111,10 +112,7 @@ internal class ExchangeLogEmitter(
      * the exchange.
      */
     fun logExchange(exchange: Exchange) {
-        if (!exchange.logged.compareAndSet(false, true)) {
-            return
-        }
-        // The fail-open guard covers EVERYTHING after the exactly-once CAS: the pre-gate section reads
+        // The fail-open guard covers EVERYTHING after the interceptor's exactly-once CAS: the pre-gate section reads
         // host-provided beans (the time source) and the response object - an exception there must not
         // escape into the client's close path and lose the event WITHOUT the emission counter seeing it.
         failOpen(
