@@ -18,8 +18,8 @@ adapter-logging:
   # Logger the exchange events are emitted on. The level of THIS logger decides which calls are
   # visible: INFO shows every call, WARN keeps only failures, timeouts, cancellations and slow calls,
   # ERROR only calls that threw (see `logging.level` below). Deliberately distinct from the sibling
-  # project limesium's `http-exchange`, so inbound and outbound streams route independently.
-  logger-name: http-adapter-exchange
+  # project limesium's `endpoint-http-exchange`, so inbound and outbound streams route independently.
+  logger-name: adapter-http-exchange
 
   # Header the correlation id is read from on TRACELESS calls only (ADR-0002): an outgoing request with
   # a conformant W3C traceparent (put there by the host's tracing propagation) takes its request id from
@@ -160,7 +160,7 @@ logging:
     # cancellations and slow calls; ERROR = only calls that threw. Severity and semantic are decoupled:
     # dashboards key on the `adapter_outcome` field, the level only decides how loud - and whether - a
     # line is emitted.
-    http-adapter-exchange: INFO
+    adapter-http-exchange: INFO
     # The module's own logger: the immediate WARN breadcrumb when a call throws, and errors of the
     # logging itself. Keep at WARN or lower - silencing it hides the breadcrumb.
     eu.inqudium.legatium.restclient.logging: WARN

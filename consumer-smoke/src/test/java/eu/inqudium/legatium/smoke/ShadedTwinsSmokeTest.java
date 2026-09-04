@@ -37,7 +37,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 @SpringBootTest(classes = SmokeApplication.class, webEnvironment = SpringBootTest.WebEnvironment.NONE)
 class ShadedTwinsSmokeTest {
     private static final String SHARED_CLASS = "eu/inqudium/legatium/common/ClientLoggingMetrics.class";
-    private static final String EXCHANGE_LOGGER = "http-adapter-exchange";
+    private static final String EXCHANGE_LOGGER = "adapter-http-exchange";
 
     private static HttpServer peer;
 

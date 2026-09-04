@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class ClientRequestLoggingInterceptorBodyAndHeaderTest {
     private val ticker = AtomicLong(0)
-    private val base = ClientLoggingProperties(loggerName = "http-adapter-exchange-body-header-test")
+    private val base = ClientLoggingProperties(loggerName = "adapter-http-exchange-body-header-test")
     private lateinit var log: CapturedLogger
 
     @BeforeEach

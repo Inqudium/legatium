@@ -36,7 +36,7 @@ class TwinContractTest {
         // Why it matters: plain-text appenders and the README's parity promise key on this text; a
         //   divergence in one twin would otherwise ship silently.
         // Given
-        val properties = ClientLoggingProperties(loggerName = "http-adapter-exchange-twin-message-test", logRequestStart = true)
+        val properties = ClientLoggingProperties(loggerName = "adapter-http-exchange-twin-message-test", logRequestStart = true)
         val interceptor = ClientRequestLoggingInterceptor(properties, { 0L }, { "generated-42" }, SimpleMeterRegistry())
         val log = CapturedLogger(properties.loggerName)
         try {

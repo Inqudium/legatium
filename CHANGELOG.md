@@ -50,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `endpoint` ([ADR-0007](docs/adr/ADR-0007-adapter-is-the-operator-vocabulary.md)):
   fields `adapter_*`, MDC keys `adapter_request_id` / `adapter_method` /
   `adapter_route`, meters `adapter.logging.*` and `adapter.*.body.*`, logger
-  `http-adapter-exchange`, namespace `adapter-logging.*`. Code names keep
+  `adapter-http-exchange`, namespace `adapter-logging.*`. Code names keep
   their `Client*` form. Chosen over `client` (ECS names the remote party so),
   `upstream` (hop-relative) and `dependency` (Maven).
 - Architecture review of 2026-09-04, applied: the metrics owner

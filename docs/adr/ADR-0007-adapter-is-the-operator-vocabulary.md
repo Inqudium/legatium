@@ -38,7 +38,7 @@
    `adapter_request_id` / `adapter_method` / `adapter_route`, meters
    `adapter.logging.*` / `adapter.request.body.size` /
    `adapter.response.body.size` / `adapter.response.body.read`, logger
-   `http-adapter-exchange`, property namespace `adapter-logging.*`, the
+   `adapter-http-exchange`, property namespace `adapter-logging.*`, the
    Elasticsearch component template and the reference configuration.
 3. Code names are unchanged: packages, `ClientLogField`,
    `ClientLoggingProperties`, `ClientRequestLoggingInterceptor`,
@@ -55,3 +55,13 @@
 - No migration: the rename lands before the first release. The ELK README
   states the ECS distinction once, for readers who arrive with the ECS
   meaning of "client" in mind.
+
+## Amendment (2026-09-05): the logger name leads with the vocabulary word
+
+The default logger name was `http-adapter-exchange`; it is now
+`adapter-http-exchange`, so that the logger, like every field, MDC key,
+meter and property of this family, starts with `adapter`. An operator
+filtering a log index by prefix sees the adapter family as one block, and
+limesium's `endpoint-http-exchange` is the inbound block beside it. Still before the
+first release, so no migration; the reference configuration, the guides and
+the twin message tests carry the new default.

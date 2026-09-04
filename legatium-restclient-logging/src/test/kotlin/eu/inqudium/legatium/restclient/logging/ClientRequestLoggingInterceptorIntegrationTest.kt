@@ -67,7 +67,7 @@ class ClientRequestLoggingInterceptorIntegrationTest {
 
     @BeforeEach
     fun setUp() {
-        log = CapturedLogger("http-adapter-exchange")
+        log = CapturedLogger("adapter-http-exchange")
         peer.received.clear()
     }
 

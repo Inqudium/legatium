@@ -37,7 +37,7 @@ class ClientRequestLoggingInterceptorTest {
     private val meterRegistry = SimpleMeterRegistry()
     private val properties =
         ClientLoggingProperties(
-            loggerName = "http-adapter-exchange-core-test",
+            loggerName = "adapter-http-exchange-core-test",
             slowRequestThreshold = Duration.ofMillis(200),
         )
     private val interceptor =

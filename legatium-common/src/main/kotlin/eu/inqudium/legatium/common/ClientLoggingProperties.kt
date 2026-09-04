@@ -27,7 +27,7 @@ data class ClientLoggingProperties(
      * so log routing and level configuration can target exactly these lines - and can never collide
      * with an inbound exchange logger of the host.
      */
-    val loggerName: String = "http-adapter-exchange",
+    val loggerName: String = "adapter-http-exchange",
     /**
      * Header the correlation id is read from on TRACELESS calls (no conformant `traceparent` on the
      * outgoing request - ADR-0002); when absent or blank a new id is generated AND SENT to the peer on

@@ -33,7 +33,7 @@ class ClientRequestLoggingTracingIntegrationTest {
     @Autowired
     private lateinit var tracer: Tracer
 
-    private val logger = LoggerFactory.getLogger("http-adapter-exchange") as Logger
+    private val logger = LoggerFactory.getLogger("adapter-http-exchange") as Logger
     private lateinit var appender: AwaitingAppender
 
     @BeforeEach

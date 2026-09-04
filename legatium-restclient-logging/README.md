@@ -181,7 +181,7 @@ values render — a keyed HMAC, a fixed `***`), whose types live in the package
 
 ### The exchange line
 
-On the `http-adapter-exchange` logger a completed exchange is one event. In a plain-text appender only
+On the `adapter-http-exchange` logger a completed exchange is one event. In a plain-text appender only
 the message shows; it repeats the gist inline for exactly that case:
 
 ```
@@ -195,7 +195,7 @@ fields next to the encoder's own envelope:
 ```json
 {
   "@timestamp": "2026-09-04T13:54:58.534Z",
-  "log": { "level": "INFO", "logger": "http-adapter-exchange" },
+  "log": { "level": "INFO", "logger": "adapter-http-exchange" },
   "process": { "pid": 4711, "thread": { "name": "http-nio-8080-exec-3" } },
   "service": { "name": "things-service" },
   "message": "Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",

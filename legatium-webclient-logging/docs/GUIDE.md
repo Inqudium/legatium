@@ -99,7 +99,7 @@ emission, metrics — can ever fail, delay or alter the call it describes.
 
 ### 1.3 The exchange line
 
-On the logger `http-adapter-exchange` (configurable) a completed exchange looks like this in a plain-text
+On the logger `adapter-http-exchange` (configurable) a completed exchange looks like this in a plain-text
 appender:
 
 ```
@@ -114,7 +114,7 @@ key-values that a structured encoder turns into fields:
 {
   "message": "Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
   "level": "INFO",
-  "logger": "http-adapter-exchange",
+  "logger": "adapter-http-exchange",
   "adapter_outcome": "success",
   "adapter_duration_ms": 17,
   "adapter_request_method": "POST",
@@ -592,7 +592,7 @@ the RestClient twin.
    webClientBuilder.baseUrl("https://httpbin.org").build().get().uri("/get").retrieve().bodyToMono(String::class.java).block()
    ```
 
-   Expect one `http-adapter-exchange` line with `adapter_request_id=…`. Without tracing configured, the
+   Expect one `adapter-http-exchange` line with `adapter_request_id=…`. Without tracing configured, the
    peer received an `X-Correlation-Id` with that id (httpbin echoes request headers in its body). With
    Micrometer Tracing configured, expect `traceId=… spanId=…` on the line and **no** `X-Correlation-Id`
    at the peer (ADR-0002).

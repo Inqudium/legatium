@@ -39,7 +39,7 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class ClientRequestLoggingFilterBodyAndHeaderTest {
     private val ticker = AtomicLong(0)
-    private val base = ClientLoggingProperties(loggerName = "http-adapter-exchange-reactive-body-header-test")
+    private val base = ClientLoggingProperties(loggerName = "adapter-http-exchange-reactive-body-header-test")
     private lateinit var log: CapturedLogger
 
     @BeforeEach

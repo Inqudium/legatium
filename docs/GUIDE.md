@@ -81,7 +81,7 @@ logged, in one format); keep them at the same version, both jars inline the same
 
 That is all: the auto-configuration registers the interceptor or filter and its customizers (the twin
 guides describe the automatic and the manual wiring), every call through a Boot-built client is logged
-on the `http-adapter-exchange` logger at INFO, the request id comes from the `traceparent` trace id
+on the `adapter-http-exchange` logger at INFO, the request id comes from the `traceparent` trace id
 (traceless calls send an `X-Correlation-Id` instead —
 [ADR-0002](adr/ADR-0002-trace-id-is-the-request-id.md)), and the six meters are registered in the
 host's `MeterRegistry` if one exists.
@@ -167,7 +167,7 @@ rest; which one fits depends on where the output goes.
 ```
 
 ```
-13:54:58.534 INFO  [http-nio-8080-exec-3] http-adapter-exchange - Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf9… traceId=4bf9… spanId=00f0…] adapter_outcome=success adapter_duration_ms=17 adapter_request_method=POST adapter_response_status_code=200 adapter_url_host=api.example.com adapter_url_path=/things/42 adapter_url_template=https://api.example.com/things/{id} [adapter_method=POST, adapter_request_id=4bf9…, adapter_route=https://api.example.com/things/42, endpoint_request_id=4bf9…, traceId=4bf9…, spanId=00f0…]
+13:54:58.534 INFO  [http-nio-8080-exec-3] adapter-http-exchange - Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf9… traceId=4bf9… spanId=00f0…] adapter_outcome=success adapter_duration_ms=17 adapter_request_method=POST adapter_response_status_code=200 adapter_url_host=api.example.com adapter_url_path=/things/42 adapter_url_template=https://api.example.com/things/{id} [adapter_method=POST, adapter_request_id=4bf9…, adapter_route=https://api.example.com/things/42, endpoint_request_id=4bf9…, traceId=4bf9…, spanId=00f0…]
 ```
 
 (On the reactive stack the thread reads `reactor-http-epoll-2` or the like; the line is otherwise identical.)
@@ -204,7 +204,7 @@ logging:
     format:
       console: ecs      # or logstash, gelf
   level:
-    http-adapter-exchange: INFO
+    adapter-http-exchange: INFO
     eu.inqudium.legatium.restclient.logging: WARN   # resp. eu.inqudium.legatium.webclient.logging
 ```
 
@@ -258,7 +258,7 @@ by construction.
 | Property | Type | Default | Meaning |
 |---|---|---|---|
 | `enabled` | boolean | `true` | Master switch. `false` makes the auto-configuration back off — no interceptor or filter, no customizers, no beans. A context-start decision, not a runtime toggle. |
-| `logger-name` | string | `http-adapter-exchange` | Logger of the arrival line and the exchange event. Its level is the runtime volume control ([§6.5](#65-logger-levels)). Distinct from Limesium's `http-exchange` by design. |
+| `logger-name` | string | `adapter-http-exchange` | Logger of the arrival line and the exchange event. Its level is the runtime volume control ([§6.5](#65-logger-levels)). Distinct from Limesium's `http-exchange` by design. |
 | `correlation-id-header` | string (RFC 9110 token) | `X-Correlation-Id` | Header read from a **traceless** request (no conformant `traceparent` — ADR-0002); when absent, or outside the acceptance rule (at most 200 visible-ASCII characters, ADR-0002 amendment), an id is generated and SET on the request under this name so the peer can quote it. A traced call takes its request id from the `traceparent` trace id, ignores this header and adds nothing. |
 | `include-query-string` | boolean | `true` | Log the query string as its own field `adapter_url_query` (never part of the path). Disable when query parameters may carry personal data. |
 | `log-request-start` | boolean | `false` | Additionally log an arrival line before the call, at INFO, under the emission MDC. Carries no outcome/status/duration. |
@@ -389,7 +389,7 @@ Severity and semantic are decoupled: the level only decides how loud — and whe
 `adapter_outcome` carries the disposition ([§7.3](#73-levels-and-outcomes)). The level of the
 `logger-name` logger therefore acts as the runtime volume control:
 
-| `http-adapter-exchange` level | Emitted |
+| `adapter-http-exchange` level | Emitted |
 |---|---|
 | `INFO` | every call |
 | `WARN` | failures (5xx), timeouts, slow calls, cancellations (reactive stack) — and thrown or errored calls |
@@ -426,7 +426,7 @@ adapter-logging:
   slow-request-threshold: 2s
 logging:
   level:
-    http-adapter-exchange: INFO
+    adapter-http-exchange: INFO
     eu.inqudium.legatium.restclient.logging: WARN   # resp. eu.inqudium.legatium.webclient.logging
 ```
 
@@ -465,7 +465,7 @@ adapter-logging:
   measure-response-body-size: true
 logging:
   level:
-    http-adapter-exchange: WARN
+    adapter-http-exchange: WARN
 ```
 
 ---
@@ -577,7 +577,7 @@ The meters are designed to cover each other's blind spots:
 |---|---|
 | Are exchange events being lost **loudly** (something threw)? | `failopen{stage=emission}` > 0 |
 | Are exchange events being lost **silently** (nothing threw; a response was never closed, a body never consumed)? | `exchanges.open` baseline grows monotonically instead of returning towards 0 |
-| Is the **log pipeline** (appender, broker, index) losing events? | `sum(adapter.logging.events)` over a window ≠ count of indexed `http-adapter-exchange` documents for the same window |
+| Is the **log pipeline** (appender, broker, index) losing events? | `sum(adapter.logging.events)` over a window ≠ count of indexed `adapter-http-exchange` documents for the same window |
 | Did the application stop propagating identity onto its calls? | the `generated` share of `correlation.id` rises (in a host with tracing configured it is zero by construction — [§7.6](#76-trace-correlation)) |
 | Are callers abandoning their own calls (operator timeouts, disconnects)? — reactive stack | `events{outcome=cancelled}` rises while `timeout` does not |
 | Is a call site discarding the payload it paid for? | the `unread` or `partial` share of `response.body.read{uri=...,host=...}` rises |

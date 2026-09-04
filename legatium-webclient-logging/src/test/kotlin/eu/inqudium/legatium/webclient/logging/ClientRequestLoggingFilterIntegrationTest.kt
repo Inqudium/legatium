@@ -53,7 +53,7 @@ class ClientRequestLoggingFilterIntegrationTest {
     @Autowired
     private lateinit var webClientBuilder: WebClient.Builder
 
-    private val logger = LoggerFactory.getLogger("http-adapter-exchange") as Logger
+    private val logger = LoggerFactory.getLogger("adapter-http-exchange") as Logger
     private lateinit var appender: AwaitingAppender
 
     @BeforeEach
