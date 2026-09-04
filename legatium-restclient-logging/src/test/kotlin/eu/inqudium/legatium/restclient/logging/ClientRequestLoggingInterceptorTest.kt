@@ -35,7 +35,7 @@ class ClientRequestLoggingInterceptorTest {
     private val meterRegistry = SimpleMeterRegistry()
     private val properties =
         ClientLoggingProperties(
-            loggerName = "http-client-exchange-core-test",
+            loggerName = "http-adapter-exchange-core-test",
             slowRequestThreshold = Duration.ofMillis(200),
         )
     private val interceptor =
@@ -64,7 +64,7 @@ class ClientRequestLoggingInterceptorTest {
     inner class `The exchange line` {
         @Test
         fun `should log one line with the client field family at response close`() {
-            // What is tested: the format contract - message, client_* key-values and MDC of the
+            // What is tested: the format contract - message, adapter_* key-values and MDC of the
             //   completion event, emitted when the client CLOSES the response.
             // Success criteria: the exact message string, the full field family for a successful GET,
             //   the request id in the MDC; 42 ms of measured work between send and close.
@@ -84,17 +84,17 @@ class ClientRequestLoggingInterceptorTest {
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.INFO)
             assertThat(event.formattedMessage)
-                .isEqualTo("Client http exchange GET https://api.example.com/things -> 200 [client_request_id=generated-42]")
+                .isEqualTo("Client http exchange GET https://api.example.com/things -> 200 [adapter_request_id=generated-42]")
             assertThat(keyValues(event))
-                .containsEntry("client_outcome", "success")
-                .containsEntry("client_request_method", "GET")
-                .containsEntry("client_url_host", "api.example.com")
-                .containsEntry("client_url_path", "/things")
-                .containsEntry("client_response_status_code", 200)
-                .containsEntry("client_duration_ms", 42L)
-                .doesNotContainKey("client_slow")
-                .doesNotContainKey("client_url_template")
-                .doesNotContainKey("client_url_query")
+                .containsEntry("adapter_outcome", "success")
+                .containsEntry("adapter_request_method", "GET")
+                .containsEntry("adapter_url_host", "api.example.com")
+                .containsEntry("adapter_url_path", "/things")
+                .containsEntry("adapter_response_status_code", 200)
+                .containsEntry("adapter_duration_ms", 42L)
+                .doesNotContainKey("adapter_slow")
+                .doesNotContainKey("adapter_url_template")
+                .doesNotContainKey("adapter_url_query")
             assertThat(event.mdcPropertyMap)
                 .containsEntry(MdcKeys.REQUEST_ID, "generated-42")
                 .containsEntry(MdcKeys.REQUEST_METHOD, "GET")
@@ -135,10 +135,10 @@ class ClientRequestLoggingInterceptorTest {
             val event = log.events.single()
             assertThat(event.formattedMessage).startsWith("Client http exchange GET http://localhost:8081/things/7 -> 200")
             assertThat(keyValues(event))
-                .containsEntry("client_url_host", "localhost:8081")
-                .containsEntry("client_url_path", "/things/7")
-                .containsEntry("client_url_query", "page=2")
-                .containsEntry("client_url_template", "http://localhost:8081/things/{id}")
+                .containsEntry("adapter_url_host", "localhost:8081")
+                .containsEntry("adapter_url_path", "/things/7")
+                .containsEntry("adapter_url_query", "page=2")
+                .containsEntry("adapter_url_template", "http://localhost:8081/things/{id}")
         }
 
         @Test
@@ -147,7 +147,7 @@ class ClientRequestLoggingInterceptorTest {
             //   getPath()/getQuery(), so `%0A` in the target would become a real line break in the
             //   message, the MDC route and the fields.
             // Success criteria: path and query appear percent-encoded as sent in the message, in the
-            //   client_url_path/client_url_query fields and in the client_route MDC entry; no sink
+            //   adapter_url_path/adapter_url_query fields and in the adapter_route MDC entry; no sink
             //   contains a line break.
             // Why it matters: a URL assembled from untrusted input could otherwise forge complete
             //   exchange lines in every plain-text appender.
@@ -160,10 +160,10 @@ class ClientRequestLoggingInterceptorTest {
             // Then
             val event = log.events.single()
             assertThat(event.formattedMessage)
-                .isEqualTo("Client http exchange GET https://api.example.com/th%0Aings -> 200 [client_request_id=generated-42]")
+                .isEqualTo("Client http exchange GET https://api.example.com/th%0Aings -> 200 [adapter_request_id=generated-42]")
             assertThat(keyValues(event))
-                .containsEntry("client_url_path", "/th%0Aings")
-                .containsEntry("client_url_query", "x=%0D%0Ay")
+                .containsEntry("adapter_url_path", "/th%0Aings")
+                .containsEntry("adapter_url_query", "x=%0D%0Ay")
             assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.ROUTE, "https://api.example.com/th%0Aings")
             assertThat(event.formattedMessage + keyValues(event).values.joinToString() + event.mdcPropertyMap.values.joinToString())
                 .doesNotContain("\n", "\r")
@@ -177,14 +177,14 @@ class ClientRequestLoggingInterceptorTest {
             // When/Then: the wire request line asks for "/", and so does the log
             val event = log.events.single()
             assertThat(event.formattedMessage).startsWith("Client http exchange GET https://api.example.com/ -> 200")
-            assertThat(keyValues(event)).containsEntry("client_url_path", "/")
+            assertThat(keyValues(event)).containsEntry("adapter_url_path", "/")
         }
 
         @Test
         fun `should carry the identity in the MDC while the wire call runs as an additive overlay`() {
             // What is tested: the call scope - inner interceptors and the HTTP engine log under the
             //   client identity, and the ambient MDC (an inbound request's keys, a bridge's keys) stays.
-            // Success criteria: inside the execution all three client_* keys are set beside a seeded
+            // Success criteria: inside the execution all three adapter_* keys are set beside a seeded
             //   ambient key; after the call the client keys are gone and the ambient key remains.
             // Why it matters: the client line and every log line of the call must join the server line
             //   by MDC alone, and a pooled thread must not keep the identity.
@@ -247,7 +247,7 @@ class ClientRequestLoggingInterceptorTest {
             assertThat(request.headers[properties.correlationIdHeader]).containsExactly("caller-id")
             val event = log.events.single()
             assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "caller-id")
-            assertThat(event.formattedMessage).contains("[client_request_id=caller-id]")
+            assertThat(event.formattedMessage).contains("[adapter_request_id=caller-id]")
         }
 
         @Test
@@ -255,7 +255,7 @@ class ClientRequestLoggingInterceptorTest {
             // What is tested: the identity decision of ADR-0002 on the outbound side - a conformant
             //   traceparent's trace id IS the request id, a correlation header the caller added is
             //   ignored, and NO correlation header is added.
-            // Success criteria: client_request_id equals the trace id in MDC and message; the request
+            // Success criteria: adapter_request_id equals the trace id in MDC and message; the request
             //   carries exactly the caller's headers.
             // Why it matters: a client logger must be observationally neutral - on a traced call the
             //   wire already carries the identity, and adding a second, private id would make enabling
@@ -278,7 +278,7 @@ class ClientRequestLoggingInterceptorTest {
                 .containsEntry("traceId", "0af7651916cd43dd8448eb211c80319c")
                 .containsEntry("spanId", "b7ad6b7169203331")
             assertThat(event.formattedMessage)
-                .endsWith("[client_request_id=0af7651916cd43dd8448eb211c80319c traceId=0af7651916cd43dd8448eb211c80319c spanId=b7ad6b7169203331]")
+                .endsWith("[adapter_request_id=0af7651916cd43dd8448eb211c80319c traceId=0af7651916cd43dd8448eb211c80319c spanId=b7ad6b7169203331]")
         }
 
         @Test
@@ -333,7 +333,7 @@ class ClientRequestLoggingInterceptorTest {
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.WARN)
             assertThat(event.formattedMessage).contains("-> 503 [")
-            assertThat(keyValues(event)).containsEntry("client_outcome", "failure").containsEntry("client_response_status_code", 503)
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").containsEntry("adapter_response_status_code", 503)
         }
 
         @Test
@@ -355,7 +355,7 @@ class ClientRequestLoggingInterceptorTest {
             assertThat(event.level).isEqualTo(Level.ERROR)
             assertThat(event.formattedMessage).contains("-> - [")
             assertThat(event.throwableProxy?.message).isEqualTo("Connection refused")
-            assertThat(keyValues(event)).containsEntry("client_outcome", "failure").doesNotContainKey("client_response_status_code")
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").doesNotContainKey("adapter_response_status_code")
         }
 
         @Test
@@ -373,7 +373,7 @@ class ClientRequestLoggingInterceptorTest {
             // Then
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.WARN)
-            assertThat(keyValues(event)).containsEntry("client_outcome", "timeout").doesNotContainKey("client_response_status_code")
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "timeout").doesNotContainKey("adapter_response_status_code")
             assertThat(event.throwableProxy?.message).isEqualTo("timed out")
         }
 
@@ -399,7 +399,7 @@ class ClientRequestLoggingInterceptorTest {
             assertThat(thrown).isInstanceOf(IOException::class.java)
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.ERROR)
-            assertThat(keyValues(event)).containsEntry("client_outcome", "failure").containsEntry("client_response_status_code", 200)
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").containsEntry("adapter_response_status_code", 200)
             assertThat(event.throwableProxy?.message).isEqualTo("Connection reset")
         }
 
@@ -410,10 +410,10 @@ class ClientRequestLoggingInterceptorTest {
                 .intercept(request(), ByteArray(0), answering { ticker.addAndGet(200_000_000) })
                 .consumeAndClose()
 
-            // When/Then: WARN + client_slow, outcome stays success
+            // When/Then: WARN + adapter_slow, outcome stays success
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.WARN)
-            assertThat(keyValues(event)).containsEntry("client_slow", true).containsEntry("client_outcome", "success")
+            assertThat(keyValues(event)).containsEntry("adapter_slow", true).containsEntry("adapter_outcome", "success")
         }
 
         @Test
@@ -430,7 +430,7 @@ class ClientRequestLoggingInterceptorTest {
             response.consumeAndClose()
 
             // Then
-            assertThat(keyValues(log.events.single())).containsEntry("client_duration_ms", 100L)
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_duration_ms", 100L)
         }
 
         @Test
@@ -446,7 +446,7 @@ class ClientRequestLoggingInterceptorTest {
             fun slowFlagAfter(elapsedNanos: Long): Boolean {
                 log.appender.list.clear()
                 precise.intercept(request(), ByteArray(0), answering { ticker.addAndGet(elapsedNanos) }).consumeAndClose()
-                return keyValues(log.events.single()).containsKey("client_slow")
+                return keyValues(log.events.single()).containsKey("adapter_slow")
             }
 
             // When/Then
@@ -467,7 +467,7 @@ class ClientRequestLoggingInterceptorTest {
                 val breadcrumb = internal.events.single()
                 assertThat(breadcrumb.level).isEqualTo(Level.WARN)
                 assertThat(breadcrumb.formattedMessage)
-                    .isEqualTo("Client http exchange failed: GET https://api.example.com/things - java.io.IOException: boom [client_request_id=generated-42]")
+                    .isEqualTo("Client http exchange failed: GET https://api.example.com/things - java.io.IOException: boom [adapter_request_id=generated-42]")
                 assertThat(log.events).hasSize(1)
             } finally {
                 internal.detach()
@@ -507,7 +507,7 @@ class ClientRequestLoggingInterceptorTest {
 
             // Then: exactly the included one
             assertThat(log.events).hasSize(1)
-            assertThat(keyValues(log.events.single())).containsEntry("client_url_path", "/api/things")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_url_path", "/api/things")
         }
 
         @Test
@@ -527,7 +527,7 @@ class ClientRequestLoggingInterceptorTest {
 
             // Then
             assertThat(log.events).hasSize(1)
-            assertThat(keyValues(log.events.single())).containsEntry("client_url_path", "/%61pi/things")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_url_path", "/%61pi/things")
         }
 
         @Test
@@ -557,11 +557,11 @@ class ClientRequestLoggingInterceptorTest {
             // Then: the arrival line was already visible during the call; only the completion line
             //   carries the outcome; the arrival line carries the identity in its MDC
             assertThat(eventsAtCallTime)
-                .containsExactly("Client http exchange started POST https://api.example.com/things [client_request_id=generated-42]")
+                .containsExactly("Client http exchange started POST https://api.example.com/things [adapter_request_id=generated-42]")
             assertThat(log.events).hasSize(2)
-            assertThat(keyValues(log.events.first())).doesNotContainKey("client_outcome").containsEntry("client_url_host", "api.example.com")
+            assertThat(keyValues(log.events.first())).doesNotContainKey("adapter_outcome").containsEntry("adapter_url_host", "api.example.com")
             assertThat(log.events.first().mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42")
-            assertThat(keyValues(log.events.last())).containsEntry("client_outcome", "success")
+            assertThat(keyValues(log.events.last())).containsEntry("adapter_outcome", "success")
         }
     }
 }

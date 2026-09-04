@@ -20,7 +20,7 @@ import org.springframework.web.reactive.function.client.WebClient
 
 /**
  * Contract of [ClientLoggingAutoConfiguration]: present by default in ANY application (no web type
- * required), removable by `client-logging.enabled`, every bean overridable, and - the part a unit test
+ * required), removable by `adapter-logging.enabled`, every bean overridable, and - the part a unit test
  * cannot show - the customizer actually attaches the filter to the builders Boot hands out.
  */
 class ClientLoggingAutoConfigurationTest {
@@ -66,7 +66,7 @@ class ClientLoggingAutoConfigurationTest {
         // Why it matters: keying is the documented answer to "masked is not a security boundary for
         //   guessable values"; it must be reachable from application.yml alone.
         // Given/When
-        contextRunner.withPropertyValues("client-logging.masking-key=k").run { context ->
+        contextRunner.withPropertyValues("adapter-logging.masking-key=k").run { context ->
             // Then
             assertThat(context.getBean(HeaderValueMasker::class.java).mask("secret-token")).isEqualTo("12:18da04f7cd594ea3")
         }
@@ -75,7 +75,7 @@ class ClientLoggingAutoConfigurationTest {
     @Test
     fun `should back off entirely when disabled by the property`() {
         // Given/When
-        contextRunner.withPropertyValues("client-logging.enabled=false").run { context ->
+        contextRunner.withPropertyValues("adapter-logging.enabled=false").run { context ->
             // Then
             assertThat(context).doesNotHaveBean(ClientRequestLoggingFilter::class.java)
             assertThat(context).doesNotHaveBean(NanoTimeSource::class.java)
@@ -86,14 +86,14 @@ class ClientLoggingAutoConfigurationTest {
     }
 
     @Test
-    fun `should bind the identical client-logging namespace`() {
+    fun `should bind the identical adapter-logging namespace`() {
         // Given/When
         contextRunner
             .withPropertyValues(
-                "client-logging.logger-name=outbound",
-                "client-logging.exclude-hosts=pushgateway",
-                "client-logging.request-headers.masked=Authorization",
-                "client-logging.measure-response-body-size=true",
+                "adapter-logging.logger-name=outbound",
+                "adapter-logging.exclude-hosts=pushgateway",
+                "adapter-logging.request-headers.masked=Authorization",
+                "adapter-logging.measure-response-body-size=true",
             ).run { context ->
                 // Then
                 val properties = context.getBean(ClientLoggingProperties::class.java)

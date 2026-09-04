@@ -4,7 +4,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 import java.time.Duration
 
 /**
- * Configuration surface of both client-logging twins, bound from the `client-logging.*` namespace. ONE
+ * Configuration surface of both adapter-logging twins, bound from the `adapter-logging.*` namespace. ONE
  * class for the RestClient interceptor and the WebClient filter (ADR-0003): the namespace is a
  * cross-stack contract, key for key and default for default, and the twins' copies were byte-identical.
  * `ClientLoggingReferenceConfigTest` binds the shared reference YAML against this class once.
@@ -18,7 +18,7 @@ import java.time.Duration
  * Header values are verbatim only when named in the section's [HeaderLogProperties.unmasked]; every
  * other logged value is rendered by the [HeaderValueMasker] bean (by default a stable short fingerprint).
  */
-@ConfigurationProperties("client-logging")
+@ConfigurationProperties("adapter-logging")
 data class ClientLoggingProperties(
     /** Master switch; `false` removes the interceptor/filter and its customizers entirely (auto-configuration backs off). */
     val enabled: Boolean = true,
@@ -27,7 +27,7 @@ data class ClientLoggingProperties(
      * so log routing and level configuration can target exactly these lines - and can never collide
      * with an inbound exchange logger of the host.
      */
-    val loggerName: String = "http-client-exchange",
+    val loggerName: String = "http-adapter-exchange",
     /**
      * Header the correlation id is read from on TRACELESS calls (no conformant `traceparent` on the
      * outgoing request - ADR-0002); when absent or blank a new id is generated AND SENT to the peer on
@@ -40,7 +40,7 @@ data class ClientLoggingProperties(
     /**
      * Optionally logs a first line the moment the request is SENT, before the wire call - so
      * long-running or never-answered calls are visible while still in flight. The completion event
-     * remains the single line carrying `client_outcome`, so outcome-keyed dashboards are unaffected by
+     * remains the single line carrying `adapter_outcome`, so outcome-keyed dashboards are unaffected by
      * enabling this.
      */
     val logRequestStart: Boolean = false,
@@ -67,7 +67,7 @@ data class ClientLoggingProperties(
     val excludeHosts: List<String> = emptyList(),
     /**
      * At or above this duration the exchange line escalates from INFO to WARN. Compared at full
-     * precision; the logged `client_duration_ms` has millisecond resolution, so the threshold must be
+     * precision; the logged `adapter_duration_ms` has millisecond resolution, so the threshold must be
      * at least one millisecond - a sub-millisecond value would flag calls whose logged duration is 0.
      */
     val slowRequestThreshold: Duration = Duration.ofSeconds(5),
@@ -85,7 +85,7 @@ data class ClientLoggingProperties(
     /** As [logRequestBody], for the response body; the outcome is final at emission, so nothing is captured in vain. */
     val logResponseBody: BodyLogMode = BodyLogMode.NEVER,
     /**
-     * Whether the request body SIZE is measured (meter `client.request.body.size`, tagged by the URI
+     * Whether the request body SIZE is measured (meter `adapter.request.body.size`, tagged by the URI
      * template and the host). Deliberately independent of [logRequestBody]: a metric must not appear
      * and disappear with a logging flag. Measure-only installs a count-only capture - nothing is
      * buffered. Recorded when the exchange completes (response close resp. the body's terminal
@@ -93,8 +93,8 @@ data class ClientLoggingProperties(
      */
     val measureRequestBodySize: Boolean = false,
     /**
-     * As [measureRequestBodySize], for the response (`client.response.body.size`), plus the
-     * `client.response.body.read` counter that tells an unread response body from an absent one.
+     * As [measureRequestBodySize], for the response (`adapter.response.body.size`), plus the
+     * `adapter.response.body.read` counter that tells an unread response body from an absent one.
      */
     val measureResponseBodySize: Boolean = false,
     /**

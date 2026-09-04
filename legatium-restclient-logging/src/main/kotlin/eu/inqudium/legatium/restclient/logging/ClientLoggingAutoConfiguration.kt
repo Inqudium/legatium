@@ -22,7 +22,7 @@ import org.springframework.core.annotation.Order
 /**
  * Registers the [ClientRequestLoggingInterceptor] in a Spring Boot application and attaches it to every
  * `RestClient` and `RestTemplate` Boot builds - drop the module on the classpath and every outbound call
- * is logged; `client-logging.enabled=false` removes it again. Unlike an inbound filter the interceptor
+ * is logged; `adapter-logging.enabled=false` removes it again. Unlike an inbound filter the interceptor
  * needs no web application: a batch job or a message consumer calling out is a client too.
  *
  * Every bean backs off to a host-provided one: a host may pin [NanoTimeSource] or
@@ -35,7 +35,7 @@ import org.springframework.core.annotation.Order
  * and adds it itself.
  */
 @AutoConfiguration
-@ConditionalOnProperty(prefix = "client-logging", name = ["enabled"], havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(prefix = "adapter-logging", name = ["enabled"], havingValue = "true", matchIfMissing = true)
 @EnableConfigurationProperties(ClientLoggingProperties::class)
 class ClientLoggingAutoConfiguration {
     @Bean

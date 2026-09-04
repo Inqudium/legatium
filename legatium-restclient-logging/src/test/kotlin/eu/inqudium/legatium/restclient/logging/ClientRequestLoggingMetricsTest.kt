@@ -33,7 +33,7 @@ import java.util.concurrent.atomic.AtomicLong
 class ClientRequestLoggingMetricsTest {
     private val ticker = AtomicLong(0)
     private val registry = SimpleMeterRegistry()
-    private val properties = ClientLoggingProperties(loggerName = "http-client-exchange-metrics-test")
+    private val properties = ClientLoggingProperties(loggerName = "http-adapter-exchange-metrics-test")
     private val interceptor = ClientRequestLoggingInterceptor(properties, { ticker.get() }, { "generated-42" }, registry)
     private lateinit var log: CapturedLogger
 

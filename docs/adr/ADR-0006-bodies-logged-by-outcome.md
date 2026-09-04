@@ -23,7 +23,7 @@ switch:**
    still install a count-only capture, exactly as before.
 2. `on-failure` captures the body on every call - bounded by
    `max-body-bytes`, like `always` - and writes it to the line only when
-   `client_outcome` is not `success`: `failure`, `timeout`, and on the
+   `adapter_outcome` is not `success`: `failure`, `timeout`, and on the
    WebClient twin `cancelled`, or when the status is a 4xx. The response side decides at emission, when
    the outcome is final; the request side captures ahead and discards.
 3. `always` captures and logs on every call - the former `true`.

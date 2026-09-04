@@ -22,7 +22,7 @@ internal class Exchange(
     val path: String,
     val query: String?,
     /**
-     * The exchange identity (`client_request_id`, ADR-0002): the `traceparent` trace id when the outgoing
+     * The exchange identity (`adapter_request_id`, ADR-0002): the `traceparent` trace id when the outgoing
      * request carried a conformant one, otherwise the accepted or generated-and-sent correlation id.
      */
     val requestId: String,

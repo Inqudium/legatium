@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Initial release of Legatium: one structured `client_*` log line per outbound
+- Initial release of Legatium: one structured `adapter_*` log line per outbound
   HTTP exchange - the outbound twin of [Limesium](https://github.com/Inqudium/limesium),
   built to the same design (fail-open, one exactly-once emission, level/outcome
   decoupling, header allowlist with stable masking, passive bounded body tee,
-  six meters) with the `client_*` field family and the `client-logging.*`
+  six meters) with the `adapter_*` field family and the `adapter-logging.*`
   namespace.
 - `legatium-restclient-logging` - auto-configured `ClientHttpRequestInterceptor`
   attached to every `RestClient` and `RestTemplate` Boot builds; the event is
@@ -36,22 +36,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `@ConditionalOnMissingBean` bean shared by both twins - the built-in default is
   the stable `length:hash` fingerprint, a host pins a keyed or fixed masker
   instead; the properties decide which values are masked, the bean decides how.
-  `client-logging.masking-key` keys the built-in fingerprint (HMAC-SHA256) without
+  `adapter-logging.masking-key` keys the built-in fingerprint (HMAC-SHA256) without
   a bean: same shape and stability, guess-proof without the key.
 - Body logging is a mode per direction, not a switch
   ([ADR-0006](docs/adr/ADR-0006-bodies-logged-by-outcome.md)):
   `log-request-body` / `log-response-body` take `never` (the default),
   `on-failure` or `always`. `on-failure` writes a body only when
-  `client_outcome` is not `success` or the status is a 4xx - the response side
+  `adapter_outcome` is not `success` or the status is a 4xx - the response side
   decides at emission,
   the request body is captured before the outcome is known and discarded on
   success - which keeps body logging affordable outside a debug session.
+- The operator-facing vocabulary is `adapter`, the counterpart of limesium's
+  `endpoint` ([ADR-0007](docs/adr/ADR-0007-adapter-is-the-operator-vocabulary.md)):
+  fields `adapter_*`, MDC keys `adapter_request_id` / `adapter_method` /
+  `adapter_route`, meters `adapter.logging.*` and `adapter.*.body.*`, logger
+  `http-adapter-exchange`, namespace `adapter-logging.*`. Code names keep
+  their `Client*` form. Chosen over `client` (ECS names the remote party so),
+  `upstream` (hop-relative) and `dependency` (Maven).
 - Shared twin core `legatium-common`, inlined by Shade
   ([ADR-0003](docs/adr/ADR-0003-legatium-common-inlined-by-shade.md)), including
   the cross-stack timeout classification and - unlike Limesium - the field enum
-  and the `client-logging.*` properties class themselves (ADR-0003 amendments of
+  and the `adapter-logging.*` properties class themselves (ADR-0003 amendments of
   2026-09-03: the twins' copies were byte-identical).
-- Elasticsearch component template for the `client_*` fields, the shared
+- Elasticsearch component template for the `adapter_*` fields, the shared
   configuration reference, and the lockstep tests binding both to both twins.
 - Documentation site (MkDocs Material), test-evidence and coverage pages,
   Dokka API references; CI with SBOM/OSV scan, CodeQL, OpenSSF Scorecard,

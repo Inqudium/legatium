@@ -24,7 +24,7 @@ import kotlin.reflect.KClass
  * so two call sites cannot disagree about the JSON type a field carries. [format] converts nothing - every
  * field goes on the wire exactly as supplied - it only GUARANTEES the type.
  *
- * The `client_` prefix keeps the family disjoint from the `endpoint_*` family the sibling project
+ * The `adapter_` prefix keeps the family disjoint from the `endpoint_*` family the sibling project
  * limesium writes for INBOUND exchanges: one document may carry both (a client line emitted inside a
  * server request inherits the ambient `endpoint_*` MDC), and no field may mean two things.
  *
@@ -51,7 +51,7 @@ internal enum class ClientLogField(
      * a 5xx answer logs at WARN while a call that threw logs at ERROR, yet both carry `failure`. Panels
      * key off this field, the level only carries severity.
      */
-    OUTCOME("client_outcome", String::class),
+    OUTCOME("adapter_outcome", String::class),
 
     /**
      * ELK: `long`, index true, doc_values ON - compute (percentiles). Milliseconds, with the unit in the
@@ -59,14 +59,14 @@ internal enum class ClientLogField(
      * Measured until the exchange is truly over - the response closed (RestClient) or its body's terminal
      * signal (WebClient): response occupancy including the body read, not bare round-trip time.
      */
-    DURATION_MS("client_duration_ms", Long::class),
+    DURATION_MS("adapter_duration_ms", Long::class),
 
     /**
      * ELK: `keyword`, index true, doc_values ON - aggregate. Normally a handful of well-known HTTP
      * methods, but NOT a closed vocabulary: RFC 9110 keeps the method token extensible, and the field
      * carries whatever token the request line named.
      */
-    REQUEST_METHOD("client_request_method", String::class),
+    REQUEST_METHOD("adapter_request_method", String::class),
 
     /**
      * ELK: **`short`**, index true, doc_values ON - aggregate, NOT compute: a numeric LABEL one groups by
@@ -76,7 +76,7 @@ internal enum class ClientLogField(
      * line, a cancellation before the response arrived) - the message then shows `-> -`, and [OUTCOME]
      * is the authoritative disposition.
      */
-    RESPONSE_STATUS_CODE("client_response_status_code", Int::class),
+    RESPONSE_STATUS_CODE("adapter_response_status_code", Int::class),
 
     /**
      * ELK: `keyword`, index true, doc_values ON - aggregate. The peer's host, with the port when the URI
@@ -84,53 +84,53 @@ internal enum class ClientLogField(
      * does not have and an outbound one cannot do without: "which dependency is slow" is a question
      * about this field.
      */
-    URL_HOST("client_url_host", String::class),
+    URL_HOST("adapter_url_host", String::class),
 
     /**
      * ELK: `keyword`, index true, doc_values ON - aggregate. The low-cardinality URI template
      * (`/api/things/{id}`) the client recorded for the request when the caller used the template form of
      * `uri(...)` - the aggregation half of the pair. Absent when the caller passed an expanded `URI`.
      */
-    URL_TEMPLATE("client_url_template", String::class),
+    URL_TEMPLATE("adapter_url_template", String::class),
 
     /**
      * ELK: `keyword`, index true, **doc_values OFF** - filter exactly. The expanded request path, ids and
      * all: useful for finding one call, useless to group by (singleton buckets), expensive to keep an
      * ordinal dictionary for.
      */
-    URL_PATH("client_url_path", String::class),
+    URL_PATH("adapter_url_path", String::class),
 
     /**
      * ELK: `keyword`, index true, doc_values OFF - filter exactly, as [URL_PATH]. Its own field rather
      * than part of the path so grouping by path is not defeated by varying query strings.
      */
-    URL_QUERY("client_url_query", String::class),
+    URL_QUERY("adapter_url_query", String::class),
 
     /**
      * ELK: `boolean`, index true, doc_values ON - aggregate. True when the exchange reached the
      * configured slow-request threshold; present only then, so absence means fast.
      */
-    SLOW("client_slow", Boolean::class),
+    SLOW("adapter_slow", Boolean::class),
 
     /**
      * ELK: `keyword`, **index FALSE**, doc_values off - display only. Read in the hit, never searched,
      * never grouped. Only the configured header selection reaches this field at all, and names listed as
      * masked carry a stable `length:hash` fingerprint instead of the value.
      */
-    REQUEST_HEADERS("client_request_headers", String::class),
+    REQUEST_HEADERS("adapter_request_headers", String::class),
 
     /** ELK: `keyword`, index false, doc_values off - display only, as [REQUEST_HEADERS]. */
-    RESPONSE_HEADERS("client_response_headers", String::class),
+    RESPONSE_HEADERS("adapter_response_headers", String::class),
 
     /**
      * ELK: `keyword`, **index FALSE**, doc_values off - display only. The largest field of the family and
      * the widest data-leak surface, which is why it exists only when body capture is enabled and carries
      * at most the configured capture limit.
      */
-    REQUEST_BODY("client_request_body", String::class),
+    REQUEST_BODY("adapter_request_body", String::class),
 
     /** ELK: `keyword`, index false, doc_values off - display only, as [REQUEST_BODY]. */
-    RESPONSE_BODY("client_response_body", String::class),
+    RESPONSE_BODY("adapter_response_body", String::class),
 
     ;
 

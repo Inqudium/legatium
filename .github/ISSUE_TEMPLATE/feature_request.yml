@@ -17,7 +17,7 @@ body:
         How should it work? Remember the twin symmetry: a new field or
         configuration property has to make sense in BOTH modules
         (RestClient and WebClient) - a sketch of the intended
-        client-logging.* shape helps.
+        adapter-logging.* shape helps.
     validations:
       required: false
   - type: textarea

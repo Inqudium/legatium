@@ -21,7 +21,7 @@ import org.springframework.core.annotation.Order
 /**
  * Registers the [ClientRequestLoggingFilter] in a Spring Boot application and attaches it to every
  * `WebClient` Boot builds - drop the module on the classpath and every outbound call is logged;
- * `client-logging.enabled=false` removes it again. The property namespace matches
+ * `adapter-logging.enabled=false` removes it again. The property namespace matches
  * legatium-restclient-logging's key for key; both modules may even live in one application (a servlet
  * host using `WebClient` for streaming calls), each logging the client it serves.
  *
@@ -35,7 +35,7 @@ import org.springframework.core.annotation.Order
  * and adds it itself.
  */
 @AutoConfiguration
-@ConditionalOnProperty(prefix = "client-logging", name = ["enabled"], havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(prefix = "adapter-logging", name = ["enabled"], havingValue = "true", matchIfMissing = true)
 @EnableConfigurationProperties(ClientLoggingProperties::class)
 class ClientLoggingAutoConfiguration {
     @Bean

@@ -47,25 +47,25 @@ class ClientLogFieldTest {
             // Why it matters: once the template is composed into a pipeline, changing a name is a breaking
             //   change for every dashboard and alert keying on it - the compiler cannot see that.
             // Given/When/Then: every wire name against its literal
-            assertThat(ClientLogField.OUTCOME.wireName).isEqualTo("client_outcome")
-            assertThat(ClientLogField.DURATION_MS.wireName).isEqualTo("client_duration_ms")
-            assertThat(ClientLogField.REQUEST_METHOD.wireName).isEqualTo("client_request_method")
-            assertThat(ClientLogField.RESPONSE_STATUS_CODE.wireName).isEqualTo("client_response_status_code")
-            assertThat(ClientLogField.URL_HOST.wireName).isEqualTo("client_url_host")
-            assertThat(ClientLogField.URL_TEMPLATE.wireName).isEqualTo("client_url_template")
-            assertThat(ClientLogField.URL_PATH.wireName).isEqualTo("client_url_path")
-            assertThat(ClientLogField.URL_QUERY.wireName).isEqualTo("client_url_query")
-            assertThat(ClientLogField.SLOW.wireName).isEqualTo("client_slow")
-            assertThat(ClientLogField.REQUEST_HEADERS.wireName).isEqualTo("client_request_headers")
-            assertThat(ClientLogField.RESPONSE_HEADERS.wireName).isEqualTo("client_response_headers")
-            assertThat(ClientLogField.REQUEST_BODY.wireName).isEqualTo("client_request_body")
-            assertThat(ClientLogField.RESPONSE_BODY.wireName).isEqualTo("client_response_body")
+            assertThat(ClientLogField.OUTCOME.wireName).isEqualTo("adapter_outcome")
+            assertThat(ClientLogField.DURATION_MS.wireName).isEqualTo("adapter_duration_ms")
+            assertThat(ClientLogField.REQUEST_METHOD.wireName).isEqualTo("adapter_request_method")
+            assertThat(ClientLogField.RESPONSE_STATUS_CODE.wireName).isEqualTo("adapter_response_status_code")
+            assertThat(ClientLogField.URL_HOST.wireName).isEqualTo("adapter_url_host")
+            assertThat(ClientLogField.URL_TEMPLATE.wireName).isEqualTo("adapter_url_template")
+            assertThat(ClientLogField.URL_PATH.wireName).isEqualTo("adapter_url_path")
+            assertThat(ClientLogField.URL_QUERY.wireName).isEqualTo("adapter_url_query")
+            assertThat(ClientLogField.SLOW.wireName).isEqualTo("adapter_slow")
+            assertThat(ClientLogField.REQUEST_HEADERS.wireName).isEqualTo("adapter_request_headers")
+            assertThat(ClientLogField.RESPONSE_HEADERS.wireName).isEqualTo("adapter_response_headers")
+            assertThat(ClientLogField.REQUEST_BODY.wireName).isEqualTo("adapter_request_body")
+            assertThat(ClientLogField.RESPONSE_BODY.wireName).isEqualTo("adapter_response_body")
         }
 
         @Test
         fun `should prefix every wire name with endpoint and keep them unique`() {
             // What is tested: the naming contract of the whole family in one place.
-            // Success criteria: every wire name starts with 'client_', is lower snake_case, and no two
+            // Success criteria: every wire name starts with 'adapter_', is lower snake_case, and no two
             //   fields collide.
             // Why it matters: the names are index-side contract - a stray prefix or a duplicate silently
             //   splits one logical field into two that no dashboard knows about.
@@ -74,7 +74,7 @@ class ClientLogFieldTest {
 
             // Then: prefixed, snake_case, unique
             assertThat(wireNames).allSatisfy { name ->
-                assertThat(name).startsWith("client_")
+                assertThat(name).startsWith("adapter_")
                 assertThat(name).matches("[a-z0-9_]+")
             }
             assertThat(wireNames).doesNotHaveDuplicates()
@@ -132,7 +132,7 @@ class ClientLogFieldTest {
             //   keeps its doc values as the aggregation counterpart.
             // Why it matters: the resolved path appears in about one line each - doc values on it grow an
             //   ordinal dictionary to the document count and buy only singleton buckets, while
-            //   client_url_template is the field that answers "which endpoint is slow".
+            //   adapter_url_template is the field that answers "which endpoint is slow".
             // Given / When / Then: path and query are filterable but not groupable
             listOf(ClientLogField.URL_PATH, ClientLogField.URL_QUERY).forEach { field ->
                 assertThat(properties[field.wireName])
@@ -188,7 +188,7 @@ class ClientLogFieldTest {
             // Then: the rejection names the field and both types
             assertThat(thrown)
                 .isInstanceOf(IllegalArgumentException::class.java)
-                .hasMessageContaining("client_duration_ms")
+                .hasMessageContaining("adapter_duration_ms")
                 .hasMessageContaining("Long")
                 .hasMessageContaining("Int")
         }
@@ -234,8 +234,8 @@ class ClientLogFieldTest {
                     .keyValuePairs
                     .associate { it.key to it.value }
             assertThat(keyValues)
-                .containsEntry("client_outcome", "success")
-                .doesNotContainKey("client_duration_ms")
+                .containsEntry("adapter_outcome", "success")
+                .doesNotContainKey("adapter_duration_ms")
         }
     }
 }

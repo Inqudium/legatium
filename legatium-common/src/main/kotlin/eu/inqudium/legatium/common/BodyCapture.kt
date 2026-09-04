@@ -10,7 +10,7 @@ import java.nio.charset.CodingErrorAction
  * never read/subscribed to - the bytes the peer sent never reached the application (a bodiless exchange,
  * a response closed unread). [PARTIAL]: consumption started but the end of the stream was not observed -
  * an early-exiting parser, an exception or cancellation mid-read. [COMPLETE]: the end of the stream was
- * observed. The values are the `state` tag of the `client.response.body.read` counter and therefore a
+ * observed. The values are the `state` tag of the `adapter.response.body.read` counter and therefore a
  * twin contract; the exact observation points are documented on each twin's `BoundedBodyCapture`
  * (deliberately separate implementations - ADR-0003).
  *
@@ -31,7 +31,7 @@ enum class BodyReadState(
  * replacement character and corrupt the logged prefix.
  * Decoding with `endOfInput = false` leaves an incomplete trailing sequence undecoded (underflow) instead
  * of reporting it as malformed; malformed bytes INSIDE the prefix are still replaced, as `String(bytes,
- * charset)` would. Shared by both client-logging twins (ADR-0003).
+ * charset)` would. Shared by both adapter-logging twins (ADR-0003).
  */
 internal fun decodeTruncated(
     bytes: ByteArray,

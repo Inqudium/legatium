@@ -19,7 +19,7 @@ import java.io.InputStream
  * a duration that excludes the read - the exact wart the sibling project limesium eliminated on the
  * inbound side by emitting at request destruction. A response the application never closes (a raw
  * `exchange(..., close = false)` the caller forgets to close) never completes - and stays open on the
- * `client.logging.exchanges.open` gauge, the module's liveness signal, rather than logging a guess.
+ * `adapter.logging.exchanges.open` gauge, the module's liveness signal, rather than logging a guess.
  *
  * The tee records the READ STATE on the capture: opening the stream marks consumption as started;
  * observing the end of the stream (an EOF return from either `read`) marks it complete. Both are

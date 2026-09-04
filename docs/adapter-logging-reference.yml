@@ -1,14 +1,14 @@
 # =====================================================================================================
-# client-logging - complete reference configuration
+# adapter-logging - complete reference configuration
 #
-# Every property of the SHARED client-logging namespace (both Legatium modules) with its DEFAULT value
+# Every property of the SHARED adapter-logging namespace (both Legatium modules) with its DEFAULT value
 # and the reasoning behind it. Copy the block into an application.yml and change only what you need:
 # every value shown here is the built-in default, so an entry you leave out (or delete) behaves exactly
 # like an entry you keep. Bound by ClientLoggingProperties; invalid values (blank names, non-positive
 # sizes/durations) fail the context start with a message naming the property.
 # =====================================================================================================
 
-client-logging:
+adapter-logging:
   # Master switch. `false` removes the module entirely - the auto-configuration backs off, no
   # interceptor/filter, no customizer, no beans. This is a context-start decision, not a runtime
   # toggle; for a runtime off-switch use the logger level below instead (a disabled level skips the
@@ -19,7 +19,7 @@ client-logging:
   # visible: INFO shows every call, WARN keeps only failures, timeouts, cancellations and slow calls,
   # ERROR only calls that threw (see `logging.level` below). Deliberately distinct from the sibling
   # project limesium's `http-exchange`, so inbound and outbound streams route independently.
-  logger-name: http-client-exchange
+  logger-name: http-adapter-exchange
 
   # Header the correlation id is read from on TRACELESS calls only (ADR-0002): an outgoing request with
   # a conformant W3C traceparent (put there by the host's tracing propagation) takes its request id from
@@ -28,17 +28,17 @@ client-logging:
   # generated (by default a 21-character counting id: random per-instance base-36 prefix plus counter,
   # ADR-0004 - override the CorrelationIdGenerator bean to change the format) AND SENT to the peer on
   # this same header name, so the peer can quote it. Whichever identity wins rides the MDC as
-  # `client_request_id` while the call runs.
+  # `adapter_request_id` while the call runs.
   correlation-id-header: X-Correlation-Id
 
-  # Whether the query string is logged (as its own field `client_url_query`, never as part of the
+  # Whether the query string is logged (as its own field `adapter_url_query`, never as part of the
   # path - grouping by path must not be defeated by varying queries). Disable when query parameters
   # may carry personal data.
   include-query-string: true
 
   # Optionally log an ARRIVAL line the moment the request is sent, before the wire call - useful when
   # long-running or hanging calls must be visible while still in flight. The arrival line carries no
-  # outcome/status/duration, so dashboards keyed on `client_outcome` still count exactly one line per
+  # outcome/status/duration, so dashboards keyed on `adapter_outcome` still count exactly one line per
   # call even with this enabled.
   log-request-start: false
 
@@ -61,7 +61,7 @@ client-logging:
   exclude-hosts: []
   #  - pushgateway.monitoring.svc
 
-  # At or above this duration the call escalates from INFO to WARN and is flagged `client_slow: true` -
+  # At or above this duration the call escalates from INFO to WARN and is flagged `adapter_slow: true` -
   # the outcome stays `success`, slowness raises severity, it does not turn a completed call into a
   # failure. Duration is measured until the response is closed (response occupancy including the body
   # read), not bare round-trip time. Compared at millisecond resolution: values below 1ms are rejected
@@ -69,7 +69,7 @@ client-logging:
   slow-request-threshold: 5s
 
   # Header logging, one section per direction, rendered into one display-only field each
-  # (`client_request_headers` / `client_response_headers`). Matching is case-insensitive throughout,
+  # (`adapter_request_headers` / `adapter_response_headers`). Matching is case-insensitive throughout,
   # as header names are. MASKED BY DEFAULT (ADR-0005): whatever the selection logs is rendered as a
   # fingerprint unless its name is explicitly allowed in plaintext - so the debugging move
   # `includes: ["*"]` costs readability, never confidentiality.
@@ -107,7 +107,7 @@ client-logging:
     #  - Content-Type
 
   # Body logging per direction - a MODE, not a switch (ADR-0006): `never` (the default), `on-failure`
-  # or `always`. `on-failure` is the volume switch: the body is logged only when `client_outcome` is
+  # or `always`. `on-failure` is the volume switch: the body is logged only when `adapter_outcome` is
   # not `success` (failure, timeout, cancelled) or the status is a 4xx - orders of magnitude fewer bytes
   # than `always`, on
   # exactly the lines a body is wanted for. The response side decides at emission, when the outcome is
@@ -119,16 +119,16 @@ client-logging:
   # is written on the reactive one); the response body is TEED as the application reads it - never
   # pre-read, never replayed, so streaming behaviour is untouched and the log shows exactly the bytes
   # that actually moved (a response body the application never read is logged as absent). Fields
-  # `client_request_body` / `client_response_body` appear only when bytes flowed.
+  # `adapter_request_body` / `adapter_response_body` appear only when bytes flowed.
   log-request-body: never
   log-response-body: never
 
-  # Body SIZE measurement per direction (meters `client.request.body.size` / `client.response.body.size`,
+  # Body SIZE measurement per direction (meters `adapter.request.body.size` / `adapter.response.body.size`,
   # tagged by the URI template and the peer host). Deliberately independent of the log-*-body flags - a
   # metric must not appear and disappear with a logging flag. Measure-only installs a count-only
   # capture (nothing buffered); measured is what actually flowed, exact even beyond max-body-bytes.
   # Zero-byte bodies record no sample. The response side additionally records the counter
-  # `client.response.body.read` (tag `state` = unread | partial | complete): the tee mirrors what the
+  # `adapter.response.body.read` (tag `state` = unread | partial | complete): the tee mirrors what the
   # application CONSUMED, so this is the one signal that tells a body the peer sent but the application
   # dropped from a body that was never sent.
   measure-request-body-size: false
@@ -152,9 +152,9 @@ logging:
   level:
     # The exchange stream. INFO = every call (the default expectation); WARN = only failures, timeouts,
     # cancellations and slow calls; ERROR = only calls that threw. Severity and semantic are decoupled:
-    # dashboards key on the `client_outcome` field, the level only decides how loud - and whether - a
+    # dashboards key on the `adapter_outcome` field, the level only decides how loud - and whether - a
     # line is emitted.
-    http-client-exchange: INFO
+    http-adapter-exchange: INFO
     # The module's own logger: the immediate WARN breadcrumb when a call throws, and errors of the
     # logging itself. Keep at WARN or lower - silencing it hides the breadcrumb.
     eu.inqudium.legatium.restclient.logging: WARN

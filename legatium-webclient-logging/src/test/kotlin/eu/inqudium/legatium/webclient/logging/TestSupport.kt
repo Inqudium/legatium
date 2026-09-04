@@ -13,7 +13,7 @@ import org.springframework.web.reactive.function.client.ExchangeFunction
 import reactor.core.publisher.Mono
 import java.net.URI
 
-/** The key-value pairs of an event as a map, for assertions on the `client_*` family. */
+/** The key-value pairs of an event as a map, for assertions on the `adapter_*` family. */
 internal fun keyValues(event: ILoggingEvent): Map<String, Any?> = event.keyValuePairs?.associate { it.key to it.value } ?: emptyMap()
 
 /** An immutable outgoing request, as WebClient builds it. */

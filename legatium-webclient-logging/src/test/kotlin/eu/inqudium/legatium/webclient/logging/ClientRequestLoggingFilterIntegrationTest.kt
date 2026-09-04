@@ -35,12 +35,12 @@ import java.util.concurrent.TimeoutException
     classes = [IntegrationApp::class],
     webEnvironment = SpringBootTest.WebEnvironment.NONE,
     properties = [
-        "client-logging.log-request-body=always",
-        "client-logging.log-response-body=always",
-        "client-logging.response-headers.includes=Content-Type",
-        "client-logging.response-headers.unmasked=Content-Type",
-        "client-logging.request-headers.includes=X-Correlation-Id",
-        "client-logging.request-headers.unmasked=X-Correlation-Id",
+        "adapter-logging.log-request-body=always",
+        "adapter-logging.log-response-body=always",
+        "adapter-logging.response-headers.includes=Content-Type",
+        "adapter-logging.response-headers.unmasked=Content-Type",
+        "adapter-logging.request-headers.includes=X-Correlation-Id",
+        "adapter-logging.request-headers.unmasked=X-Correlation-Id",
         // The tracing bridge is on this test classpath for the tracing suite; excluded here, so the
         // calls are TRACELESS (an active bridge injects a traceparent into EVERY call, sampled or not)
         // and the correlation contract is what goes on the wire.
@@ -53,7 +53,7 @@ class ClientRequestLoggingFilterIntegrationTest {
     @Autowired
     private lateinit var webClientBuilder: WebClient.Builder
 
-    private val logger = LoggerFactory.getLogger("http-client-exchange") as Logger
+    private val logger = LoggerFactory.getLogger("http-adapter-exchange") as Logger
     private lateinit var appender: AwaitingAppender
 
     @BeforeEach
@@ -100,16 +100,16 @@ class ClientRequestLoggingFilterIntegrationTest {
         val event = appender.awaitEvents(1).single()
         assertThat(event.level).isEqualTo(Level.INFO)
         assertThat(event.formattedMessage)
-            .isEqualTo("Client http exchange POST ${peer.baseUrl}/things/7 -> 200 [client_request_id=${received.header("X-Correlation-Id")}]")
+            .isEqualTo("Client http exchange POST ${peer.baseUrl}/things/7 -> 200 [adapter_request_id=${received.header("X-Correlation-Id")}]")
         assertThat(keyValues(event))
-            .containsEntry("client_outcome", "success")
-            .containsEntry("client_url_host", peer.host)
-            .containsEntry("client_url_path", "/things/7")
-            .containsEntry("client_url_template", "${peer.baseUrl}/things/{id}")
-            .containsEntry("client_response_status_code", 200)
-            .containsEntry("client_request_body", "hello")
-            .containsEntry("client_response_body", """{"id":7,"echo":"hello"}""")
-        assertThat(keyValues(event)["client_response_headers"].toString()).contains("Content-Type:\"application/json\"")
+            .containsEntry("adapter_outcome", "success")
+            .containsEntry("adapter_url_host", peer.host)
+            .containsEntry("adapter_url_path", "/things/7")
+            .containsEntry("adapter_url_template", "${peer.baseUrl}/things/{id}")
+            .containsEntry("adapter_response_status_code", 200)
+            .containsEntry("adapter_request_body", "hello")
+            .containsEntry("adapter_response_body", """{"id":7,"echo":"hello"}""")
+        assertThat(keyValues(event)["adapter_response_headers"].toString()).contains("Content-Type:\"application/json\"")
         assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, received.header("X-Correlation-Id"))
     }
 
@@ -134,9 +134,9 @@ class ClientRequestLoggingFilterIntegrationTest {
         val event = appender.awaitEvents(1).single()
         assertThat(event.level).isEqualTo(Level.WARN)
         assertThat(keyValues(event))
-            .containsEntry("client_outcome", "failure")
-            .containsEntry("client_response_status_code", 500)
-            .containsEntry("client_response_body", "boom")
+            .containsEntry("adapter_outcome", "failure")
+            .containsEntry("adapter_response_status_code", 500)
+            .containsEntry("adapter_response_body", "boom")
     }
 
     @Test
@@ -160,7 +160,7 @@ class ClientRequestLoggingFilterIntegrationTest {
         val event = appender.awaitEvents(1).single()
         assertThat(event.level).isEqualTo(Level.ERROR)
         assertThat(event.formattedMessage).startsWith("Client http exchange GET http://127.0.0.1:1/things/1 -> - [")
-        assertThat(keyValues(event)).containsEntry("client_outcome", "failure").doesNotContainKey("client_response_status_code")
+        assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").doesNotContainKey("adapter_response_status_code")
     }
 
     @Test
@@ -192,7 +192,7 @@ class ClientRequestLoggingFilterIntegrationTest {
         assertThat(thrown).isInstanceOf(WebClientRequestException::class.java)
         val event = appender.awaitEvents(1).single()
         assertThat(event.level).isEqualTo(Level.WARN)
-        assertThat(keyValues(event)).containsEntry("client_outcome", "timeout").doesNotContainKey("client_response_status_code")
+        assertThat(keyValues(event)).containsEntry("adapter_outcome", "timeout").doesNotContainKey("adapter_response_status_code")
     }
 
     @Test
@@ -221,7 +221,7 @@ class ClientRequestLoggingFilterIntegrationTest {
         assertThat(Exceptions.unwrap(thrown)).isInstanceOf(TimeoutException::class.java)
         val event = appender.awaitEvents(1).single()
         assertThat(event.level).isEqualTo(Level.WARN)
-        assertThat(keyValues(event)).containsEntry("client_outcome", "cancelled").doesNotContainKey("client_response_status_code")
+        assertThat(keyValues(event)).containsEntry("adapter_outcome", "cancelled").doesNotContainKey("adapter_response_status_code")
     }
 
     @Test
@@ -242,8 +242,8 @@ class ClientRequestLoggingFilterIntegrationTest {
         assertThat(entity.statusCode.value()).isEqualTo(204)
         val event = appender.awaitEvents(1).single()
         assertThat(keyValues(event))
-            .containsEntry("client_response_status_code", 204)
-            .doesNotContainKeys("client_request_body", "client_response_body")
+            .containsEntry("adapter_response_status_code", 204)
+            .doesNotContainKeys("adapter_request_body", "adapter_response_body")
     }
 
     companion object {

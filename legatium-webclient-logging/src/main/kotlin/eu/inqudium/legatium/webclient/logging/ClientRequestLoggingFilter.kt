@@ -22,8 +22,8 @@ import java.net.URI
 
 /**
  * The WebClient twin of `legatium-restclient-logging`'s `ClientRequestLoggingInterceptor`: ONE
- * structured `client_*` line per outbound HTTP exchange, identical message and field format, identical
- * `client-logging.*` configuration (see [ClientLoggingProperties]). Stack-inherent differences to the
+ * structured `adapter_*` line per outbound HTTP exchange, identical message and field format, identical
+ * `adapter-logging.*` configuration (see [ClientLoggingProperties]). Stack-inherent differences to the
  * RestClient twin, all deliberate:
  *
  * - **Disposition vocabulary:** `cancelled` in addition to `success`/`failure`/`timeout` - a cancelled
@@ -45,7 +45,7 @@ import java.net.URI
  * that produces no response (connection refused, a connector timeout, a cancellation before the status
  * line) emits at the response `Mono`'s own error/cancel signal with `-> -` and no status. A response
  * whose body the application never subscribes to (and never releases) never completes - and stays open
- * on the `client.logging.exchanges.open` gauge, the module's liveness signal, rather than logging a
+ * on the `adapter.logging.exchanges.open` gauge, the module's liveness signal, rather than logging a
  * guess (every `retrieve`/`exchangeToMono`/`exchangeToFlux` path of `WebClient` subscribes or
  * releases; a raw `exchange()` caller owns that duty).
  *
@@ -68,7 +68,7 @@ import java.net.URI
  * ## Manual wiring: filters on one `MeterRegistry` share one metrics owner
  *
  * The module's meters are identified by name, so all filters constructed against the same registry
- * share a single internal metrics owner: the counters and the `client.logging.exchanges.open` gauge
+ * share a single internal metrics owner: the counters and the `adapter.logging.exchanges.open` gauge
  * report totals ACROSS those filters, not per filter. The auto-configuration wires exactly one filter
  * per context, where the distinction never shows.
  */
@@ -276,7 +276,7 @@ class ClientRequestLoggingFilter
             // RAW (still percent-encoded) path and query, as they go on the wire - twin parity with the
             // RestClient module, and the log-injection guard: java.net.URI's decoded getPath()/getQuery()
             // turn `%0A`/`%0D` into real line breaks that would forge lines in every plain-text sink
-            // (message, MDC client_route, fields). Activation matching keeps the decoded path.
+            // (message, MDC adapter_route, fields). Activation matching keeps the decoded path.
             val uri = request.url()
             val host = uri.host?.let { if (uri.port != -1) "$it:${uri.port}" else it }
             val path = uri.rawPath?.takeIf { it.isNotEmpty() } ?: "/"

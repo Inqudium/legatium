@@ -33,7 +33,7 @@ import kotlin.concurrent.withLock
  * ([readState]): the tee mirrors consumption, not transmission, so a response body the application
  * never subscribed to - or cancelled half-way - is invisible in the byte count alone. The response tee
  * marks the subscription and the completion signal; the emitter turns the state into the
- * `client.response.body.read` counter. Like every other mutation, the marks are no-ops once frozen: the
+ * `adapter.response.body.read` counter. Like every other mutation, the marks are no-ops once frozen: the
  * state is part of the emission snapshot.
  */
 internal class BoundedBodyCapture(

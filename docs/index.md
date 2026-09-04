@@ -2,7 +2,7 @@
 
 # Legatium
 
-Legatium logs **one structured `client_*` line per outbound HTTP exchange** —
+Legatium logs **one structured `adapter_*` line per outbound HTTP exchange** —
 named after the Roman *legatus*, the envoy a service sends to a foreign party,
 and the record of what came of it. Two auto-configured Spring Boot twins with
 identical fields and identical configuration: a RestClient/RestTemplate
@@ -22,7 +22,7 @@ sibling project [Limesium](https://github.com/Inqudium/limesium) records the
   headers, body and duration are final; the outcome (`success` / `failure` /
   `timeout`, plus `cancelled` on the reactive stack) is decoupled from the log
   level.
-- **A stable field contract.** The `client_*` wire names are a contract with
+- **A stable field contract.** The `adapter_*` wire names are a contract with
   the log index: each field owns its JSON shape, a badly typed value drops that
   field with a warning but never the event, and the Elasticsearch component
   template ships with the project — kept in lockstep with the code by contract
@@ -39,7 +39,7 @@ sibling project [Limesium](https://github.com/Inqudium/limesium) records the
   header values are masked by default to a stable `length:hash` fingerprint
   (keyed on request), plaintext being an explicit allowlist.
 - **Twin symmetry as an invariant.** Both modules expose the same fields
-  and the same `client-logging.*` properties; the shared reference
+  and the same `adapter-logging.*` properties; the shared reference
   configuration is contract-tested against both twins.
 - **A library, not a platform.** Auto-configured Spring Boot modules with
   no starter and no forced logging transitives; the host application
@@ -68,8 +68,8 @@ or, for `WebClient`:
 </dependency>
 ```
 
-Every `client-logging.*` key, with its default, is documented in the
-[configuration reference](https://github.com/Inqudium/legatium/blob/main/docs/client-logging-reference.yml) —
+Every `adapter-logging.*` key, with its default, is documented in the
+[configuration reference](https://github.com/Inqudium/legatium/blob/main/docs/adapter-logging-reference.yml) —
 copy the block and change only what you need.
 
 ## Documentation
@@ -80,7 +80,7 @@ copy the block and change only what you need.
 - **[WebClient guide](https://github.com/Inqudium/legatium/blob/main/legatium-webclient-logging/docs/GUIDE.md)** —
   the twin's guide, including the deliberate stack differences.
 - **[Elasticsearch mapping](elk/README.md)** — the ready-made component
-  template for the `client_*` fields.
+  template for the `adapter_*` fields.
 - **[Test evidence](https://inqudium.github.io/legatium/tests/test-evidence/)** —
   the generated inventory of the test suite: every test sentence plus its
   rationale, grouped by module and component.

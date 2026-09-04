@@ -68,7 +68,7 @@ class MdcScopeTest {
         // Success criteria: the install exception propagates as-is, and the two keys installed before it
         //   are gone from the MDC (pooled-thread hygiene).
         // Why it matters: half an identity on a pooled thread contaminates the next request's logs.
-        // Given: an adapter failing on client_route
+        // Given: an adapter failing on adapter_route
         installMdcAdapter(FailingAdapter(original, failPut = setOf(MdcKeys.ROUTE)))
 
         // When: the scope is opened
@@ -86,7 +86,7 @@ class MdcScopeTest {
         // Success criteria: close throws that failure, but the other keys were still restored.
         // Why it matters: a restoration loop that stops at the first failure leaves module-owned MDC on
         //   the thread for every later key - exactly the contamination the scope exists to prevent.
-        // Given: a scope opened against a healthy adapter, then an adapter failing on client_request_id
+        // Given: a scope opened against a healthy adapter, then an adapter failing on adapter_request_id
         val scope = MdcScope("corr-1", "GET", "https://api.example.com/things")
         installMdcAdapter(FailingAdapter(original, failRemove = setOf(MdcKeys.REQUEST_ID)))
 
@@ -101,7 +101,7 @@ class MdcScopeTest {
 
     @Test
     fun `should attach a failing rollback to the install exception instead of replacing it`() {
-        // Given: an adapter whose put of client_route fails AND whose remove of client_request_id fails
+        // Given: an adapter whose put of adapter_route fails AND whose remove of adapter_request_id fails
         installMdcAdapter(FailingAdapter(original, failPut = setOf(MdcKeys.ROUTE), failRemove = setOf(MdcKeys.REQUEST_ID)))
 
         // When: the scope is opened (install fails, rollback partially fails)

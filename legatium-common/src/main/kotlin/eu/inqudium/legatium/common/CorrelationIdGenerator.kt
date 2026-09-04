@@ -39,7 +39,7 @@ fun interface CorrelationIdGenerator {
  * generator draws randomness exactly once, at construction time, and the per-call path is a
  * single atomic increment plus a radix conversion.
  *
- * The latency difference is unlikely to be visible in a client-logging pipeline; the structural
+ * The latency difference is unlikely to be visible in a adapter-logging pipeline; the structural
  * argument — no shared lock, no I/O in the hot path — is what motivates this implementation.
  *
  * ## Uniqueness model

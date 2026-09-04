@@ -27,7 +27,7 @@ import java.nio.charset.Charset
  * ([readState]): the tee mirrors consumption, not transmission, so a response body the application never
  * read - or stopped reading half-way - is invisible in the byte count alone. The response tee marks the
  * start of consumption and the end of the stream; the emitter turns the state into the
- * `client.response.body.read` counter.
+ * `adapter.response.body.read` counter.
  */
 class BoundedBodyCapture(
     private val maxBytes: Int,

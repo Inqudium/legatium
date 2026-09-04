@@ -40,7 +40,7 @@ class ClientRequestLoggingFilterTest {
     private val meterRegistry = SimpleMeterRegistry()
     private val properties =
         ClientLoggingProperties(
-            loggerName = "http-client-exchange-reactive-core-test",
+            loggerName = "http-adapter-exchange-reactive-core-test",
             slowRequestThreshold = Duration.ofMillis(200),
         )
     private val filter =
@@ -75,7 +75,7 @@ class ClientRequestLoggingFilterTest {
     inner class `The exchange line` {
         @Test
         fun `should log the identical line format of the RestClient twin when the body completes`() {
-            // What is tested: the format contract - message and client_* key-values must be
+            // What is tested: the format contract - message and adapter_* key-values must be
             //   indistinguishable from legatium-restclient-logging's output.
             // Success criteria: the exact message string and the full field family for a successful GET,
             //   42 ms of measured work between send and the body's completion.
@@ -94,15 +94,15 @@ class ClientRequestLoggingFilterTest {
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.INFO)
             assertThat(event.formattedMessage)
-                .isEqualTo("Client http exchange GET https://api.example.com/things -> 200 [client_request_id=generated-42]")
+                .isEqualTo("Client http exchange GET https://api.example.com/things -> 200 [adapter_request_id=generated-42]")
             assertThat(keyValues(event))
-                .containsEntry("client_outcome", "success")
-                .containsEntry("client_request_method", "GET")
-                .containsEntry("client_url_host", "api.example.com")
-                .containsEntry("client_url_path", "/things")
-                .containsEntry("client_response_status_code", 200)
-                .containsEntry("client_duration_ms", 42L)
-                .doesNotContainKey("client_slow")
+                .containsEntry("adapter_outcome", "success")
+                .containsEntry("adapter_request_method", "GET")
+                .containsEntry("adapter_url_host", "api.example.com")
+                .containsEntry("adapter_url_path", "/things")
+                .containsEntry("adapter_response_status_code", 200)
+                .containsEntry("adapter_duration_ms", 42L)
+                .doesNotContainKey("adapter_slow")
             assertThat(event.mdcPropertyMap)
                 .containsEntry(MdcKeys.REQUEST_ID, "generated-42")
                 .containsEntry(MdcKeys.REQUEST_METHOD, "GET")
@@ -143,10 +143,10 @@ class ClientRequestLoggingFilterTest {
             val event = log.events.single()
             assertThat(event.formattedMessage).startsWith("Client http exchange GET http://localhost:8081/things/7 -> 200")
             assertThat(keyValues(event))
-                .containsEntry("client_url_host", "localhost:8081")
-                .containsEntry("client_url_path", "/things/7")
-                .containsEntry("client_url_query", "page=2")
-                .containsEntry("client_url_template", "http://localhost:8081/things/{id}")
+                .containsEntry("adapter_url_host", "localhost:8081")
+                .containsEntry("adapter_url_path", "/things/7")
+                .containsEntry("adapter_url_query", "page=2")
+                .containsEntry("adapter_url_template", "http://localhost:8081/things/{id}")
         }
 
         @Test
@@ -162,8 +162,8 @@ class ClientRequestLoggingFilterTest {
             // When/Then
             val event = log.events.single()
             assertThat(event.formattedMessage)
-                .isEqualTo("Client http exchange GET https://api.example.com/th%0Aings -> 200 [client_request_id=generated-42]")
-            assertThat(keyValues(event)).containsEntry("client_url_path", "/th%0Aings").containsEntry("client_url_query", "x=%0D%0Ay")
+                .isEqualTo("Client http exchange GET https://api.example.com/th%0Aings -> 200 [adapter_request_id=generated-42]")
+            assertThat(keyValues(event)).containsEntry("adapter_url_path", "/th%0Aings").containsEntry("adapter_url_query", "x=%0D%0Ay")
             assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.ROUTE, "https://api.example.com/th%0Aings")
             assertThat(event.formattedMessage + keyValues(event).values.joinToString() + event.mdcPropertyMap.values.joinToString())
                 .doesNotContain("\n", "\r")
@@ -173,7 +173,7 @@ class ClientRequestLoggingFilterTest {
         fun `should preserve the ambient MDC beside the identity on the emitted event`() {
             // What is tested: the emission scope is an additive overlay - the completing thread's MDC
             //   (here: the caller's, since everything runs synchronously) stays visible.
-            // Success criteria: the event carries the seeded key beside client_request_id; afterwards
+            // Success criteria: the event carries the seeded key beside adapter_request_id; afterwards
             //   the thread has the seeded key and no client key.
             // Why it matters: the client line must join an inbound request's line by MDC alone.
             // Given
@@ -231,13 +231,13 @@ class ClientRequestLoggingFilterTest {
 
             // Then: the very same request object went to the connector
             assertThat(sent).isSameAs(original)
-            assertThat(log.events.single().formattedMessage).contains("[client_request_id=caller-id]")
+            assertThat(log.events.single().formattedMessage).contains("[adapter_request_id=caller-id]")
         }
 
         @Test
         fun `should use the traceparent trace id as the request id and add no correlation header`() {
             // What is tested: the identity decision of ADR-0002 on the outbound side.
-            // Success criteria: client_request_id equals the trace id; the connector got the caller's
+            // Success criteria: adapter_request_id equals the trace id; the connector got the caller's
             //   request untouched although it carried a correlation header too.
             // Why it matters: observational neutrality on a traced call.
             // Given
@@ -265,7 +265,7 @@ class ClientRequestLoggingFilterTest {
                 .containsEntry("traceId", "0af7651916cd43dd8448eb211c80319c")
                 .containsEntry("spanId", "b7ad6b7169203331")
             assertThat(event.formattedMessage)
-                .endsWith("[client_request_id=0af7651916cd43dd8448eb211c80319c traceId=0af7651916cd43dd8448eb211c80319c spanId=b7ad6b7169203331]")
+                .endsWith("[adapter_request_id=0af7651916cd43dd8448eb211c80319c traceId=0af7651916cd43dd8448eb211c80319c spanId=b7ad6b7169203331]")
         }
 
         @Test
@@ -299,7 +299,7 @@ class ClientRequestLoggingFilterTest {
             // Then
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.WARN)
-            assertThat(keyValues(event)).containsEntry("client_outcome", "failure").containsEntry("client_response_status_code", 503)
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").containsEntry("adapter_response_status_code", 503)
         }
 
         @Test
@@ -322,7 +322,7 @@ class ClientRequestLoggingFilterTest {
             assertThat(event.level).isEqualTo(Level.ERROR)
             assertThat(event.formattedMessage).contains("-> - [")
             assertThat(event.throwableProxy?.message).isEqualTo("Connection refused")
-            assertThat(keyValues(event)).containsEntry("client_outcome", "failure").doesNotContainKey("client_response_status_code")
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").doesNotContainKey("adapter_response_status_code")
         }
 
         @Test
@@ -336,7 +336,7 @@ class ClientRequestLoggingFilterTest {
             // Then
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.WARN)
-            assertThat(keyValues(event)).containsEntry("client_outcome", "timeout").doesNotContainKey("client_response_status_code")
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "timeout").doesNotContainKey("adapter_response_status_code")
         }
 
         @Test
@@ -355,7 +355,7 @@ class ClientRequestLoggingFilterTest {
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.WARN)
             assertThat(event.formattedMessage).contains("-> - [")
-            assertThat(keyValues(event)).containsEntry("client_outcome", "cancelled").doesNotContainKey("client_response_status_code")
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "cancelled").doesNotContainKey("adapter_response_status_code")
         }
 
         @Test
@@ -373,7 +373,7 @@ class ClientRequestLoggingFilterTest {
             // Then
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.WARN)
-            assertThat(keyValues(event)).containsEntry("client_outcome", "cancelled").containsEntry("client_response_status_code", 200)
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "cancelled").containsEntry("adapter_response_status_code", 200)
         }
 
         @Test
@@ -391,7 +391,7 @@ class ClientRequestLoggingFilterTest {
             assertThat(thrown).hasMessageContaining("reset")
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.ERROR)
-            assertThat(keyValues(event)).containsEntry("client_outcome", "failure").containsEntry("client_response_status_code", 200)
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").containsEntry("adapter_response_status_code", 200)
         }
 
         @Test
@@ -405,7 +405,7 @@ class ClientRequestLoggingFilterTest {
             // Then
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.WARN)
-            assertThat(keyValues(event)).containsEntry("client_slow", true).containsEntry("client_outcome", "success")
+            assertThat(keyValues(event)).containsEntry("adapter_slow", true).containsEntry("adapter_outcome", "success")
         }
 
         @Test
@@ -416,7 +416,7 @@ class ClientRequestLoggingFilterTest {
             fun slowFlagAfter(elapsedNanos: Long): Boolean {
                 log.appender.list.clear()
                 precise.call(request(), ExchangeFunction { req -> ticker.addAndGet(elapsedNanos).let { answering().exchange(req) } })
-                return keyValues(log.events.single()).containsKey("client_slow")
+                return keyValues(log.events.single()).containsKey("adapter_slow")
             }
 
             // When/Then
@@ -437,7 +437,7 @@ class ClientRequestLoggingFilterTest {
                 .verify()
 
             // Then
-            assertThat(keyValues(log.events.single())).containsEntry("client_outcome", "failure")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_outcome", "failure")
             assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
         }
     }
@@ -477,7 +477,7 @@ class ClientRequestLoggingFilterTest {
 
             // Then
             assertThat(log.events).hasSize(1)
-            assertThat(keyValues(log.events.single())).containsEntry("client_url_path", "/api/things")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_url_path", "/api/things")
         }
 
         @Test
@@ -492,7 +492,7 @@ class ClientRequestLoggingFilterTest {
 
             // Then
             assertThat(log.events).hasSize(1)
-            assertThat(keyValues(log.events.single())).containsEntry("client_url_path", "/%61pi/things")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_url_path", "/%61pi/things")
         }
 
         @Test
@@ -521,11 +521,11 @@ class ClientRequestLoggingFilterTest {
 
             // Then
             assertThat(eventsAtCallTime)
-                .containsExactly("Client http exchange started POST https://api.example.com/things [client_request_id=generated-42]")
+                .containsExactly("Client http exchange started POST https://api.example.com/things [adapter_request_id=generated-42]")
             assertThat(log.events).hasSize(2)
-            assertThat(keyValues(log.events.first())).doesNotContainKey("client_outcome")
+            assertThat(keyValues(log.events.first())).doesNotContainKey("adapter_outcome")
             assertThat(log.events.first().mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42")
-            assertThat(keyValues(log.events.last())).containsEntry("client_outcome", "success")
+            assertThat(keyValues(log.events.last())).containsEntry("adapter_outcome", "success")
         }
     }
 

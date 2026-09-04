@@ -2,7 +2,7 @@ package eu.inqudium.legatium.common
 
 /**
  * One header section (`request-headers` / `response-headers`): which header names are logged, and which
- * of the logged values appear in plaintext. Shared by both client-logging twins (ADR-0003): selection
+ * of the logged values appear in plaintext. Shared by both adapter-logging twins (ADR-0003): selection
  * semantics are a cross-twin contract.
  *
  * MASKED BY DEFAULT (ADR-0005): a logged header's value is replaced by the [HeaderValueMasker]'s

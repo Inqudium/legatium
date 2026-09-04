@@ -29,7 +29,7 @@ import java.time.Duration
  *
  * ## Levels
  *
- * The level carries severity only, `client_outcome` the semantic: ERROR when the call errored (no
+ * The level carries severity only, `adapter_outcome` the semantic: ERROR when the call errored (no
  * response, or the body errored), WARN for a timeout, a cancellation, a 5xx answer, or an exchange that
  * reached [ClientLoggingProperties.slowRequestThreshold], INFO otherwise. Severity and outcome are
  * resolved BEFORE the event is built, so a disabled level costs no assembly.

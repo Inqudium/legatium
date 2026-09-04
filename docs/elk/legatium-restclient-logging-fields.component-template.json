@@ -2,58 +2,58 @@
   "template": {
     "mappings": {
       "properties": {
-        "client_outcome": {
+        "adapter_outcome": {
           "type": "keyword"
         },
-        "client_duration_ms": {
+        "adapter_duration_ms": {
           "type": "long",
           "meta": {
             "unit": "ms",
             "metric_type": "gauge"
           }
         },
-        "client_request_method": {
+        "adapter_request_method": {
           "type": "keyword"
         },
-        "client_response_status_code": {
+        "adapter_response_status_code": {
           "type": "short"
         },
 
-        "client_url_host": {
+        "adapter_url_host": {
           "type": "keyword"
         },
-        "client_url_template": {
+        "adapter_url_template": {
           "type": "keyword"
         },
-        "client_url_path": {
+        "adapter_url_path": {
           "type": "keyword",
           "doc_values": false
         },
-        "client_url_query": {
+        "adapter_url_query": {
           "type": "keyword",
           "doc_values": false
         },
 
-        "client_slow": {
+        "adapter_slow": {
           "type": "boolean"
         },
 
-        "client_request_headers": {
+        "adapter_request_headers": {
           "type": "keyword",
           "index": false,
           "doc_values": false
         },
-        "client_response_headers": {
+        "adapter_response_headers": {
           "type": "keyword",
           "index": false,
           "doc_values": false
         },
-        "client_request_body": {
+        "adapter_request_body": {
           "type": "keyword",
           "index": false,
           "doc_values": false
         },
-        "client_response_body": {
+        "adapter_response_body": {
           "type": "keyword",
           "index": false,
           "doc_values": false
@@ -62,7 +62,7 @@
     }
   },
   "_meta": {
-    "description": "Field mappings for the client_* exchange-log fields emitted by the legatium-restclient-logging and legatium-webclient-logging modules (one shared field enum, inlined into both). This is the DEFINITION, not an extract: the family is not yet part of any upstream data-stream mapping, and whoever wires the module into a log pipeline composes this template there. The MDC-carried fields (client_request_id, client_method, client_route, traceId, spanId) are deliberately absent - how MDC entries land in the document is the encoder's decision, not this module's.",
+    "description": "Field mappings for the adapter_* exchange-log fields emitted by the legatium-restclient-logging and legatium-webclient-logging modules (one shared field enum, inlined into both). This is the DEFINITION, not an extract: the family is not yet part of any upstream data-stream mapping, and whoever wires the module into a log pipeline composes this template there. The MDC-carried fields (adapter_request_id, adapter_method, adapter_route, traceId, spanId) are deliberately absent - how MDC entries land in the document is the encoder's decision, not this module's.",
     "source": "docs/elk/README.md",
     "authority": "legatium-common/src/main/kotlin/eu/inqudium/legatium/common/ClientLogFields.kt"
   }

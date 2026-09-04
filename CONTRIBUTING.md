@@ -13,7 +13,7 @@ what the project expects from changes, and how to submit them.
 
 ## Project scope
 
-Legatium does one thing: emit exactly one structured `client_*` log line per outbound
+Legatium does one thing: emit exactly one structured `adapter_*` log line per outbound
 HTTP exchange, via two paradigm twins (RestClient/RestTemplate and WebClient) with
 **identical fields and identical configuration**. Contributions that widen this scope
 (metrics frameworks, tracing backends, other protocols, other clients) are likely out of
@@ -22,7 +22,7 @@ scope — ask first. The inbound side belongs to the sibling project
 
 The twin symmetry is a hard invariant: a new field or configuration property must land
 in **both** modules, with the shared contract in
-`docs/client-logging-reference.yml` updated and the
+`docs/adapter-logging-reference.yml` updated and the
 contract tests passing in both.
 
 ## Development setup
@@ -151,5 +151,5 @@ Please include:
 
 - Legatium version and module (`legatium-restclient-logging` or `legatium-webclient-logging`)
 - Spring Boot version and client engine (JDK `HttpClient`, Apache, Reactor Netty, ...)
-- Relevant configuration (`client-logging.*` properties)
+- Relevant configuration (`adapter-logging.*` properties)
 - What you expected, what happened, and a minimal reproduction if possible

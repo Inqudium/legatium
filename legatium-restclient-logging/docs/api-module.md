@@ -1,7 +1,7 @@
 # Module legatium-restclient-logging
 
 Auto-configured `RestClient`/`RestTemplate` interceptor for Spring Boot
-applications that logs one structured `client_*` line per outbound HTTP
+applications that logs one structured `adapter_*` line per outbound HTTP
 exchange and carries the exchange identity in the MDC while the wire call
 runs. The field-and-configuration-identical WebClient twin is
 `legatium-webclient-logging`; the long-form guide lives in

@@ -10,7 +10,7 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
 /**
- * Literal pins of the contracts DUPLICATED across the client-logging twins that the cross-module
+ * Literal pins of the contracts DUPLICATED across the adapter-logging twins that the cross-module
  * lockstep tests do not cover: meter names, MDC key values, the masking fingerprint, and the message
  * text of the arrival and exchange lines. Both twins carry this test with the identical literals - a
  * drift in either module breaks that module's build.
@@ -23,13 +23,13 @@ class TwinContractTest {
         // Success criteria: every meter name matches the literal both twins ship.
         // Why it matters: a renamed meter in ONE twin would split every dashboard by stack - silently.
         // Given/When/Then
-        assertThat(ClientLoggingMetrics.FAIL_OPEN_METER).isEqualTo("client.logging.failopen")
-        assertThat(ClientLoggingMetrics.EVENTS_METER).isEqualTo("client.logging.events")
-        assertThat(ClientLoggingMetrics.OPEN_EXCHANGES_METER).isEqualTo("client.logging.exchanges.open")
-        assertThat(ClientLoggingMetrics.CORRELATION_METER).isEqualTo("client.logging.correlation.id")
-        assertThat(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).isEqualTo("client.request.body.size")
-        assertThat(ClientLoggingMetrics.RESPONSE_BODY_SIZE_METER).isEqualTo("client.response.body.size")
-        assertThat(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).isEqualTo("client.response.body.read")
+        assertThat(ClientLoggingMetrics.FAIL_OPEN_METER).isEqualTo("adapter.logging.failopen")
+        assertThat(ClientLoggingMetrics.EVENTS_METER).isEqualTo("adapter.logging.events")
+        assertThat(ClientLoggingMetrics.OPEN_EXCHANGES_METER).isEqualTo("adapter.logging.exchanges.open")
+        assertThat(ClientLoggingMetrics.CORRELATION_METER).isEqualTo("adapter.logging.correlation.id")
+        assertThat(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).isEqualTo("adapter.request.body.size")
+        assertThat(ClientLoggingMetrics.RESPONSE_BODY_SIZE_METER).isEqualTo("adapter.response.body.size")
+        assertThat(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).isEqualTo("adapter.response.body.read")
         assertThat(ClientLoggingMetrics.UNTEMPLATED_URI).isEqualTo("UNKNOWN")
         assertThat(ClientLoggingMetrics.UNKNOWN_HOST).isEqualTo("UNKNOWN")
     }
@@ -47,9 +47,9 @@ class TwinContractTest {
     fun `should pin the MDC keys to the literal twin contract`() {
         // Given/When/Then: the literal MDC keys, pinned - the client family beside limesium's
         //   endpoint family, and Boot's own trace keys for the join
-        assertThat(MdcKeys.REQUEST_ID).isEqualTo("client_request_id")
-        assertThat(MdcKeys.REQUEST_METHOD).isEqualTo("client_method")
-        assertThat(MdcKeys.ROUTE).isEqualTo("client_route")
+        assertThat(MdcKeys.REQUEST_ID).isEqualTo("adapter_request_id")
+        assertThat(MdcKeys.REQUEST_METHOD).isEqualTo("adapter_method")
+        assertThat(MdcKeys.ROUTE).isEqualTo("adapter_route")
         assertThat(TraceMdcKeys.TRACE_ID).isEqualTo("traceId")
         assertThat(TraceMdcKeys.SPAN_ID).isEqualTo("spanId")
     }
@@ -80,7 +80,7 @@ class TwinContractTest {
         // Why it matters: plain-text appenders and the README's parity promise key on this text; a
         //   divergence in one twin would otherwise ship silently.
         // Given
-        val properties = ClientLoggingProperties(loggerName = "http-client-exchange-twin-message-test", logRequestStart = true)
+        val properties = ClientLoggingProperties(loggerName = "http-adapter-exchange-twin-message-test", logRequestStart = true)
         val interceptor = ClientRequestLoggingInterceptor(properties, { 0L }, { "generated-42" }, SimpleMeterRegistry())
         val log = CapturedLogger(properties.loggerName)
         try {
@@ -90,8 +90,8 @@ class TwinContractTest {
             // Then: the literal messages, identical in both twins
             assertThat(log.events.map { it.formattedMessage })
                 .containsExactly(
-                    "Client http exchange started GET https://api.example.com/things [client_request_id=generated-42]",
-                    "Client http exchange GET https://api.example.com/things -> 200 [client_request_id=generated-42]",
+                    "Client http exchange started GET https://api.example.com/things [adapter_request_id=generated-42]",
+                    "Client http exchange GET https://api.example.com/things -> 200 [adapter_request_id=generated-42]",
                 )
         } finally {
             log.detach()

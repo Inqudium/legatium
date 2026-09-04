@@ -1,8 +1,8 @@
 # legatium-webclient-logging
 
 The **WebClient twin of [`legatium-restclient-logging`](../legatium-restclient-logging/README.md)**: an
-auto-configured `ExchangeFilterFunction` that logs one structured `client_*` line per outbound HTTP
-exchange — with the **identical message format, identical field family, identical `client-logging.*`
+auto-configured `ExchangeFilterFunction` that logs one structured `adapter_*` line per outbound HTTP
+exchange — with the **identical message format, identical field family, identical `adapter-logging.*`
 configuration and the identical meters**. A dashboard, alert, or index mapping must not care which
 client produced an event.
 
@@ -12,16 +12,16 @@ metrics and the stack-specific behaviours — is [`docs/GUIDE.md`](docs/GUIDE.md
 The RestClient module is the reference implementation; its documentation applies here too:
 
 - **Configuration:** the one complete commented reference for both twins is the repository-shared
-  [`/docs/client-logging-reference.yml`](../docs/client-logging-reference.yml) — bound by
+  [`/docs/adapter-logging-reference.yml`](../docs/adapter-logging-reference.yml) — bound by
   `ClientLoggingReferenceConfigTest` in `legatium-common` against the one `ClientLoggingProperties`
   class both twins inline, so the namespace cannot drift from the code, and the twins cannot drift
   from each other by construction.
 - **Index mapping:** the one component template for both stacks is the repository-shared
   [`/docs/elk/`](../docs/elk/README.md) — bound by `ClientLogFieldTest` in `legatium-common` against
   the one `ClientLogField` enum both twins inline.
-- **Metrics:** the same six meters (`client.logging.failopen`, `client.logging.events`,
-  `client.logging.exchanges.open`, `client.logging.correlation.id`, `client.request/response.body.size`,
-  `client.response.body.read`), consumed from the host's `MeterRegistry`, never exported.
+- **Metrics:** the same six meters (`adapter.logging.failopen`, `adapter.logging.events`,
+  `adapter.logging.exchanges.open`, `adapter.logging.correlation.id`, `adapter.request/response.body.size`,
+  `adapter.response.body.read`), consumed from the host's `MeterRegistry`, never exported.
 
 ## Deliberate stack differences
 
@@ -48,8 +48,8 @@ README and guide.
 
 The **byte-identical** part of the twins' shared layer (the `traceparent` parser with its fuzz target,
 the injectable time/id interfaces, the fail-open helpers, the MDC keys and scope, the header sections
-with the masking fingerprint, the timeout classification, the `client_*` field enum and the
-`client-logging.*` properties class) lives in the internal `legatium-common` module and is **inlined
+with the masking fingerprint, the timeout classification, the `adapter_*` field enum and the
+`adapter-logging.*` properties class) lives in the internal `legatium-common` module and is **inlined
 into this jar** by the Maven Shade plugin
 ([ADR-0003](../docs/adr/ADR-0003-legatium-common-inlined-by-shade.md)): consumers add exactly one
 artifact, the published POM carries no extra dependency, and `legatium-common` itself is never

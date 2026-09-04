@@ -11,7 +11,7 @@
 
     <artifactId>legatium-webclient-logging</artifactId>
     <name>legatium-webclient-logging</name>
-    <description>WebClient twin of legatium-restclient-logging: one structured client_* line per outbound HTTP exchange, identical fields and configuration</description>
+    <description>WebClient twin of legatium-restclient-logging: one structured adapter_* line per outbound HTTP exchange, identical fields and configuration</description>
 
     <dependencies>
         <!-- The shared twin code (ADR-0003). Inlined into this jar by the Shade plugin at package

@@ -25,12 +25,12 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Header selection/masking and the body tee of [ClientRequestLoggingInterceptor]: what reaches the
- * `client_request_headers` / `client_response_headers` / `client_request_body` / `client_response_body`
+ * `adapter_request_headers` / `adapter_response_headers` / `adapter_request_body` / `adapter_response_body`
  * fields, and what the response tee observes about the application's consumption.
  */
 class ClientRequestLoggingInterceptorBodyAndHeaderTest {
     private val ticker = AtomicLong(0)
-    private val base = ClientLoggingProperties(loggerName = "http-client-exchange-body-header-test")
+    private val base = ClientLoggingProperties(loggerName = "http-adapter-exchange-body-header-test")
     private lateinit var log: CapturedLogger
 
     @BeforeEach
@@ -76,7 +76,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             interceptor.intercept(request, ByteArray(0), answering()).consumeAndClose()
 
             // Then
-            val rendered = keyValues(log.events.single())["client_request_headers"].toString()
+            val rendered = keyValues(log.events.single())["adapter_request_headers"].toString()
             assertThat(rendered).contains("Accept:\"application/json, text/plain\"")
             assertThat(rendered).contains("Authorization:\"${HeaderValueMasker.DEFAULT.mask("Bearer secret-token")}\"")
             assertThat(rendered).doesNotContain("secret-token")
@@ -111,8 +111,8 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
 
             // Then
             val fields = keyValues(log.events.single())
-            assertThat(fields["client_request_headers"].toString()).isEqualTo("[Authorization:\"hmac:19\"]")
-            assertThat(fields["client_response_headers"].toString()).isEqualTo("[Set-Cookie:\"hmac:9\"]")
+            assertThat(fields["adapter_request_headers"].toString()).isEqualTo("[Authorization:\"hmac:19\"]")
+            assertThat(fields["adapter_response_headers"].toString()).isEqualTo("[Set-Cookie:\"hmac:9\"]")
         }
 
         @Test
@@ -135,7 +135,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             interceptor.intercept(request(), ByteArray(0), execution).consumeAndClose()
 
             // Then
-            val rendered = keyValues(log.events.single())["client_response_headers"].toString()
+            val rendered = keyValues(log.events.single())["adapter_response_headers"].toString()
             assertThat(rendered).contains("Content-Type:\"text/plain\"")
             assertThat(rendered).doesNotContain("Set-Cookie")
         }
@@ -155,7 +155,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             interceptor.intercept(request, ByteArray(0), answering()).consumeAndClose()
 
             // Then
-            val rendered = keyValues(log.events.single())["client_request_headers"].toString()
+            val rendered = keyValues(log.events.single())["adapter_request_headers"].toString()
             assertThat(rendered).contains("Authorization:\"${HeaderValueMasker.DEFAULT.mask("Bearer secret-token")}\"")
             assertThat(rendered).doesNotContain("secret-token")
         }
@@ -166,7 +166,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             interceptorWith(base).intercept(request().apply { headers.set("Accept", "*/*") }, ByteArray(0), answering()).consumeAndClose()
 
             // When/Then
-            assertThat(keyValues(log.events.single())).doesNotContainKeys("client_request_headers", "client_response_headers")
+            assertThat(keyValues(log.events.single())).doesNotContainKeys("adapter_request_headers", "adapter_response_headers")
         }
     }
 
@@ -182,7 +182,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             interceptor.intercept(request, """{"name":"thing"}""".toByteArray(), answering()).consumeAndClose()
 
             // Then
-            assertThat(keyValues(log.events.single())).containsEntry("client_request_body", """{"name":"thing"}""")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_request_body", """{"name":"thing"}""")
         }
 
         @Test
@@ -194,7 +194,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             interceptor.intercept(request(method = HttpMethod.POST), "0123456789".toByteArray(), answering()).consumeAndClose()
 
             // Then
-            assertThat(keyValues(log.events.single())).containsEntry("client_request_body", "0123... [truncated, 10 bytes total]")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_request_body", "0123... [truncated, 10 bytes total]")
         }
 
         @Test
@@ -210,7 +210,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             interceptor.intercept(request, "café".toByteArray(StandardCharsets.ISO_8859_1), answering()).consumeAndClose()
 
             // Then
-            assertThat(keyValues(log.events.single())).containsEntry("client_request_body", "café")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_request_body", "café")
         }
 
         @Test
@@ -219,7 +219,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             interceptorWith(base.copy(logRequestBody = BodyLogMode.ALWAYS)).intercept(request(), ByteArray(0), answering()).consumeAndClose()
 
             // Then
-            assertThat(keyValues(log.events.single())).doesNotContainKey("client_request_body")
+            assertThat(keyValues(log.events.single())).doesNotContainKey("adapter_request_body")
         }
     }
 
@@ -235,19 +235,19 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
 
             // Then
             assertThat(body).isEqualTo("hello")
-            assertThat(keyValues(log.events.single())).containsEntry("client_response_body", "hello")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_response_body", "hello")
         }
 
         @Test
         fun `should omit the response body key when the application never opened the body`() {
             // What is tested: the tee's truthfulness - a body the application never read flows nowhere.
-            // Success criteria: no client_response_body key, rather than an empty or fabricated value.
+            // Success criteria: no adapter_response_body key, rather than an empty or fabricated value.
             // Why it matters: 'logged' must mean 'actually flowed'.
             // Given/When: a bodiless consumption (toBodilessEntity-style: close without reading)
             interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS)).intercept(request(), ByteArray(0), answering(body = "unread")).close()
 
             // Then
-            assertThat(keyValues(log.events.single())).doesNotContainKey("client_response_body")
+            assertThat(keyValues(log.events.single())).doesNotContainKey("adapter_response_body")
         }
 
         @Test
@@ -259,7 +259,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             response.close()
 
             // When/Then: what flowed, with the truthful count - not Content-Length
-            assertThat(keyValues(log.events.single())).containsEntry("client_response_body", "abc")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_response_body", "abc")
         }
 
         @Test
@@ -271,7 +271,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             interceptor.intercept(request(), ByteArray(0), answering(body = "0123456789")).consumeAndClose()
 
             // Then
-            assertThat(keyValues(log.events.single())).containsEntry("client_response_body", "0123... [truncated, 10 bytes total]")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_response_body", "0123... [truncated, 10 bytes total]")
         }
 
         @Test
@@ -290,7 +290,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             interceptor.intercept(request(), ByteArray(0), latinExecution).consumeAndClose()
 
             // Then
-            assertThat(keyValues(log.events.single())).containsEntry("client_response_body", "café")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_response_body", "café")
         }
 
         @Test
@@ -327,7 +327,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
 
             // When/Then
             assertThat(body).isEqualTo("raw")
-            assertThat(keyValues(log.events.single())).doesNotContainKey("client_response_body")
+            assertThat(keyValues(log.events.single())).doesNotContainKey("adapter_response_body")
         }
     }
 
@@ -347,8 +347,8 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Then
             assertThat(body).isEqualTo("received")
             assertThat(keyValues(log.events.single()))
-                .containsEntry("client_outcome", "success")
-                .doesNotContainKeys("client_request_body", "client_response_body")
+                .containsEntry("adapter_outcome", "success")
+                .doesNotContainKeys("adapter_request_body", "adapter_response_body")
         }
 
         @Test
@@ -360,9 +360,9 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
 
             // Then
             assertThat(keyValues(log.events.single()))
-                .containsEntry("client_outcome", "failure")
-                .containsEntry("client_request_body", "sent")
-                .containsEntry("client_response_body", "upstream down")
+                .containsEntry("adapter_outcome", "failure")
+                .containsEntry("adapter_request_body", "sent")
+                .containsEntry("adapter_response_body", "upstream down")
         }
 
         @Test
@@ -376,9 +376,9 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Then: the request body that was captured before the outcome was known is on the line
             assertThat(thrown).isInstanceOf(IOException::class.java)
             assertThat(keyValues(log.events.single()))
-                .containsEntry("client_outcome", "failure")
-                .containsEntry("client_request_body", "sent")
-                .doesNotContainKey("client_response_body")
+                .containsEntry("adapter_outcome", "failure")
+                .containsEntry("adapter_request_body", "sent")
+                .doesNotContainKey("adapter_response_body")
         }
 
         @Test
@@ -395,9 +395,9 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
 
             // Then
             assertThat(keyValues(log.events.single()))
-                .containsEntry("client_outcome", "success")
-                .containsEntry("client_request_body", "sent")
-                .containsEntry("client_response_body", "no such thing")
+                .containsEntry("adapter_outcome", "success")
+                .containsEntry("adapter_request_body", "sent")
+                .containsEntry("adapter_response_body", "no such thing")
         }
 
         @Test
@@ -411,7 +411,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
 
             // Then: the sample is recorded, the field is not
             assertThat(registry.get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).summary().totalAmount()).isEqualTo(4.0)
-            assertThat(keyValues(log.events.single())).doesNotContainKey("client_request_body")
+            assertThat(keyValues(log.events.single())).doesNotContainKey("adapter_request_body")
         }
     }
 }

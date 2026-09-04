@@ -35,7 +35,7 @@ class ClientRequestLoggingTracingIntegrationTest {
 
     @BeforeEach
     fun setUp() {
-        log = CapturedLogger("http-client-exchange")
+        log = CapturedLogger("http-adapter-exchange")
         peer.received.clear()
     }
 

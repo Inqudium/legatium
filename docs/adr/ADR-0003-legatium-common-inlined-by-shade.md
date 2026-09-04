@@ -24,7 +24,7 @@ each twin inlines it into its own jar with the Maven Shade plugin;
   semantics, with unit test and fuzz target) and `HeaderValueMasker` (the
   injectable masking, with the fingerprint default),
   `BodyReadState`/`decodeTruncated`, `Timeouts` (the classification that
-  makes `client_outcome=timeout` mean the same thing on both stacks), and -
+  makes `adapter_outcome=timeout` mean the same thing on both stacks), and -
   since the amendments below - the `ClientLogField` enum with its builder
   extensions and the `ClientLoggingProperties` binding. Package:
   `eu.inqudium.legatium.common`.
@@ -93,7 +93,7 @@ limesium, whose twin enums genuinely differ (`endpoint_async` exists on
 one stack only). Here the two copies were byte-identical apart from KDoc
 prose: the field family is one cross-stack contract, and the only
 stack-specific fact - the reactive `cancelled` outcome - is a VALUE of
-`client_outcome`, not a field. The enum now lives in `legatium-common`,
+`adapter_outcome`, not a field. The enum now lives in `legatium-common`,
 documented stack-neutrally, and `ClientLogFieldTest` binds the ELK
 component template against it ONCE there (the template is declared as a
 test resource of `legatium-common`); the twins no longer carry the test or
@@ -103,7 +103,7 @@ location.
 ## Amendment (2026-09-03, second)
 
 The same review found `ClientLoggingProperties` byte-identical apart from
-KDoc wording (interceptor vs. filter) - the `client-logging.*` namespace is
+KDoc wording (interceptor vs. filter) - the `adapter-logging.*` namespace is
 one cross-stack contract by design, key for key and default for default,
 and unlike limesium there is no stack-only key (`variant`) to justify two
 classes. The class now lives in `legatium-common` (which therefore depends

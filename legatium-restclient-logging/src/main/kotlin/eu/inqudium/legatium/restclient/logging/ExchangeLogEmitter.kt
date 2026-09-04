@@ -30,7 +30,7 @@ import java.time.Duration
  *
  * ## Levels
  *
- * The level carries severity only, `client_outcome` the semantic: ERROR when the call threw (no
+ * The level carries severity only, `adapter_outcome` the semantic: ERROR when the call threw (no
  * response, or the body read failed), WARN for a timeout, a 5xx answer, or an exchange that reached
  * [ClientLoggingProperties.slowRequestThreshold], INFO otherwise. Severity and outcome are resolved
  * BEFORE the event is built, so an exchange whose level is disabled costs neither the key-value assembly
@@ -55,7 +55,7 @@ internal class ExchangeLogEmitter(
      * wire call - method, target, query, selected request headers - at INFO on the exchange logger, under
      * the exchange's MDC with the traceparent-derived trace overlay: the scope OWNS the trace keys here
      * exactly as at emission, so the arrival line carries the same `traceId`/`spanId` pair as the
-     * completion event. Deliberately WITHOUT `client_outcome`, status or duration: those exist only at
+     * completion event. Deliberately WITHOUT `adapter_outcome`, status or duration: those exist only at
      * completion, and their absence is what keeps outcome-keyed dashboards blind to this extra line.
      */
     fun logRequestStart(exchange: Exchange) {
@@ -169,7 +169,7 @@ internal class ExchangeLogEmitter(
                 )
             }
         }
-        // The SLF4J level carries the severity, client_outcome the semantic - decoupled on purpose (see
+        // The SLF4J level carries the severity, adapter_outcome the semantic - decoupled on purpose (see
         // ClientLogField.OUTCOME): a timeout is WARN with its own outcome (the peer is slow, not broken),
         // any other thrown call is ERROR, a 5xx answer without an exception is WARN (the peer answered,
         // the application decides what to make of it); all of the latter two carry "failure". A slow but

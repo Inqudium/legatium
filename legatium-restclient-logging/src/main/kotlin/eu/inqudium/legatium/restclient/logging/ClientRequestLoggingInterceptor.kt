@@ -28,7 +28,7 @@ import java.net.URI
  * interceptor is the one place both blocking clients route every call through
  * (`ClientHttpRequestInterceptor`), which makes it the outbound counterpart of the sibling project
  * limesium's servlet filter - and the log line is shaped to match: the same fail-open contract, the same
- * level/outcome decoupling, the same header sections and body tee, with the `client_*` field family
+ * level/outcome decoupling, the same header sections and body tee, with the `adapter_*` field family
  * instead of `endpoint_*`.
  *
  * ## Where it sits in the interceptor chain
@@ -46,7 +46,7 @@ import java.net.URI
  * The exchange event is emitted when the response is CLOSED (see [CapturingClientHttpResponse]) - after
  * the client read the body through its converters, which is when status, headers, body and duration are
  * final. A call that produces no response (connection refused, a timeout before the status line) emits
- * right away with `client_outcome=failure` or `timeout` and no status; the exception is rethrown
+ * right away with `adapter_outcome=failure` or `timeout` and no status; the exception is rethrown
  * UNCHANGED - this interceptor adds visibility only, error semantics belong to the client.
  *
  * When the call throws, a short WARN breadcrumb is additionally logged on the module's OWN logger, so
@@ -57,7 +57,7 @@ import java.net.URI
  * ## MDC coverage
  *
  * The call scope covers the wire call: every log line written by inner interceptors, the request
- * factory or the HTTP engine carries `client_request_id`/`client_method`/`client_route`. It is an
+ * factory or the HTTP engine carries `adapter_request_id`/`adapter_method`/`adapter_route`. It is an
  * ADDITIVE overlay: an inbound request's `endpoint_*` identity (limesium) or a bridge's trace keys on
  * the thread stay in place, so the client line joins the server line by MDC alone. The body read and
  * the emission happen after the interceptor returned, under the emission's own scope.
@@ -72,7 +72,7 @@ import java.net.URI
  * ## Manual wiring: interceptors on one `MeterRegistry` share one metrics owner
  *
  * The module's meters are identified by name, so all interceptors constructed against the same registry
- * share a single internal metrics owner: the counters and the `client.logging.exchanges.open` gauge
+ * share a single internal metrics owner: the counters and the `adapter.logging.exchanges.open` gauge
  * report totals ACROSS those interceptors, not per interceptor. The auto-configuration wires exactly
  * one interceptor per context, where the distinction never shows.
  */
@@ -288,7 +288,7 @@ class ClientRequestLoggingInterceptor
             // RAW (still percent-encoded) path and query, as they go on the wire - twin parity with the
             // WebClient module, and the log-injection guard: java.net.URI's decoded getPath()/getQuery()
             // turn `%0A`/`%0D` into real line breaks that would forge lines in every plain-text sink
-            // (message, MDC client_route, fields). Activation matching keeps the decoded path (the
+            // (message, MDC adapter_route, fields). Activation matching keeps the decoded path (the
             // representation a server router would match).
             val uri = request.uri
             val host = uri.host?.let { if (uri.port != -1) "$it:${uri.port}" else it }

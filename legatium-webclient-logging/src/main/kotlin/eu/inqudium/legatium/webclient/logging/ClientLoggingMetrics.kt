@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicLong
  * total open exchanges across them.
  *
  * FAIL-OPEN REGISTRATION: Micrometer rejects a registration whose id already exists with a different
- * meter type (a host or another library owning a `client.*` name). Unguarded, that throw at
+ * meter type (a host or another library owning a `adapter.*` name). Unguarded, that throw at
  * construction would abort the application context - a logging library must not - and at the lazy
  * body-size registration would suppress the exchange event. Every registration therefore falls back to a
  * private [SimpleMeterRegistry] for the conflicting meter, logged once per meter name: the module keeps
@@ -274,20 +274,20 @@ internal class ClientLoggingMetrics private constructor(
          * affected by what this counts - that is the fail-open contract; the counter makes its price
          * visible on a channel independent of the possibly-broken log pipeline.
          */
-        const val FAIL_OPEN_METER = "client.logging.failopen"
+        const val FAIL_OPEN_METER = "adapter.logging.failopen"
 
         /**
          * Meter counting the exchange events actually EMITTED (after the level gate; arrival lines are
          * not counted), tagged `outcome`. Its sum is the ground truth for reconciling metric-side event
          * counts against the log index: any difference is loss in the log pipeline itself.
          */
-        const val EVENTS_METER = "client.logging.events"
+        const val EVENTS_METER = "adapter.logging.events"
 
         /** Distribution of request body bytes that actually flowed, tagged `uri` (template) and `host`. */
-        const val REQUEST_BODY_SIZE_METER = "client.request.body.size"
+        const val REQUEST_BODY_SIZE_METER = "adapter.request.body.size"
 
         /** Distribution of response body bytes that actually flowed, tagged `uri` (template) and `host`. */
-        const val RESPONSE_BODY_SIZE_METER = "client.response.body.size"
+        const val RESPONSE_BODY_SIZE_METER = "adapter.response.body.size"
 
         /**
          * Counter of exchanges by response-body consumption, tagged `uri` (template), `host` and `state`
@@ -299,7 +299,7 @@ internal class ClientLoggingMetrics private constructor(
          * discarding payload it paid for. Opt-in with `measure-response-body-size`, like the size
          * summary.
          */
-        const val RESPONSE_BODY_READ_METER = "client.response.body.read"
+        const val RESPONSE_BODY_READ_METER = "adapter.response.body.read"
 
         /** The `uri` tag value for exchanges the client recorded no URI template for. */
         const val UNTEMPLATED_URI = "UNKNOWN"
@@ -314,14 +314,14 @@ internal class ClientLoggingMetrics private constructor(
          * exchange events are being lost SILENTLY - the one failure mode neither the fail-open counter
          * (nothing throws) nor the events counter (no baseline) can see.
          */
-        const val OPEN_EXCHANGES_METER = "client.logging.exchanges.open"
+        const val OPEN_EXCHANGES_METER = "adapter.logging.exchanges.open"
 
         /**
          * Counter of request-id origins, tagged `source=trace|header|generated` (ADR-0002). A rising
          * `generated` share means the application stopped propagating `traceparent` or a correlation
          * header onto its outbound calls.
          */
-        const val CORRELATION_METER = "client.logging.correlation.id"
+        const val CORRELATION_METER = "adapter.logging.correlation.id"
 
         /** The closed outcome vocabulary - shared with the emitter, so counter keys and log field agree. */
         const val OUTCOME_SUCCESS = "success"

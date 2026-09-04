@@ -3,7 +3,7 @@ package eu.inqudium.legatium.common
 import org.slf4j.MDC
 
 /**
- * MDC keys the twins maintain around an outbound call. The values carry the module's `client_` prefix,
+ * MDC keys the twins maintain around an outbound call. The values carry the module's `adapter_` prefix,
  * so an encoder that emits MDC entries as fields lands them in the same namespace as the
  * [ClientLogField] family both twins share - and beside, never instead of, whatever identity the
  * AMBIENT MDC already carries (an inbound request's `endpoint_request_id` from the sibling project
@@ -12,9 +12,9 @@ import org.slf4j.MDC
  * of the route as the path.
  */
 object MdcKeys {
-    const val REQUEST_ID = "client_request_id"
-    const val REQUEST_METHOD = "client_method"
-    const val ROUTE = "client_route"
+    const val REQUEST_ID = "adapter_request_id"
+    const val REQUEST_METHOD = "adapter_method"
+    const val ROUTE = "adapter_route"
 }
 
 /**

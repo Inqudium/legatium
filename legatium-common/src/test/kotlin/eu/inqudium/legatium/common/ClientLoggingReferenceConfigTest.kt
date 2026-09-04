@@ -24,14 +24,14 @@ class ClientLoggingReferenceConfigTest {
     // in the POM (the twins declare no docs resources any more).
     private val referenceSources =
         YamlPropertySourceLoader()
-            .load("shared-reference", ClassPathResource("client-logging-reference.yml"))
+            .load("shared-reference", ClassPathResource("adapter-logging-reference.yml"))
 
     private fun documentedKeys(sources: List<PropertySource<*>>): Set<String> =
         sources
             .filterIsInstance<EnumerablePropertySource<*>>()
             .flatMap { it.propertyNames.asList() }
-            .filter { it.startsWith("client-logging.") }
-            .map { it.removePrefix("client-logging.").replace(Regex("\\[\\d+]"), "") }
+            .filter { it.startsWith("adapter-logging.") }
+            .map { it.removePrefix("adapter-logging.").replace(Regex("\\[\\d+]"), "") }
             .toSet()
 
     @Test
@@ -44,7 +44,7 @@ class ClientLoggingReferenceConfigTest {
         // Given/When: the reference YAML, bound the way Boot binds an application.yml
         val bound =
             Binder(ConfigurationPropertySources.from(referenceSources))
-                .bind("client-logging", ClientLoggingProperties::class.java)
+                .bind("adapter-logging", ClientLoggingProperties::class.java)
                 .get()
 
         // Then: indistinguishable from the untouched defaults
@@ -56,7 +56,7 @@ class ClientLoggingReferenceConfigTest {
         // What is tested: that the reference contains no stale or misspelled keys - the Binder silently
         //   IGNORES unknown keys, so the equality test above cannot catch a typo on its own - and that
         //   no existing key goes undocumented.
-        // Success criteria: the client-logging.* key set of the YAML equals the known property names.
+        // Success criteria: the adapter-logging.* key set of the YAML equals the known property names.
         // Why it matters: a documented key that does not bind is worse than an undocumented one - readers
         //   copy it and believe it works.
         // Given: the kebab-case names of all properties
@@ -101,15 +101,15 @@ class ClientLoggingReferenceConfigTest {
         // Given
         fun bind(vararg pairs: Pair<String, String>) =
             Binder(ConfigurationPropertySources.from(listOf(MapPropertySource("test", pairs.toMap()))))
-                .bind("client-logging", ClientLoggingProperties::class.java)
+                .bind("adapter-logging", ClientLoggingProperties::class.java)
                 .get()
 
         // When
-        val bound = bind("client-logging.log-request-body" to "on-failure", "client-logging.log-response-body" to "always")
+        val bound = bind("adapter-logging.log-request-body" to "on-failure", "adapter-logging.log-response-body" to "always")
 
         // Then
         assertThat(bound.logRequestBody).isEqualTo(BodyLogMode.ON_FAILURE)
         assertThat(bound.logResponseBody).isEqualTo(BodyLogMode.ALWAYS)
-        assertThatThrownBy { bind("client-logging.log-response-body" to "true") }.isInstanceOf(BindException::class.java)
+        assertThatThrownBy { bind("adapter-logging.log-response-body" to "true") }.isInstanceOf(BindException::class.java)
     }
 }

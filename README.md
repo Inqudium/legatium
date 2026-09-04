@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo/legatium-banner.svg" alt="Legatium — one structured client_* line per outbound HTTP exchange" width="640">
+  <img src="docs/logo/legatium-banner.svg" alt="Legatium — one structured adapter_* line per outbound HTTP exchange" width="640">
 </p>
 
 [![Maven Central](https://img.shields.io/maven-central/v/eu.inqudium/legatium.svg?label=Maven%20Central)](https://central.sonatype.com/namespace/eu.inqudium)
@@ -13,7 +13,7 @@
 [![Docs](https://img.shields.io/badge/docs-inqudium.github.io-8E2C21)](https://inqudium.github.io/legatium/)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Inqudium/legatium/badge)](https://scorecard.dev/viewer/?uri=github.com/Inqudium/legatium)
 
-Legatium logs one structured client_* line per outbound HTTP exchange — named after the Roman
+Legatium logs one structured adapter_* line per outbound HTTP exchange — named after the Roman
 legatus, the envoy a service sends to a foreign party, and the record of what came of it. Two
 auto-configured Spring Boot twins with identical fields and configuration: a RestClient/RestTemplate
 interceptor and a WebClient filter. No starter, no forced transitives.
@@ -30,7 +30,7 @@ The form follows the naming of chemical elements, like its sibling
 [**Limesium**](https://github.com/Inqudium/limesium) — the project that logs the *inbound*
 crossings at the service's own frontier. Together they cover both directions of a service's HTTP
 traffic with the same design: one structured line per exchange, fail-open, identical across two
-paradigm twins. Legatium's fields carry the `client_` prefix and Limesium's the `endpoint_` prefix,
+paradigm twins. Legatium's fields carry the `adapter_` prefix and Limesium's the `endpoint_` prefix,
 so a log document may hold both — a client line emitted while a request is being served inherits
 the server line's identity from the MDC — and no field ever means two things. Both are published
 under the `eu.inqudium` group, the fictional periodic table of **Inqudium**.
@@ -50,10 +50,10 @@ a client too.
 ## What one line says
 
 ```
-Client http exchange POST https://api.example.com/things/42 -> 200 [client_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
+Client http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
 ```
 
-plus the structured `client_*` key-values — outcome, duration until the response was fully read, method,
+plus the structured `adapter_*` key-values — outcome, duration until the response was fully read, method,
 status, peer host, URI template, path, query, optional headers and bodies — and the identity in the MDC.
 The trace ids come from the `traceparent` header the host's tracing propagation put on the request; on a
 traceless call the module sends an `X-Correlation-Id` instead, so the peer can quote it. Outcomes:
@@ -73,10 +73,10 @@ guides, Elasticsearch mapping, generated [test evidence](https://inqudium.github
   the deliberate stack differences.
 - [Module READMEs](legatium-restclient-logging/README.md) ([WebClient](legatium-webclient-logging/README.md)) —
   summary, field family, property table.
-- [Configuration reference](docs/client-logging-reference.yml) —
-  every `client-logging.*` key with its default, contract-tested against both twins.
+- [Configuration reference](docs/adapter-logging-reference.yml) —
+  every `adapter-logging.*` key with its default, contract-tested against both twins.
 - [Elasticsearch mapping](docs/elk/README.md) — the ready-made
-  component template for the `client_*` fields.
+  component template for the `adapter_*` fields.
 - [Decision records](docs/adr/) — why the trace id is the request id, why the shared code is
   inlined, why the default id counts instead of rolling dice.
 

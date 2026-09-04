@@ -33,12 +33,12 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Header selection/masking and the body tees of [ClientRequestLoggingFilter]: what reaches the
- * `client_request_headers` / `client_response_headers` / `client_request_body` / `client_response_body`
+ * `adapter_request_headers` / `adapter_response_headers` / `adapter_request_body` / `adapter_response_body`
  * fields, the request-side inserter wrap, and what the response tee observes about consumption.
  */
 class ClientRequestLoggingFilterBodyAndHeaderTest {
     private val ticker = AtomicLong(0)
-    private val base = ClientLoggingProperties(loggerName = "http-client-exchange-reactive-body-header-test")
+    private val base = ClientLoggingProperties(loggerName = "http-adapter-exchange-reactive-body-header-test")
     private lateinit var log: CapturedLogger
 
     @BeforeEach
@@ -93,7 +93,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             filter.call(request, answering())
 
             // Then
-            val rendered = keyValues(log.events.single())["client_request_headers"].toString()
+            val rendered = keyValues(log.events.single())["adapter_request_headers"].toString()
             assertThat(rendered).contains("Accept:\"application/json, text/plain\"")
             assertThat(rendered).contains("Authorization:\"${HeaderValueMasker.DEFAULT.mask("Bearer secret-token")}\"")
             assertThat(rendered).doesNotContain("secret-token")
@@ -127,8 +127,8 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
             // Then
             val fields = keyValues(log.events.single())
-            assertThat(fields["client_request_headers"].toString()).isEqualTo("[Authorization:\"hmac:19\"]")
-            assertThat(fields["client_response_headers"].toString()).isEqualTo("[Set-Cookie:\"hmac:9\"]")
+            assertThat(fields["adapter_request_headers"].toString()).isEqualTo("[Authorization:\"hmac:19\"]")
+            assertThat(fields["adapter_response_headers"].toString()).isEqualTo("[Set-Cookie:\"hmac:9\"]")
         }
 
         @Test
@@ -145,7 +145,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             filter.call(request(), answering(body = "ok", headers = mapOf("Content-Type" to "text/plain", "Set-Cookie" to "session=1")))
 
             // Then
-            val rendered = keyValues(log.events.single())["client_response_headers"].toString()
+            val rendered = keyValues(log.events.single())["adapter_response_headers"].toString()
             assertThat(rendered).contains("Content-Type:\"text/plain\"")
             assertThat(rendered).doesNotContain("Set-Cookie")
         }
@@ -166,7 +166,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             filter.call(request { header("Authorization", "Bearer secret-token") }, answering())
 
             // Then
-            val rendered = keyValues(log.events.single())["client_request_headers"].toString()
+            val rendered = keyValues(log.events.single())["adapter_request_headers"].toString()
             assertThat(rendered).contains("Authorization:\"${HeaderValueMasker.DEFAULT.mask("Bearer secret-token")}\"")
             assertThat(rendered).doesNotContain("secret-token")
         }
@@ -194,7 +194,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
             // Then
             assertThat(written).isEqualTo("""{"name":"thing"}""")
-            assertThat(keyValues(log.events.single())).containsEntry("client_request_body", """{"name":"thing"}""")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_request_body", """{"name":"thing"}""")
         }
 
         @Test
@@ -207,7 +207,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             filter.call(request, writingThenAnswering())
 
             // Then
-            assertThat(keyValues(log.events.single())).containsEntry("client_request_body", "0123... [truncated, 10 bytes total]")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_request_body", "0123... [truncated, 10 bytes total]")
         }
 
         @Test
@@ -216,7 +216,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             filterWith(base.copy(logRequestBody = BodyLogMode.ALWAYS)).call(request(), writingThenAnswering())
 
             // Then
-            assertThat(keyValues(log.events.single())).doesNotContainKey("client_request_body")
+            assertThat(keyValues(log.events.single())).doesNotContainKey("adapter_request_body")
         }
     }
 
@@ -232,7 +232,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
             // Then
             assertThat(body).isEqualTo("hello")
-            assertThat(keyValues(log.events.single())).containsEntry("client_response_body", "hello")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_response_body", "hello")
         }
 
         @Test
@@ -280,7 +280,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             filter.call(request(), answering(body = "0123456789"))
 
             // Then
-            assertThat(keyValues(log.events.single())).containsEntry("client_response_body", "0123... [truncated, 10 bytes total]")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_response_body", "0123... [truncated, 10 bytes total]")
         }
 
         @Test
@@ -298,7 +298,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             filter.filter(request(), ExchangeFunction { Mono.just(latin) }).flatMap { it.releaseBody() }.block()
 
             // Then
-            assertThat(keyValues(log.events.single())).containsEntry("client_response_body", "café")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_response_body", "café")
         }
 
         @Test
@@ -307,7 +307,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             filterWith(base.copy(logResponseBody = BodyLogMode.ALWAYS)).call(request(), answering())
 
             // Then
-            assertThat(keyValues(log.events.single())).doesNotContainKey("client_response_body")
+            assertThat(keyValues(log.events.single())).doesNotContainKey("adapter_response_body")
         }
 
         @Test
@@ -370,8 +370,8 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             // Then
             assertThat(body).isEqualTo("received")
             assertThat(keyValues(log.events.single()))
-                .containsEntry("client_outcome", "success")
-                .doesNotContainKeys("client_request_body", "client_response_body")
+                .containsEntry("adapter_outcome", "success")
+                .doesNotContainKeys("adapter_request_body", "adapter_response_body")
         }
 
         @Test
@@ -381,9 +381,9 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
             // Then
             assertThat(keyValues(log.events.single()))
-                .containsEntry("client_outcome", "failure")
-                .containsEntry("client_request_body", "sent")
-                .containsEntry("client_response_body", "upstream down")
+                .containsEntry("adapter_outcome", "failure")
+                .containsEntry("adapter_request_body", "sent")
+                .containsEntry("adapter_response_body", "upstream down")
         }
 
         @Test
@@ -402,9 +402,9 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             // Then: the request body that was captured before the outcome was known is on the line
             assertThat(Exceptions.unwrap(thrown)).isInstanceOf(IOException::class.java)
             assertThat(keyValues(log.events.single()))
-                .containsEntry("client_outcome", "failure")
-                .containsEntry("client_request_body", "sent")
-                .doesNotContainKey("client_response_body")
+                .containsEntry("adapter_outcome", "failure")
+                .containsEntry("adapter_request_body", "sent")
+                .doesNotContainKey("adapter_response_body")
         }
 
         @Test
@@ -419,9 +419,9 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
             // Then
             assertThat(keyValues(log.events.single()))
-                .containsEntry("client_outcome", "success")
-                .containsEntry("client_request_body", "sent")
-                .containsEntry("client_response_body", "no such thing")
+                .containsEntry("adapter_outcome", "success")
+                .containsEntry("adapter_request_body", "sent")
+                .containsEntry("adapter_response_body", "no such thing")
         }
 
         @Test
@@ -435,7 +435,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
             // Then: the sample is recorded, the field is not
             assertThat(registry.get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).summary().totalAmount()).isEqualTo(4.0)
-            assertThat(keyValues(log.events.single())).doesNotContainKey("client_request_body")
+            assertThat(keyValues(log.events.single())).doesNotContainKey("adapter_request_body")
         }
     }
 

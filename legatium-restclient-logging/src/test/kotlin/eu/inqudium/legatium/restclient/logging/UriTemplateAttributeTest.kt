@@ -26,7 +26,7 @@ class UriTemplateAttributeTest {
         //   client.
         // Success criteria: a call through `uri("/things/{id}", 7)` shows the expanded path on the
         //   request and the template under the mirrored attribute; an expanded URI shows no attribute.
-        // Why it matters: a renamed attribute upstream would silently drop client_url_template from
+        // Why it matters: a renamed attribute upstream would silently drop adapter_url_template from
         //   every event.
         // Given: a client with a recording interceptor
         var seen: Map<String, Any>? = null

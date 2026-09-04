@@ -36,7 +36,7 @@ is added to the request only on traceless calls that carry none:**
    caller's span; the two projects are consistent, not identical.) A
    `traceparent` that fails W3C validation counts as absent.
 2. **An available trace id is the request id.** When the outgoing
-   `traceparent` is conformant, `client_request_id` carries its trace
+   `traceparent` is conformant, `adapter_request_id` carries its trace
    id. A correlation header the caller put on the request is ignored on
    such calls: the distributed identity outranks the private one.
 3. **A correlation id is generated only on traceless calls.** When no
@@ -50,7 +50,7 @@ is added to the request only on traceless calls that carry none:**
    present, the module adds nothing: the call goes out observationally
    untouched.
 5. **The MDC always carries a request id.** In every case - trace-derived
-   or generated - the winning id is set as the `client_request_id` MDC
+   or generated - the winning id is set as the `adapter_request_id` MDC
    value (`MdcKeys.REQUEST_ID`) in both twins, around the emission and
    (blocking twin) around the wire call, as an ADDITIVE overlay: an
    inbound request's `endpoint_request_id` or a bridge's keys on the
@@ -67,9 +67,9 @@ is added to the request only on traceless calls that carry none:**
 - **In a host with tracing configured, every call is traced.** The client
   observation roots a trace when none is active, so `traceparent` is on
   every request (sampled or not) and the module never generates an id
-  there; the `client.logging.correlation.id{source=generated}` counter
+  there; the `adapter.logging.correlation.id{source=generated}` counter
   then reads zero by construction, not by regression. Pinned by test.
-- **`client_request_id` changes cardinality on traced calls.** All calls
+- **`adapter_request_id` changes cardinality on traced calls.** All calls
   under one trace share the request id, because it IS the trace id; per-
   call uniqueness is only guaranteed for self-generated ids. Per-call
   lines remain distinguishable by their remaining fields, and `spanId`
@@ -82,6 +82,6 @@ is added to the request only on traceless calls that carry none:**
 - Implementation follows in lockstep across both twins - the shared
   `Traceparent` parser and `MdcScope` (ADR-0003), the interceptor and
   filter wiring, the metrics (`correlation.id{source=trace|header|
-  generated}`), the GUIDEs, `client-logging-reference.yml`, READMEs, and
+  generated}`), the GUIDEs, `adapter-logging-reference.yml`, READMEs, and
   the test suites. This ADR records the contract first; the code follows
   it.

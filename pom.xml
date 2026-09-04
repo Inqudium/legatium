@@ -18,7 +18,7 @@
 
     <name>legatium</name>
     <description>
-        Legatium - one structured client_* log line per outbound HTTP exchange, recorded where the
+        Legatium - one structured adapter_* log line per outbound HTTP exchange, recorded where the
         service sends its envoy (the "legatus") to a foreign party. Two paradigm twins with identical
         fields and configuration: a RestClient/RestTemplate interceptor and a WebClient filter.
     </description>

@@ -14,7 +14,7 @@ import org.springframework.mock.http.client.MockClientHttpResponse
 import java.net.URI
 import java.nio.charset.StandardCharsets
 
-/** The key-value pairs of an event as a map, for assertions on the `client_*` family. */
+/** The key-value pairs of an event as a map, for assertions on the `adapter_*` family. */
 internal fun keyValues(event: ILoggingEvent): Map<String, Any?> = event.keyValuePairs?.associate { it.key to it.value } ?: emptyMap()
 
 /** A mock outgoing request the interceptor can mutate (headers, attributes) like the real intercepting request. */

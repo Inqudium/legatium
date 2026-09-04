@@ -1,7 +1,7 @@
 # legatium-webclient-logging — Guide
 
-One structured `client_*` log line per outbound HTTP exchange made through Spring's `WebClient` — with the
-same message format, the same field family, the same `client-logging.*` configuration and the same meters
+One structured `adapter_*` log line per outbound HTTP exchange made through Spring's `WebClient` — with the
+same message format, the same field family, the same `adapter-logging.*` configuration and the same meters
 as the RestClient twin [`legatium-restclient-logging`](../../legatium-restclient-logging/README.md). The
 inbound counterpart of the whole family is the sibling project
 [Limesium](https://github.com/Inqudium/limesium).
@@ -117,11 +117,11 @@ emission, metrics — can ever fail, delay or alter the call it describes.
 
 ### 1.3 The exchange line
 
-On the logger `http-client-exchange` (configurable) a completed exchange looks like this in a plain-text
+On the logger `http-adapter-exchange` (configurable) a completed exchange looks like this in a plain-text
 appender:
 
 ```
-Client http exchange POST https://api.example.com/things/42 -> 200 [client_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
+Client http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
 ```
 
 The trace suffix appears only when the outgoing request carried a conformant W3C `traceparent` header —
@@ -130,35 +130,35 @@ key-values that a structured encoder turns into fields:
 
 ```json
 {
-  "message": "Client http exchange POST https://api.example.com/things/42 -> 200 [client_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
+  "message": "Client http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
   "level": "INFO",
-  "logger": "http-client-exchange",
-  "client_outcome": "success",
-  "client_duration_ms": 17,
-  "client_request_method": "POST",
-  "client_response_status_code": 200,
-  "client_url_host": "api.example.com",
-  "client_url_path": "/things/42",
-  "client_url_template": "https://api.example.com/things/{id}",
-  "client_request_id": "4bf92f3577b34da6a3ce929d0e0e4736",
-  "client_method": "POST",
-  "client_route": "https://api.example.com/things/42",
+  "logger": "http-adapter-exchange",
+  "adapter_outcome": "success",
+  "adapter_duration_ms": 17,
+  "adapter_request_method": "POST",
+  "adapter_response_status_code": 200,
+  "adapter_url_host": "api.example.com",
+  "adapter_url_path": "/things/42",
+  "adapter_url_template": "https://api.example.com/things/{id}",
+  "adapter_request_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "adapter_method": "POST",
+  "adapter_route": "https://api.example.com/things/42",
   "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
   "spanId": "00f067aa0ba902b7"
 }
 ```
 
-The `client_request_id` / `client_method` / `client_route` / `traceId` / `spanId` entries come from the
-MDC ([§5.2](#52-mdc-keys)); the `client_*` key-values are the field family of [§5.1](#51-log-fields). How
+The `adapter_request_id` / `adapter_method` / `adapter_route` / `traceId` / `spanId` entries come from the
+MDC ([§5.2](#52-mdc-keys)); the `adapter_*` key-values are the field family of [§5.1](#51-log-fields). How
 MDC entries land in the document (flat, nested, renamed) is the encoder's decision.
 
 With the optional arrival line enabled, a second, earlier line precedes it:
 
 ```
-Client http exchange started POST https://api.example.com/things/42 [client_request_id=4bf92f…]
+Client http exchange started POST https://api.example.com/things/42 [adapter_request_id=4bf92f…]
 ```
 
-The arrival line carries no outcome, status or duration, so a dashboard keyed on `client_outcome` still
+The arrival line carries no outcome, status or duration, so a dashboard keyed on `adapter_outcome` still
 sees exactly one event per call.
 
 ### 1.4 Relation to the RestClient twin
@@ -168,7 +168,7 @@ reference implementation and owns the cross-stack contract:
 
 | Contract | Owner | Lockstep test in this module |
 |---|---|---|
-| Configuration keys and defaults | [`/docs/client-logging-reference.yml`](../../docs/client-logging-reference.yml) | `ClientLoggingReferenceConfigTest` in `legatium-common` (one `ClientLoggingProperties` class for both twins, bound against the YAML once) |
+| Configuration keys and defaults | [`/docs/adapter-logging-reference.yml`](../../docs/adapter-logging-reference.yml) | `ClientLoggingReferenceConfigTest` in `legatium-common` (one `ClientLoggingProperties` class for both twins, bound against the YAML once) |
 | Field family and index mapping | [`/docs/elk/…component-template.json`](../../docs/elk/README.md) | `ClientLogFieldTest` in `legatium-common` (one enum for both twins, locked against the template once) |
 | Message text and meter names | the RestClient module's emitter and metrics | `TwinContractTest` |
 
@@ -216,7 +216,7 @@ five layers:
 | Class | Responsibility |
 |---|---|
 | `ClientLoggingAutoConfiguration` | Registers the filter bean, the default `NanoTimeSource` / `CorrelationIdGenerator`, and — when Boot's `spring-boot-webclient` is present — a late `WebClientCustomizer` that appends the filter. |
-| `ClientLoggingProperties` | The `client-logging.*` binding, validated in `init` - shared (legatium-common - §6.11), the very class the RestClient twin binds. `HeaderLogProperties` (shared too) is one header section. |
+| `ClientLoggingProperties` | The `adapter-logging.*` binding, validated in `init` - shared (legatium-common - §6.11), the very class the RestClient twin binds. `HeaderLogProperties` (shared too) is one header section. |
 | `ClientRequestLoggingFilter` | Everything that decides **what** is logged and counted: activation by host and path, fail-open wiring (identity, the rebuilt request with correlation header and body tee), the arrival line, the signal mapping of the response `Mono`, the response mutation with the body hooks, the exactly-once `complete`. |
 | `Exchange` / `ExchangeState` | Per-exchange state between entry and emission; one atomic `OPEN → RESPONDED → COMPLETED` state instead of loose flags. |
 | `ExchangeLogEmitter` | Builds and emits the arrival line and the completion event; freezes the captures first; resolves level and outcome (timeouts via the shared `Timeouts`, `cancelled` on top); records body sizes; opens the emission `MdcScope` with trace ownership. |
@@ -233,7 +233,7 @@ five layers:
 
 `ClientLoggingAutoConfiguration` is listed in
 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` and is conditional on
-`client-logging.enabled` (default `true`) only — no web application type. It registers:
+`adapter-logging.enabled` (default `true`) only — no web application type. It registers:
 
 | Bean | Condition | Purpose |
 |---|---|---|
@@ -344,7 +344,7 @@ read — no more. A response body the application never subscribes to is logged 
 partially (`take`, a cancelled subscription) is captured to exactly that extent, and the `[truncated, N
 bytes total]` note counts what flowed, not `Content-Length`. Because of that, the log cannot tell a body
 the peer sent but the application dropped from one that was never sent; the counter
-`client.response.body.read` ([§5.4](#54-meters)) exists for exactly that distinction — where a
+`adapter.response.body.read` ([§5.4](#54-meters)) exists for exactly that distinction — where a
 `releaseBody()` (which subscribes and drains) counts as `complete`, and only a body nobody ever
 subscribed to would be `unread` (and, never completing, is not counted at all — the gauge shows it).
 
@@ -352,12 +352,12 @@ subscribed to would be `unread` (and, never completing, is not counted at all �
 
 There is no call-wide thread-local MDC in a reactive client: the thread that runs the filter is not the
 thread that receives the response, and neither is the one that reads the body. The module provides the
-`client_*` identity in two places:
+`adapter_*` identity in two places:
 
 | Place | Mechanism | Who sees it |
 |---|---|---|
 | Emission scope | `MdcScope` around the single `log()` call, trace keys owned | structured encoders emitting MDC fields on the exchange line and the arrival line |
-| Message | inline `[client_request_id=…]` | plain-text appenders |
+| Message | inline `[adapter_request_id=…]` | plain-text appenders |
 
 The emission scope is an **additive overlay**: whatever MDC the completing thread carries — with
 context propagation configured, the inbound request's `endpoint_*` keys (Limesium) restored around the
@@ -395,14 +395,14 @@ Failures of the logging are reported on the module's **own** loggers
 **Security note.** Fail-open is the inverse of what an audit log needs: a host-side fault silently
 removes the call from the log instead of failing it. The exchange log is therefore an **observability**
 feature with no completeness guarantee; a regulatory audit trail of outbound calls must come from a
-fail-closed component. The compensating controls are `client.logging.failopen` and the
+fail-closed component. The compensating controls are `adapter.logging.failopen` and the
 `exchanges.open` gauge ([§5.5](#55-reading-the-meters-together)) — alert on them.
 
 ### 2.8 Injectable collaborators
 
 Time and randomness are injected, not ambient:
 
-- `NanoTimeSource` — monotonic nanoseconds for `client_duration_ms` and the slow threshold; the single
+- `NanoTimeSource` — monotonic nanoseconds for `adapter_duration_ms` and the slow threshold; the single
   production read of `System.nanoTime()` is `NanoTimeSource.SYSTEM`.
 - `CorrelationIdGenerator` — the id for traceless calls without a correlation header; `DEFAULT` (the
   counting generator, ADR-0004) by default: one atomic increment per call, no `SecureRandom` on the
@@ -450,14 +450,14 @@ The current release is shown live by the Maven Central badge:
 [![Maven Central](https://img.shields.io/maven-central/v/eu.inqudium/legatium-webclient-logging.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/eu.inqudium/legatium-webclient-logging)
 
 That is all: the auto-configuration registers the filter and the customizer, every call through a
-Boot-built `WebClient` is logged on the `http-client-exchange` logger at INFO, the request id comes from
+Boot-built `WebClient` is logged on the `http-adapter-exchange` logger at INFO, the request id comes from
 the `traceparent` trace id (traceless calls send an `X-Correlation-Id` instead — ADR-0002), and the six
 meters are registered in the host's `MeterRegistry` if one exists.
 
 To remove the module again without touching the classpath:
 
 ```yaml
-client-logging:
+adapter-logging:
   enabled: false
 ```
 
@@ -536,11 +536,11 @@ an encoder treats them differently:
 
 | Data | Carried as | Examples |
 |---|---|---|
-| The field family | SLF4J **key-value pairs** (`addKeyValue`) | `client_outcome`, `client_duration_ms`, `client_url_host`, `client_response_body` |
-| The identity and trace context | **MDC** entries, set by the emission scope | `client_request_id`, `client_method`, `client_route`, `traceId`, `spanId` (from the `traceparent` header) |
+| The field family | SLF4J **key-value pairs** (`addKeyValue`) | `adapter_outcome`, `adapter_duration_ms`, `adapter_url_host`, `adapter_response_body` |
+| The identity and trace context | **MDC** entries, set by the emission scope | `adapter_request_id`, `adapter_method`, `adapter_route`, `traceId`, `spanId` (from the `traceparent` header) |
 
 A plain `%msg` pattern shows neither — only the message, which repeats the gist inline
-(`… -> 200 [client_request_id=…]`) precisely for that case. Logback offers three ways to render the
+(`… -> 200 [adapter_request_id=…]`) precisely for that case. Logback offers three ways to render the
 rest; which one fits depends on where the output goes.
 
 #### Option 1 — `PatternLayout` with `%kvp` and `%mdc` (text, for terminals and files)
@@ -554,7 +554,7 @@ rest; which one fits depends on where the output goes.
 ```
 
 ```
-13:54:58.534 INFO  [reactor-http-epoll-2] http-client-exchange - Client http exchange POST https://api.example.com/things/42 -> 200 [client_request_id=4bf9… traceId=4bf9… spanId=00f0…] client_outcome=success client_duration_ms=17 client_request_method=POST client_response_status_code=200 client_url_host=api.example.com client_url_path=/things/42 client_url_template=https://api.example.com/things/{id} [client_method=POST, client_request_id=4bf9…, client_route=https://api.example.com/things/42, traceId=4bf9…, spanId=00f0…]
+13:54:58.534 INFO  [reactor-http-epoll-2] http-adapter-exchange - Client http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf9… traceId=4bf9… spanId=00f0…] adapter_outcome=success adapter_duration_ms=17 adapter_request_method=POST adapter_response_status_code=200 adapter_url_host=api.example.com adapter_url_path=/things/42 adapter_url_template=https://api.example.com/things/{id} [adapter_method=POST, adapter_request_id=4bf9…, adapter_route=https://api.example.com/things/42, traceId=4bf9…, spanId=00f0…]
 ```
 
 - `%kvp{NONE}` leaves values bare; `%mdc` prints every entry that is present, so the trace keys appear
@@ -577,7 +577,7 @@ rest; which one fits depends on where the output goes.
 ```
 
 One JSON object per event — but the key-value pairs arrive as a **list of single-key objects** and the
-MDC nested under `"mdc":{…}`. Correct and safe, yet awkward to map onto the flat `client_*` fields;
+MDC nested under `"mdc":{…}`. Correct and safe, yet awkward to map onto the flat `adapter_*` fields;
 suitable for local JSON inspection, not for an index.
 
 #### Option 3 — Spring Boot structured logging (JSON, flat, typed — recommended for an index)
@@ -588,7 +588,7 @@ logging:
     format:
       console: ecs      # or logstash, gelf
   level:
-    http-client-exchange: INFO
+    http-adapter-exchange: INFO
     eu.inqudium.legatium.webclient.logging: WARN
 ```
 
@@ -607,7 +607,7 @@ carries the module's own failure reports.
 
 ### 3.6 Index mapping (ELK)
 
-The thirteen `client_*` fields have a ready-made Elasticsearch component template in the repository-shared
+The thirteen `adapter_*` fields have a ready-made Elasticsearch component template in the repository-shared
 [`/docs/elk/`](../../docs/elk/README.md). Compose it into the data-stream mapping **before** the first
 event arrives — an unmapped body or header field would be mapped dynamically and become searchable, which
 the payload fields' `index: false` deliberately prevents. The MDC-carried keys are intentionally not in
@@ -622,23 +622,23 @@ configuration lives.
    webClientBuilder.baseUrl("https://httpbin.org").build().get().uri("/get").retrieve().bodyToMono(String::class.java).block()
    ```
 
-   Expect one `http-client-exchange` line with `client_request_id=…`. Without tracing configured, the
+   Expect one `http-adapter-exchange` line with `adapter_request_id=…`. Without tracing configured, the
    peer received an `X-Correlation-Id` with that id (httpbin echoes request headers in its body). With
    Micrometer Tracing configured, expect `traceId=… spanId=…` on the line and **no** `X-Correlation-Id`
    at the peer (ADR-0002).
 
 2. Point the client at a closed port and confirm the exchange line with `-> -`,
-   `client_outcome=failure` at ERROR with the cause attached.
+   `adapter_outcome=failure` at ERROR with the cause attached.
 
-3. Apply `.timeout(Duration.ofMillis(1))` to a call and confirm `client_outcome=cancelled` — then
-   configure the connector's response timeout instead and confirm `client_outcome=timeout`
+3. Apply `.timeout(Duration.ofMillis(1))` to a call and confirm `adapter_outcome=cancelled` — then
+   configure the connector's response timeout instead and confirm `adapter_outcome=timeout`
    ([§6.3](#63-timeouts-connector-vs-operator)).
 
 4. Check the meters (with actuator):
 
    ```bash
-   curl -s localhost:8080/actuator/metrics/client.logging.events
-   curl -s localhost:8080/actuator/metrics/client.logging.exchanges.open
+   curl -s localhost:8080/actuator/metrics/adapter.logging.events
+   curl -s localhost:8080/actuator/metrics/adapter.logging.exchanges.open
    ```
 
    `events` should equal the number of logged lines; `exchanges.open` should be `0` when idle.
@@ -647,10 +647,10 @@ configuration lives.
 
 ## 4. Configuration
 
-All properties live under `client-logging.*`. The namespace is **identical** to the RestClient twin's by
+All properties live under `adapter-logging.*`. The namespace is **identical** to the RestClient twin's by
 construction: both twins bind the one shared `ClientLoggingProperties` class. The complete, commented
 reference with every default is the repository-shared
-[`/docs/client-logging-reference.yml`](../../docs/client-logging-reference.yml);
+[`/docs/adapter-logging-reference.yml`](../../docs/adapter-logging-reference.yml);
 `ClientLoggingReferenceConfigTest` in `legatium-common` binds it against that class and fails the build
 on any drift.
 
@@ -659,20 +659,20 @@ on any drift.
 | Property | Type | Default | Meaning |
 |---|---|---|---|
 | `enabled` | boolean | `true` | Master switch. `false` makes the auto-configuration back off — no filter, no customizer, no beans. A context-start decision, not a runtime toggle. |
-| `logger-name` | string | `http-client-exchange` | Logger of the arrival line and the exchange event. Its level is the runtime volume control ([§4.5](#45-logger-levels)). |
+| `logger-name` | string | `http-adapter-exchange` | Logger of the arrival line and the exchange event. Its level is the runtime volume control ([§4.5](#45-logger-levels)). |
 | `correlation-id-header` | string (RFC 9110 token) | `X-Correlation-Id` | Header read from a **traceless** request (no conformant `traceparent` — ADR-0002); when absent or blank, an id is generated and ADDED to the request under this name. A traced call takes its request id from the `traceparent` trace id, ignores this header and adds nothing. |
-| `include-query-string` | boolean | `true` | Log the query string as its own field `client_url_query` (never part of the path). |
+| `include-query-string` | boolean | `true` | Log the query string as its own field `adapter_url_query` (never part of the path). |
 | `log-request-start` | boolean | `false` | Additionally log an arrival line before the exchange, at INFO, under the emission MDC. Carries no outcome/status/duration. |
 | `include-path-patterns` | list of `PathPattern` | `[]` | Request paths the filter is active for at all, whatever the host; empty = every call. Parsed once at startup; an invalid pattern fails the context. |
 | `exclude-path-prefixes` | list of strings | `[]` | Request-path prefixes the filter skips entirely — no event, no correlation header, no gauge movement. An exclude always wins over an include. |
 | `exclude-hosts` | list of strings | `[]` | Peer hosts the filter skips entirely (case-insensitive, without port). |
-| `slow-request-threshold` | duration | `5s` | At/above this duration an INFO call escalates to WARN and is flagged `client_slow: true`; the outcome stays `success`. Measured until the body's terminal signal. Must be ≥ 1 ms. |
+| `slow-request-threshold` | duration | `5s` | At/above this duration an INFO call escalates to WARN and is flagged `adapter_slow: true`; the outcome stays `success`. Measured until the body's terminal signal. Must be ≥ 1 ms. |
 | `request-headers.includes` / `.excludes` / `.masked` | lists of header names | `[]` | See [§4.2](#42-header-sections). |
 | `response-headers.includes` / `.excludes` / `.masked` | lists of header names | `[]` | See [§4.2](#42-header-sections). |
-| `log-request-body` | `never` \| `on-failure` \| `always` | `never` | Tee the request body into `client_request_body` as the inserter writes it, up to `max-body-bytes` — on every line (`always`) or only when the outcome is not `success` or the status is a 4xx (`on-failure`, [§4.3](#43-body-logging-and-body-measuring)). |
-| `log-response-body` | `never` \| `on-failure` \| `always` | `never` | Tee the response body into `client_response_body` as the application reads it, up to `max-body-bytes` — on every line or only when the outcome is not `success` or the status is a 4xx. |
-| `measure-request-body-size` | boolean | `false` | Record `client.request.body.size`; independent of `log-request-body`. |
-| `measure-response-body-size` | boolean | `false` | Record `client.response.body.size` and `client.response.body.read`; independent of `log-response-body`. |
+| `log-request-body` | `never` \| `on-failure` \| `always` | `never` | Tee the request body into `adapter_request_body` as the inserter writes it, up to `max-body-bytes` — on every line (`always`) or only when the outcome is not `success` or the status is a 4xx (`on-failure`, [§4.3](#43-body-logging-and-body-measuring)). |
+| `log-response-body` | `never` \| `on-failure` \| `always` | `never` | Tee the response body into `adapter_response_body` as the application reads it, up to `max-body-bytes` — on every line or only when the outcome is not `success` or the status is a 4xx. |
+| `measure-request-body-size` | boolean | `false` | Record `adapter.request.body.size`; independent of `log-request-body`. |
+| `measure-response-body-size` | boolean | `false` | Record `adapter.response.body.size` and `adapter.response.body.read`; independent of `log-response-body`. |
 | `max-body-bytes` | int > 0 | `16384` | Capture limit per body. Bounds **memory** — and the tee's transient copy per buffer — not the exchange: bytes beyond it still flow; the logged value is truncated with a note of the total size. |
 | `masking-key` | string | *(empty)* | Keys the masking fingerprint: empty keeps the unkeyed `length:hash`, any other value turns it into an HMAC-SHA256 under the key — same shape, same stability under the same key, guess-proof without it. A **secret**: supply it like one; the properties' `toString` redacts it. Ignored when a host pins its own `HeaderValueMasker` bean. |
 
@@ -707,7 +707,7 @@ measured — independent of each other:
 |---|---|---|---|---|
 | `never` | off | no | — | request untouched (unless a correlation header is added); response body mutated for the terminal hooks only |
 | `always` | off | yes, limit `max-body-bytes` | up to the limit | field logged on every line; no size sample |
-| `on-failure` | off | yes, limit `max-body-bytes` | up to the limit | field logged only when `client_outcome` is not `success` or the status is a 4xx; no size sample |
+| `on-failure` | off | yes, limit `max-body-bytes` | up to the limit | field logged only when `adapter_outcome` is not `success` or the status is a 4xx; no size sample |
 | `never` | on | yes, limit `0` (count-only) | nothing | size sample recorded; no field; `tee` copies nothing |
 | `always` / `on-failure` | on | yes, limit `max-body-bytes` | up to the limit | both |
 
@@ -752,9 +752,9 @@ host exclusion — are byte-identical with the RestClient twin's ([§4.4 there](
 ### 4.5 Logger levels
 
 Severity and semantic are decoupled: the level only decides how loud — and whether — a line is emitted;
-`client_outcome` carries the disposition ([§5.3](#53-levels-and-outcomes)):
+`adapter_outcome` carries the disposition ([§5.3](#53-levels-and-outcomes)):
 
-| `http-client-exchange` level | Emitted |
+| `http-adapter-exchange` level | Emitted |
 |---|---|
 | `INFO` | every call |
 | `WARN` | failures (5xx), timeouts, cancellations, slow calls — and errored calls |
@@ -763,7 +763,7 @@ Severity and semantic are decoupled: the level only decides how loud — and whe
 
 Level and outcome are resolved **before** the event is built, so a disabled level costs no assembly, no
 header selection, no body decoding. Metrics are recorded **before** the level gate and are unaffected by
-it — except `client.logging.events`, which by definition counts emitted events only.
+it — except `adapter.logging.events`, which by definition counts emitted events only.
 
 ### 4.6 Validation at startup
 
@@ -784,20 +784,20 @@ it — except `client.logging.events`, which by definition counts emitted events
 **Minimal production profile** — everything logged, telemetry peers excluded, slow threshold tightened:
 
 ```yaml
-client-logging:
+adapter-logging:
   exclude-hosts:
     - pushgateway.monitoring.svc
   slow-request-threshold: 2s
 logging:
   level:
-    http-client-exchange: INFO
+    http-adapter-exchange: INFO
     eu.inqudium.legatium.webclient.logging: WARN
 ```
 
 **Diagnostics profile** — headers with masked credentials, both bodies, arrival lines:
 
 ```yaml
-client-logging:
+adapter-logging:
   log-request-start: true
   log-request-body: always
   log-response-body: always
@@ -814,7 +814,7 @@ client-logging:
 teed up to `max-body-bytes` per call and dropped on success:
 
 ```yaml
-client-logging:
+adapter-logging:
   log-request-body: on-failure
   log-response-body: on-failure
   max-body-bytes: 4096
@@ -823,12 +823,12 @@ client-logging:
 **Metrics without log volume** — body sizes and consumption measured, only failures logged:
 
 ```yaml
-client-logging:
+adapter-logging:
   measure-request-body-size: true
   measure-response-body-size: true
 logging:
   level:
-    http-client-exchange: WARN
+    http-adapter-exchange: WARN
 ```
 
 ---
@@ -843,19 +843,19 @@ component template; `ClientLogFieldTest` in `legatium-common` keeps the shared e
 
 | Field | Type | Index | doc_values | When present | Notes |
 |---|---|---|---|---|---|
-| `client_outcome` | keyword | yes | on | always | `success` / `failure` / `timeout` / `cancelled` — the field dashboards split by |
-| `client_duration_ms` | long | yes | on | always | from the injected monotonic source; until the body's terminal signal |
-| `client_request_method` | keyword | yes | on | always | |
-| `client_response_status_code` | short | yes | on | when a response arrived | absent for an errored or cancelled exchange without a response (`-> -`) |
-| `client_url_host` | keyword | yes | on | when the URL has a host | `host` or `host:port` |
-| `client_url_template` | keyword | yes | on | when `WebClient` recorded a template | e.g. `https://api.example.com/things/{id}` |
-| `client_url_path` | keyword | yes | **off** | always | the **raw** path as sent — filter exactly, never group |
-| `client_url_query` | keyword | yes | **off** | when the request had one and `include-query-string` is on | raw |
-| `client_slow` | boolean | yes | on | only when the threshold was reached | absence means fast |
-| `client_request_headers` | keyword | **no** | off | when selected headers are present | display only |
-| `client_response_headers` | keyword | **no** | off | when selected headers are present | display only |
-| `client_request_body` | keyword | **no** | off | when `log-request-body` admits the outcome and bytes were written | display only, bounded |
-| `client_response_body` | keyword | **no** | off | when `log-response-body` admits the outcome and bytes were read | display only, bounded |
+| `adapter_outcome` | keyword | yes | on | always | `success` / `failure` / `timeout` / `cancelled` — the field dashboards split by |
+| `adapter_duration_ms` | long | yes | on | always | from the injected monotonic source; until the body's terminal signal |
+| `adapter_request_method` | keyword | yes | on | always | |
+| `adapter_response_status_code` | short | yes | on | when a response arrived | absent for an errored or cancelled exchange without a response (`-> -`) |
+| `adapter_url_host` | keyword | yes | on | when the URL has a host | `host` or `host:port` |
+| `adapter_url_template` | keyword | yes | on | when `WebClient` recorded a template | e.g. `https://api.example.com/things/{id}` |
+| `adapter_url_path` | keyword | yes | **off** | always | the **raw** path as sent — filter exactly, never group |
+| `adapter_url_query` | keyword | yes | **off** | when the request had one and `include-query-string` is on | raw |
+| `adapter_slow` | boolean | yes | on | only when the threshold was reached | absence means fast |
+| `adapter_request_headers` | keyword | **no** | off | when selected headers are present | display only |
+| `adapter_response_headers` | keyword | **no** | off | when selected headers are present | display only |
+| `adapter_request_body` | keyword | **no** | off | when `log-request-body` admits the outcome and bytes were written | display only, bounded |
+| `adapter_response_body` | keyword | **no** | off | when `log-response-body` admits the outcome and bytes were read | display only, bounded |
 
 Each field asserts the exact JVM type of its value (`ClientLogField.format`): a wrongly typed value
 drops **that field** with a warning, never the event. The throwable of an errored exchange is attached
@@ -867,9 +867,9 @@ Set by `MdcScope` around each emission ([§2.6](#26-mdc-and-the-reactive-call)):
 
 | Key | Value | Scope |
 |---|---|---|
-| `client_request_id` | the request id: the `traceparent` trace id, or the accepted/generated correlation id (ADR-0002) — always set | emission |
-| `client_method` | the HTTP method | emission |
-| `client_route` | the request **target**: `scheme://host[:port]/path`, query excluded | emission |
+| `adapter_request_id` | the request id: the `traceparent` trace id, or the accepted/generated correlation id (ADR-0002) — always set | emission |
+| `adapter_method` | the HTTP method | emission |
+| `adapter_route` | the request **target**: `scheme://host[:port]/path`, query excluded | emission |
 | `traceId` | trace id from `traceparent` | emission (owned) |
 | `spanId` | parent-id from `traceparent` — the **local client span** the peer will see as its parent | emission (owned) |
 
@@ -877,14 +877,14 @@ Set by `MdcScope` around each emission ([§2.6](#26-mdc-and-the-reactive-call)):
 
 Resolved in this order in `ExchangeLogEmitter`:
 
-| Condition | Level | `client_outcome` |
+| Condition | Level | `adapter_outcome` |
 |---|---|---|
 | the exchange or the body errored and a timeout is in the cause chain | `WARN` | `timeout` |
 | the exchange or the body errored | `ERROR` | `failure` |
 | the subscription was cancelled (before the response, or mid-body) | `WARN` | `cancelled` |
 | status ≥ 500 without an error signal (the peer answered) | `WARN` | `failure` |
 | otherwise | `INFO` | `success` |
-| … and the duration reached `slow-request-threshold` | `INFO → WARN` | unchanged, plus `client_slow: true` |
+| … and the duration reached `slow-request-threshold` | `INFO → WARN` | unchanged, plus `adapter_slow: true` |
 
 A 4xx is a `success` at INFO — the peer answered as designed; the status is on the line for the dashboard
 to split by. Slowness raises severity; it never turns a completed call into a failure.
@@ -897,12 +897,12 @@ first occurrence.
 
 | Meter | Type | Tags | Meaning |
 |---|---|---|---|
-| `client.logging.failopen` | counter | `stage` = `emission` \| `arrival` \| `wiring` | Logging failures the fail-open path swallowed. `emission`: an exchange event was **lost**. `arrival`: a start line was lost. `wiring`: bookkeeping failed — the event usually still follows. |
-| `client.logging.events` | counter | `outcome` = `success` \| `failure` \| `timeout` \| `cancelled` | Exchange events actually **emitted** — after the level gate, arrival lines excluded. The reconciliation ground truth against the log index. |
-| `client.logging.exchanges.open` | gauge | — | Exchanges between filter entry (wiring) and the exactly-once completion. Hovers near the in-flight call count in health. |
-| `client.logging.correlation.id` | counter | `source` = `trace` \| `header` \| `generated` | Origin of each call's request id (ADR-0002). |
-| `client.response.body.read` | counter | `uri`, `host`, `state` = `unread` \| `partial` \| `complete` | How far the application **consumed** the response body, opt-in via `measure-response-body-size`, recorded once per call that received a response and completed. `partial` = a subscription exists but no completion signal was observed (a `take`, a cancelled subscription, an error mid-stream). A `releaseBody()` subscribes and drains and counts as `complete`. |
-| `client.request.body.size` / `client.response.body.size` | distribution summary, base unit `bytes` | `uri`, `host` | Bytes that **actually flowed**, opt-in via `measure-*-body-size`, independent of body logging and level. Exact beyond `max-body-bytes`. Zero-byte bodies record no sample. |
+| `adapter.logging.failopen` | counter | `stage` = `emission` \| `arrival` \| `wiring` | Logging failures the fail-open path swallowed. `emission`: an exchange event was **lost**. `arrival`: a start line was lost. `wiring`: bookkeeping failed — the event usually still follows. |
+| `adapter.logging.events` | counter | `outcome` = `success` \| `failure` \| `timeout` \| `cancelled` | Exchange events actually **emitted** — after the level gate, arrival lines excluded. The reconciliation ground truth against the log index. |
+| `adapter.logging.exchanges.open` | gauge | — | Exchanges between filter entry (wiring) and the exactly-once completion. Hovers near the in-flight call count in health. |
+| `adapter.logging.correlation.id` | counter | `source` = `trace` \| `header` \| `generated` | Origin of each call's request id (ADR-0002). |
+| `adapter.response.body.read` | counter | `uri`, `host`, `state` = `unread` \| `partial` \| `complete` | How far the application **consumed** the response body, opt-in via `measure-response-body-size`, recorded once per call that received a response and completed. `partial` = a subscription exists but no completion signal was observed (a `take`, a cancelled subscription, an error mid-stream). A `releaseBody()` subscribes and drains and counts as `complete`. |
+| `adapter.request.body.size` / `adapter.response.body.size` | distribution summary, base unit `bytes` | `uri`, `host` | Bytes that **actually flowed**, opt-in via `measure-*-body-size`, independent of body logging and level. Exact beyond `max-body-bytes`. Zero-byte bodies record no sample. |
 
 **Registration conflicts.** Micrometer rejects a registration whose id already exists with a different
 meter type. Rather than aborting the context or suppressing an exchange event, the conflicting meter
@@ -915,7 +915,7 @@ falls back to a private registry, warned once per meter name on
 |---|---|
 | Are exchange events being lost **loudly** (something threw)? | `failopen{stage=emission}` > 0 |
 | Are exchange events being lost **silently** (a body nobody consumed)? | `exchanges.open` baseline grows monotonically instead of returning towards 0 |
-| Is the **log pipeline** losing events? | `sum(client.logging.events)` over a window ≠ count of indexed `http-client-exchange` documents |
+| Is the **log pipeline** losing events? | `sum(adapter.logging.events)` over a window ≠ count of indexed `http-adapter-exchange` documents |
 | Did the application stop propagating identity onto its calls? | the `generated` share of `correlation.id` rises (zero by construction with tracing configured — [§6.8](#68-tracing-makes-every-call-traced)) |
 | Are callers cancelling their own calls (operator timeouts)? | `events{outcome=cancelled}` rises while `timeout` does not — [§6.3](#63-timeouts-connector-vs-operator) |
 | Is a call site discarding the payload it paid for? | the `partial` share of `response.body.read{uri=...,host=...}` rises |
@@ -924,13 +924,13 @@ A suggested alert set:
 
 ```promql
 # lost exchange events (hard failure)
-increase(client_logging_failopen_total{stage="emission"}[5m]) > 0
+increase(adapter_logging_failopen_total{stage="emission"}[5m]) > 0
 
 # silently stuck exchanges (liveness) - tune the bound to the service's outbound concurrency
-min_over_time(client_logging_exchanges_open[15m]) > 50
+min_over_time(adapter_logging_exchanges_open[15m]) > 50
 
 # callers tearing down their own calls
-sum(rate(client_logging_events_total{outcome="cancelled"}[10m])) > 0
+sum(rate(adapter_logging_events_total{outcome="cancelled"}[10m])) > 0
 ```
 
 ### 5.6 Trace correlation
@@ -951,7 +951,7 @@ traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
 - Parsing follows the W3C Trace Context Recommendation strictly; a non-conformant header is ignored and
   the call counts as traceless for the identity decision. The conformance is pinned by
   `traceparent/conformance.txt`, the same fixture Limesium uses.
-- Since ADR-0002 the trace id also **is** the call's `client_request_id`, and a traced call gets no
+- Since ADR-0002 the trace id also **is** the call's `adapter_request_id`, and a traced call gets no
   correlation header.
 
 **Where the header comes from.** With Micrometer Tracing on the classpath, Boot's
@@ -984,9 +984,9 @@ Everything not listed here behaves exactly as in `legatium-restclient-logging`.
 
 A subscriber that cancels — a downstream `timeout()` operator, a `take(1)`, a disposed `Disposable`, a
 client disconnecting from a server that streams this call's result through — ends the exchange with a
-CANCEL signal. The event is emitted immediately at WARN with `client_outcome=cancelled`: with the received
+CANCEL signal. The event is emitted immediately at WARN with `adapter_outcome=cancelled`: with the received
 status when the response had arrived (a body cancelled mid-stream), with `-> -` and no status field when
-it had not. Dashboards must treat `client_outcome` as the authoritative disposition and not assume the
+it had not. Dashboards must treat `adapter_outcome` as the authoritative disposition and not assume the
 status field is always present.
 
 ### 6.3 Timeouts: connector vs. operator
@@ -996,10 +996,10 @@ Two things are both called "timeout" and reach this filter as different signals:
 - A timeout the **connector** raises — Reactor Netty's `responseTimeout`, a JDK connector's request
   timeout — arrives as an **error** whose cause chain carries a timeout type; the shared `Timeouts`
   classification recognises the JDK types and Netty's `io.netty.handler.timeout.TimeoutException` family
-  by name (no Netty dependency in the module), and the event is `client_outcome=timeout` at WARN.
+  by name (no Netty dependency in the module), and the event is `adapter_outcome=timeout` at WARN.
 - A timeout the **caller** applies with the `timeout()` operator **cancels** the upstream subscription;
   this filter sees a CANCEL, never the `TimeoutException` the operator raises downstream, and the event is
-  `client_outcome=cancelled`. That is truthful — from the exchange's point of view the caller walked away
+  `adapter_outcome=cancelled`. That is truthful — from the exchange's point of view the caller walked away
   — and it is why the `cancelled` share is the number to watch when a service tunes its operator timeouts.
 
 A host that wants every timeout to read `timeout` configures it on the connector, where it belongs. Pinned
@@ -1012,7 +1012,7 @@ the response to application code guarantees that (`retrieve()` subscribes; `toBo
 `exchangeToMono()` and `exchangeToFlux()` release what was not consumed). The one path that does not is
 the deprecated raw `exchange()`: a caller that obtains the `ClientResponse` and drops it without
 subscribing or releasing leaks the connection — and the exchange stays **open on the gauge**
-`client.logging.exchanges.open`. A monotonically growing baseline is the signal for exactly that host bug,
+`adapter.logging.exchanges.open`. A monotonically growing baseline is the signal for exactly that host bug,
 visible before the connection pool runs dry.
 
 ### 6.5 Late body chunks after cancellation
@@ -1038,7 +1038,7 @@ connector gets the caller's very request object.
 
 The filter sits innermost ([§3.3](#33-filter-order-and-other-filters)), so a retrying filter — or a
 `retryWhen` around the call, which re-subscribes the whole exchange — invokes it once per attempt. Each
-attempt is a crossing and gets its own line, with the same `client_request_id` under a trace (or, on a
+attempt is a crossing and gets its own line, with the same `adapter_request_id` under a trace (or, on a
 traceless call, the correlation header the first attempt added to the request the retry re-sends).
 
 ### 6.8 Tracing makes every call traced
@@ -1064,7 +1064,7 @@ scheme), and a 64-bit cryptographic prefix makes accidental collisions negligibl
 unkeyed**: it prevents plaintext exposure, not offline guessing. A reader with a candidate list
 (usernames, tenant names, short API keys) can confirm a candidate by hashing it. Do not treat the
 default as a security boundary for guessable values; omit such headers from the selection instead — or
-**key** it: `client-logging.masking-key` turns the fingerprint into an HMAC-SHA256 under the key, same
+**key** it: `adapter-logging.masking-key` turns the fingerprint into an HMAC-SHA256 under the key, same
 shape and stability, guess-proof without the key (a secret — supply it as one). For any other shape the
 masker is the `HeaderValueMasker` bean ([§2.8](#28-injectable-collaborators)): a host pins its own (a
 fixed `***` for no correlation at all) once, and both twins mask with it. The contract a replacement
@@ -1138,9 +1138,9 @@ the same arithmetic).
 - [`legatium-restclient-logging/README.md`](../../legatium-restclient-logging/README.md) — the reference
   implementation's documentation; everything not listed in [§6.1](#61-differences-to-the-restclient-twin)
   applies here unchanged.
-- [`/docs/client-logging-reference.yml`](../../docs/client-logging-reference.yml) — the complete commented
+- [`/docs/adapter-logging-reference.yml`](../../docs/adapter-logging-reference.yml) — the complete commented
   configuration reference, bound by both twins.
 - [`/docs/elk/README.md`](../../docs/elk/README.md) — the Elasticsearch component template for the
-  `client_*` fields.
-- [`/docs/adr/`](../../docs/adr/) — the decision records, among them the outcome gate on bodies (ADR-0006).
+  `adapter_*` fields.
+- [`/docs/adr/`](../../docs/adr/) — the decision records, among them the outcome gate on bodies (ADR-0006) and the `adapter` vocabulary (ADR-0007).
 - [Limesium](https://github.com/Inqudium/limesium) — the inbound sibling.
