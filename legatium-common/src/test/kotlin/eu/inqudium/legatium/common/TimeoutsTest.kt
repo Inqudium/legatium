@@ -80,4 +80,24 @@ class TimeoutsTest {
         // When/Then
         assertThat(Timeouts.isTimeout(a)).isFalse()
     }
+
+    @Test
+    fun `should recognise a timeout carried as a suppressed exception of a composite error`() {
+        // What is tested: the walk over SUPPRESSED exceptions - Reactor's composite errors (zip/merge/when)
+        //   carry their components as suppressed, not as the cause.
+        // Success criteria: a composite whose only timeout is suppressed classifies as a timeout; a
+        //   suppressed cycle terminates.
+        // Why it matters: a timeout hidden in a composite would log as a plain failure on the WebClient twin.
+        // Given: a composite with a timeout among its suppressed components, and a self-referencing one
+        val composite =
+            RuntimeException("Multiple exceptions").apply {
+                addSuppressed(IOException("reset"))
+                addSuppressed(TimeoutException("late"))
+            }
+        val cyclic = RuntimeException("cycle").also { it.addSuppressed(it) }
+
+        // When/Then
+        assertThat(Timeouts.isTimeout(composite)).isTrue()
+        assertThat(Timeouts.isTimeout(cyclic)).isFalse()
+    }
 }

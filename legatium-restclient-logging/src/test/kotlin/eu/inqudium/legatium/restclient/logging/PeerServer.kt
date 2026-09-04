@@ -5,6 +5,8 @@ import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 /**
  * The foreign party the integration tests send their envoy to: the JDK's own HTTP server on an
@@ -35,7 +37,13 @@ internal class PeerServer : AutoCloseable {
     val host: String
         get() = "127.0.0.1:${server.address.port}"
 
+    // Handlers run on a pool, NOT on the server's single dispatcher thread: the /slow route sleeps on
+    // after a client gave up at its timeout, and on the dispatcher thread that sleep would block the
+    // accept loop for the next test's request.
+    private val handlers: ExecutorService = Executors.newCachedThreadPool()
+
     init {
+        server.executor = handlers
         server.createContext("/") { exchange -> handle(exchange) }
         server.start()
     }
@@ -82,5 +90,8 @@ internal class PeerServer : AutoCloseable {
         exchange.responseBody.use { it.write(bytes) }
     }
 
-    override fun close() = server.stop(0)
+    override fun close() {
+        server.stop(0)
+        handlers.shutdownNow()
+    }
 }

@@ -36,7 +36,6 @@ class BoundedBodyCaptureTest {
 
             // When: late tee calls arrive
             capture.capture(bytes("late"), 0, 4)
-            capture.capture('!'.code)
             capture.count(100)
 
             // Then: the snapshot is what was frozen

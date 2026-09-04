@@ -3,12 +3,14 @@ package eu.inqudium.legatium.webclient.logging
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import org.reactivestreams.Publisher
 import org.springframework.core.io.buffer.DataBuffer
+import org.springframework.http.ZeroCopyHttpOutputMessage
 import org.springframework.http.client.reactive.ClientHttpRequest
 import org.springframework.http.client.reactive.ClientHttpRequestDecorator
 import org.springframework.web.reactive.function.client.ClientRequest
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import java.nio.ByteBuffer
+import java.nio.file.Path
 
 /**
  * The reactive tee: every [DataBuffer] that flows is COUNTED in full, at most the capture's remaining
@@ -45,9 +47,9 @@ internal fun tee(
  * The publisher SPECIALIZATION is preserved: a `Mono` body stays a `Mono` (single-buffer requests take
  * the connector's optimized path), everything else becomes a `Flux` as it would anyway.
  */
-internal class CapturingClientHttpRequestDecorator(
+internal open class CapturingClientHttpRequestDecorator(
     delegate: ClientHttpRequest,
-    private val capture: BoundedBodyCapture,
+    protected val capture: BoundedBodyCapture,
 ) : ClientHttpRequestDecorator(delegate) {
     override fun writeWith(body: Publisher<out DataBuffer>): Mono<Void> =
         when (body) {
@@ -62,15 +64,42 @@ internal class CapturingClientHttpRequestDecorator(
 }
 
 /**
+ * The tee for a connector request that offers ZERO-COPY file transfer (Reactor Netty's `sendfile`
+ * path): the decorator keeps the [ZeroCopyHttpOutputMessage] contract, so `ResourceHttpMessageWriter`
+ * still picks zero-copy for a file `Resource` body, and the bytes are COUNTED, not copied - a body that
+ * never passes through user space cannot be logged, only measured. A plain [ClientHttpRequestDecorator]
+ * would silently demote such uploads to buffered writes.
+ */
+internal class ZeroCopyCapturingClientHttpRequestDecorator(
+    delegate: ClientHttpRequest,
+    capture: BoundedBodyCapture,
+) : CapturingClientHttpRequestDecorator(delegate, capture),
+    ZeroCopyHttpOutputMessage {
+    override fun writeWith(
+        file: Path,
+        position: Long,
+        count: Long,
+    ): Mono<Void> = (delegate as ZeroCopyHttpOutputMessage).writeWith(file, position, count).doOnSuccess { capture.count(count) }
+}
+
+/**
  * This request with its body inserter wrapped, so the connector's request is decorated with the tee at
- * write time. Everything else - method, URL, headers, cookies, attributes, the `httpRequest` consumer -
- * is copied by [ClientRequest.from], so the request the connector sees is the caller's, with the body
- * observed on its way out.
+ * write time - the zero-copy-preserving variant when the connector's request supports it. Everything
+ * else - method, URL, headers, cookies, attributes, the `httpRequest` consumer - is copied by
+ * [ClientRequest.from], so the request the connector sees is the caller's, with the body observed on
+ * its way out.
  */
 internal fun ClientRequest.withRequestBodyTee(capture: BoundedBodyCapture): ClientRequest {
     val inserter = body()
     return ClientRequest
         .from(this)
-        .body { outputMessage, context -> inserter.insert(CapturingClientHttpRequestDecorator(outputMessage, capture), context) }
-        .build()
+        .body { outputMessage, context ->
+            val decorated =
+                if (outputMessage is ZeroCopyHttpOutputMessage) {
+                    ZeroCopyCapturingClientHttpRequestDecorator(outputMessage, capture)
+                } else {
+                    CapturingClientHttpRequestDecorator(outputMessage, capture)
+                }
+            inserter.insert(decorated, context)
+        }.build()
 }

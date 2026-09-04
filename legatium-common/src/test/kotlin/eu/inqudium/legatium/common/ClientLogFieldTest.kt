@@ -63,7 +63,7 @@ class ClientLogFieldTest {
         }
 
         @Test
-        fun `should prefix every wire name with endpoint and keep them unique`() {
+        fun `should prefix every wire name with adapter and keep them unique`() {
             // What is tested: the naming contract of the whole family in one place.
             // Success criteria: every wire name starts with 'adapter_', is lower snake_case, and no two
             //   fields collide.
@@ -149,7 +149,7 @@ class ClientLogFieldTest {
 
         @Test
         fun `should map the numeric and boolean shapes the code guarantees`() {
-            // Given / When / Then: the shape checked() enforces in code and the type the index expects
+            // Given / When / Then: the shape format() enforces in code and the type the index expects
             //   must describe the same value - long duration, short status (three digits, a label never
             //   summed), boolean flags
             assertThat(properties[ClientLogField.DURATION_MS.wireName]).containsEntry("type", "long")
@@ -219,23 +219,35 @@ class ClientLogFieldTest {
             //   absent - the statement never throws.
             // Why it matters: the exchange line is the observability of the request path; a type slip in
             //   one field must not take the whole statement (and the surrounding request) down with it.
-            // Given/When: one well-typed and one ill-typed field on the same event
-            logger
-                .atInfo()
-                .setMessage("exchange")
-                .addKeyValue(ClientLogField.OUTCOME, "success")
-                .addKeyValue(ClientLogField.DURATION_MS, "not-a-long")
-                .log()
+            // Given: the field logger observed as well, so the promised warning is verifiable
+            val fieldLogger = LoggerFactory.getLogger(ClientLogField::class.java) as Logger
+            val fieldAppender = ListAppender<ILoggingEvent>().apply { start() }
+            fieldLogger.addAppender(fieldAppender)
+            try {
+                // When: one well-typed and one ill-typed field on the same event
+                logger
+                    .atInfo()
+                    .setMessage("exchange")
+                    .addKeyValue(ClientLogField.OUTCOME, "success")
+                    .addKeyValue(ClientLogField.DURATION_MS, "not-a-long")
+                    .log()
 
-            // Then: the event survived with only the well-typed field
-            val keyValues =
-                appender.list
-                    .single()
-                    .keyValuePairs
-                    .associate { it.key to it.value }
-            assertThat(keyValues)
-                .containsEntry("adapter_outcome", "success")
-                .doesNotContainKey("adapter_duration_ms")
+                // Then: the event survived with only the well-typed field, and ONE warning names the dropped one
+                val keyValues =
+                    appender.list
+                        .single()
+                        .keyValuePairs
+                        .associate { it.key to it.value }
+                assertThat(keyValues)
+                    .containsEntry("adapter_outcome", "success")
+                    .doesNotContainKey("adapter_duration_ms")
+                val warning = fieldAppender.list.single()
+                assertThat(warning.level).isEqualTo(Level.WARN)
+                assertThat(warning.formattedMessage).contains("adapter_duration_ms")
+            } finally {
+                fieldLogger.detachAppender(fieldAppender)
+                fieldAppender.stop()
+            }
         }
     }
 }

@@ -224,7 +224,8 @@ five layers:
 | `ExchangeLogEmitter` | Builds and emits the arrival line and the completion event; freezes the captures first; resolves level and outcome (timeouts via the shared `Timeouts`, `cancelled` on top); records body sizes; opens the emission `MdcScope` with trace ownership. |
 | `ClientLogField` | The wire names and the exact JVM type of each structured field; a wrongly typed value drops the field with a warning, never the event. Shared (legatium-common): one enum for both twins. |
 | `ClientLoggingMetrics` | The six meters - the fixed-tag meters pre-registered (four outcomes here), the body meters created lazily per tag - with per-meter fallback to a private registry on registration conflict. |
-| `CapturingClientHttpRequestDecorator` / `tee` | The `DataBuffer` map-tee: wraps the connector's request while the inserter writes; the same `tee` transforms the response body flux. |
+| `CapturingClientHttpRequestDecorator` / `tee` | The `DataBuffer` tee: wraps the connector's request while the inserter writes (a zero-copy-preserving variant when the connector offers `sendfile`); the same `tee` copies each response buffer. |
+| `ObservedBody` | The response body operator: tees each buffer, marks the read state, turns the body's terminal signal into the exchange's completion, and tells a consumer's own stop (a cancel from within its delivery - Spring's body skip, a `take`) from an abandonment (`cancelled`). |
 | `BoundedBodyCapture` | The lock-guarded, freezable capture target; count-only mode with limit `0`; the response-side read state (`BodyReadState`). |
 | `MdcScope` | Puts identity and trace keys into the MDC for the duration of one emission and restores the previous values. |
 | `Traceparent` / `Timeouts` | Strict W3C `traceparent` parsing to `(traceId, spanId)`; the cause-chain walk that classifies a failure as a timeout — recognising Reactor Netty's timeout by name. |
@@ -400,6 +401,14 @@ removes the call from the log instead of failing it. The exchange log is therefo
 feature with no completeness guarantee; a regulatory audit trail of outbound calls must come from a
 fail-closed component. The compensating controls are `adapter.logging.failopen` and the
 `exchanges.open` gauge ([§5.5](#55-reading-the-meters-together)) — alert on them.
+
+**The boundary is `Exception`, not `Throwable` — a decision.** Every guard confines an `Exception` and
+lets an `Error` propagate: a `VirtualMachineError`, a `LinkageError` from a broken logging backend or a
+`StackOverflowError` is a JVM-level condition no logging library can meaningfully absorb, and swallowing
+it would hide a process that is already failing. The one thing the module protects against an `Error` is
+its own bookkeeping: a connector call that dies with an `Error` while assembling still closes the
+open-exchange gauge (`abandonExchange`, no emission attempted, one WARN breadcrumb), so the liveness
+signal cannot drift over something the module never caused.
 
 ### 2.8 Injectable collaborators
 
@@ -871,6 +880,14 @@ Rules that hold for every combination:
 - The captures are **frozen at emission**: a body chunk still in flight after a cancellation can no
   longer change what was logged ([§6.5](#65-late-body-chunks-after-cancellation)).
 
+**Cardinality of the body meters.** The size summaries and the read-state counter are tagged `uri` and
+`host`. The `uri` tag is the URI template the client recorded — and only when it carries a placeholder:
+`WebClient` records whatever string was passed to `uri(String, ...)`, so a concatenated
+`uri("/things/" + id)` would otherwise put one tag value per id on the meter; such values fold to
+`UNKNOWN`. The `host` tag is caller-controlled and is **not** folded: a host that fans out to many peer
+hosts (webhooks, per-tenant endpoints) should leave the measuring properties off or accept one tag set
+per host in its registry.
+
 ### 4.4 Activation: hosts and paths
 
 ```
@@ -1034,7 +1051,7 @@ first occurrence.
 |---|---|---|---|
 | `adapter.logging.failopen` | counter | `stage` = `emission` \| `arrival` \| `wiring` | Logging failures the fail-open path swallowed. `emission`: an exchange event was **lost**. `arrival`: a start line was lost. `wiring`: bookkeeping failed — the event usually still follows. |
 | `adapter.logging.events` | counter | `outcome` = `success` \| `failure` \| `timeout` \| `cancelled` | Exchange events actually **emitted** — after the level gate, arrival lines excluded. The reconciliation ground truth against the log index. |
-| `adapter.logging.exchanges.open` | gauge | — | Exchanges between filter entry (wiring) and the exactly-once completion. Hovers near the in-flight call count in health. |
+| `adapter.logging.exchanges.open` | gauge | `client=webclient` | Exchanges between filter entry (wiring) and the exactly-once completion. Hovers near the in-flight call count in health. Tagged per twin so that a host carrying both twins gets two gauges instead of Micrometer silently keeping the first one registered; sum over `client` for the total. |
 | `adapter.logging.correlation.id` | counter | `source` = `trace` \| `header` \| `generated` | Origin of each call's request id (ADR-0002). |
 | `adapter.response.body.read` | counter | `uri`, `host`, `state` = `unread` \| `partial` \| `complete` | How far the application **consumed** the response body, opt-in via `measure-response-body-size`, recorded once per call that received a response and completed. `partial` = a subscription exists but no completion signal was observed (a `take`, a cancelled subscription, an error mid-stream). A `releaseBody()` subscribes and drains and counts as `complete`. |
 | `adapter.request.body.size` / `adapter.response.body.size` | distribution summary, base unit `bytes` | `uri`, `host` | Bytes that **actually flowed**, opt-in via `measure-*-body-size`, independent of body logging and level. Exact beyond `max-body-bytes`. Zero-byte bodies record no sample. |
@@ -1117,12 +1134,30 @@ Everything not listed here behaves exactly as in `legatium-restclient-logging`.
 
 ### 6.2 Cancellation and the missing status
 
-A subscriber that cancels — a downstream `timeout()` operator, a `take(1)`, a disposed `Disposable`, a
-client disconnecting from a server that streams this call's result through — ends the exchange with a
-CANCEL signal. The event is emitted immediately at WARN with `adapter_outcome=cancelled`: with the received
-status when the response had arrived (a body cancelled mid-stream), with `-> -` and no status field when
-it had not. Dashboards must treat `adapter_outcome` as the authoritative disposition and not assume the
-status field is always present.
+Two very different things reach the body publisher as a CANCEL signal, and the filter's own body operator
+(`ObservedBody`) tells them apart by where the cancel comes from:
+
+- **The consumer decided it has read enough — from within its own delivery.** Spring's body skip for
+  `bodyToMono(Void.class)`, `toEntity(Void.class)` and an unsupported media type drains a body-carrying
+  response through `takeWhile(release; false)`, which cancels upstream in `onNext` of the first buffer;
+  a `take(n)` cancels in `onNext` of the n-th. The peer answered, the application chose not to read the
+  rest: the exchange completes as **`success`** with the received status, and the read-state counter
+  (`adapter.response.body.read{state=partial}`, opt-in) shows the body was not read to its end. Logging
+  these as `cancelled` would flag every fire-and-forget call at WARN and, in `on-failure` body mode,
+  write both bodies of a healthy call.
+- **The caller walked away — from anywhere else.** A downstream `timeout()` operator's timer, a disposed
+  `Disposable`, a client disconnecting from a server that streams this call's result through: the event
+  is emitted immediately at WARN with **`adapter_outcome=cancelled`** — with the received status when
+  the response had arrived (a body cancelled mid-stream), with `-> -` and no status field when it had
+  not (a cancel of the response `Mono` before the connector answered).
+
+A cancel of the response `Mono` *after* the response was delivered (a host operator such as `next()`
+between this filter and the client) is ignored: from then on the body owns the exchange. Dashboards must
+treat `adapter_outcome` as the authoritative disposition and not assume the status field is always
+present. A connector that completes **without** a response at all — a host filter swallowing an error
+into `Mono.empty()` — is a `failure` at ERROR with the cause WebClient raises for the caller ("completed
+without emitting a response"). Pinned by the filter's unit tests: Spring's skip, a `take`, an
+out-of-band cancel, a `next()`, an empty completion.
 
 ### 6.3 Timeouts: connector vs. operator
 
@@ -1150,6 +1185,8 @@ Two things are both called "timeout" and reach this filter as different signals:
 
 A host that wants every timeout to read `timeout` configures it on the connector, where it belongs. Pinned
 by the Reactor Netty integration test in both variants and by the connector suites for the connector side.
+A `timeout()` operator that fires *mid-body* cancels the body from its timer thread — out of band — and
+reads `cancelled` with the received status ([§6.2](#62-cancellation-and-the-missing-status)).
 
 ### 6.4 A body nobody consumes
 
@@ -1255,6 +1292,7 @@ legatium-webclient-logging/
     │   ├── ExchangeLogEmitter.kt                  arrival line and completion event
     │   ├── ClientLoggingMetrics.kt                the six meters (four outcomes)
     │   ├── CapturingDecorators.kt                 tee(), the request decorator, the inserter wrap
+    │   ├── ObservedBody.kt                 the response body operator: tee, read state, terminal signal, consumption vs. cancel
     │   └── BoundedBodyCapture.kt                  bounded, freezable capture target, read state
     │   (ClientLoggingProperties, ClientLogFields, Traceparent, Timeouts, Mdc, NanoTimeSource,
     │    CorrelationIdGenerator, HeaderLogProperties, BodyCapture helpers and the fail-open guards

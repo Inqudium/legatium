@@ -85,3 +85,18 @@ is added to the request only on traceless calls that carry none:**
   generated}`), the GUIDEs, `adapter-logging-reference.yml`, READMEs, and
   the test suites. This ADR records the contract first; the code follows
   it.
+
+## Amendment (2026-09-04): the accepted shape of a propagated correlation id
+
+Step 3 - a traceless call accepts the correlation id already on the request
+- adopted the header value verbatim. The value typically originates outside
+the application (an inbound request propagated onto the outbound call) and
+lands verbatim in the message, the MDC and, when selected, the header field
+of every line of the call, so it is now bounded the way the URI already was
+(`CorrelationHeader` in `legatium-common`, both twins): at most 200
+characters, visible ASCII only (`0x21`..`0x7E` - no whitespace, no control
+characters, no non-ASCII). A value outside the rule is treated as ABSENT: the
+twin generates its own id, SENDS it in place of the unacceptable value, and
+counts the call as `generated`. Legitimate ids - UUIDs, base-36 ids, ids
+with the usual punctuation - are unaffected. The sibling project limesium
+mirrors the rule on the inbound side so the pair stays consistent.

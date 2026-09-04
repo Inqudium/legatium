@@ -120,3 +120,23 @@ The two twins' copies of the test helper `MdcAdapterSwap` were unused (only
 `legatium-common`'s `MdcScopeTest` swaps the adapter) and were deleted; the
 "copies are cheaper than a test-jar" rule applies to helpers a module
 actually uses.
+
+## Amendment (2026-09-04): not relocated - the consequences, stated
+
+The inlined classes keep their package (`eu.inqudium.legatium.common`); they
+are NOT relocated per twin. Relocation would break the one thing the shared
+layer is for: a host bean of `HeaderValueMasker`, `NanoTimeSource` or
+`CorrelationIdGenerator` masks or clocks BOTH twins, and a host that imports
+`ClientLoggingProperties` for a custom interceptor or filter bean writes one
+import - with relocation each twin would carry its own type and none of that
+holds. The price is explicit:
+
+- **Both twins in one application carry the same classes twice**, under the
+  same names, and the first jar on the classpath wins. That is safe only while
+  the two versions are byte-identical - hence "keep the two versions equal" in
+  both READMEs; a version skew between the twins is a misconfiguration.
+- **The JPMS module path is unsupported** for a host carrying both twins: two
+  automatic modules exporting the same package are a split-package error and
+  the application does not start. A single twin on the module path is fine.
+  (The build itself runs Surefire with `useModulePath=false` for the same
+  reason.)

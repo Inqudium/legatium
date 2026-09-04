@@ -57,7 +57,11 @@ internal class Exchange(
     @Volatile
     var failure: Throwable? = null
 
-    /** True when the subscription was cancelled - before the response (a downstream timeout) or mid-body. */
+    /**
+     * True when the CALLER abandoned the subscription - before the response (a downstream timeout, a
+     * disposed caller) or mid-body from outside the delivery (a disconnect, a timer). A consumer that
+     * cancels from within its own `onNext` because it has read enough does not set it (see [ObservedBody]).
+     */
     @Volatile
     var cancelled: Boolean = false
 

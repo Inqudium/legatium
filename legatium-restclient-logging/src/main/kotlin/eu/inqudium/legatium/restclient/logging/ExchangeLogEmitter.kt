@@ -141,15 +141,10 @@ internal class ExchangeLogEmitter(
         val elapsedNanos = nanoTime.nanoTime() - exchange.startNanos
         val durationMs = elapsedNanos / NANOS_PER_MS
         val failure = exchange.failure
-        val response = exchange.response
-        // A status read is a host call on the response; a response that cannot even say its status is
-        // logged like one that never arrived (`-> -`), the event itself is never lost over it.
-        val status: Int? =
-            try {
-                response?.statusCode?.value()
-            } catch (e: Exception) {
-                null
-            }
+        // Status and headers were snapshotted at handover (the interceptor counted and warned if the
+        // engine refused): the emission runs after the client's close and never asks the response again.
+        val status: Int? = exchange.responseStatus
+        val headersSnapshot = exchange.responseHeaders
         // Full-precision, overflow-free comparison (twin parity): a 1.5 ms threshold must not flag a 1 ms
         // exchange. The logged duration keeps millisecond resolution - hence the 1 ms floor in the properties.
         val slow = Duration.ofNanos(elapsedNanos) >= properties.slowRequestThreshold
@@ -216,7 +211,7 @@ internal class ExchangeLogEmitter(
             // Multi-value resolution, like the request side: a single-value getFirst would silently
             // truncate repeated headers (Set-Cookie being the classic).
             val responseHeaders =
-                response?.headers?.let { headers ->
+                headersSnapshot?.let { headers ->
                     properties.responseHeaders.select(headers.headerNames(), masker) { name ->
                         headers[name]?.takeIf { it.isNotEmpty() }?.joinToString(", ")
                     }
@@ -230,7 +225,7 @@ internal class ExchangeLogEmitter(
                 if (properties.logRequestBody.logs(failed)) exchange.requestCapture?.loggedValue(exchange.requestCharset) else null
             val responseBody =
                 if (properties.logResponseBody.logs(failed)) {
-                    exchange.responseCapture?.loggedValue(response?.headers?.declaredCharsetOrUtf8() ?: StandardCharsets.UTF_8)
+                    exchange.responseCapture?.loggedValue(headersSnapshot?.declaredCharsetOrUtf8() ?: StandardCharsets.UTF_8)
                 } else {
                     null
                 }
@@ -262,7 +257,24 @@ internal class ExchangeLogEmitter(
             // reported as a lost emission.
             metrics.eventEmitted(outcome)
         } finally {
-            mdcScope.close()
+            // Restoration guarded on its own, like the interceptor's call scope: a throwing MDC adapter
+            // here must neither be reported as a LOST emission (the event is already on the logger) nor
+            // mask an emission failure propagating out of the try - it costs the restoration, counted as
+            // stage=wiring.
+            try {
+                mdcScope.close()
+            } catch (e: Exception) {
+                reportQuietly {
+                    metrics.wiringFailure()
+                    internalLog.warn(
+                        "MDC restoration failed after emitting {} {} - the emitting thread may carry stale client keys: {}",
+                        exchange.method,
+                        exchange.target,
+                        e.toString(),
+                        e,
+                    )
+                }
+            }
         }
     }
 

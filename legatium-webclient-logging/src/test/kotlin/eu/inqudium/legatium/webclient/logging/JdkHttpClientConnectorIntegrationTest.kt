@@ -14,7 +14,9 @@ class JdkHttpClientConnectorIntegrationTest : ConnectorContract() {
     override fun connector(
         connectTimeout: Duration,
         responseTimeout: Duration,
-    ): ClientHttpConnector =
-        JdkClientHttpConnector(HttpClient.newBuilder().connectTimeout(connectTimeout).build())
-            .apply { setReadTimeout(responseTimeout) }
+    ): ClientHttpConnector {
+        val httpClient = HttpClient.newBuilder().connectTimeout(connectTimeout).build()
+        closing(AutoCloseable { httpClient.close() })
+        return JdkClientHttpConnector(httpClient).apply { setReadTimeout(responseTimeout) }
+    }
 }

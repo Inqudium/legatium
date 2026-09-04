@@ -111,4 +111,43 @@ class HeaderLogPropertiesTest {
         assertThat(selected).containsExactly("Authorization" to "hmac:13", "Accept" to "text/plain")
         assertThat(selected.map { it.second }).doesNotContain("Bearer secret")
     }
+
+    @Test
+    fun `should log an explicitly included header once although it is listed twice in differing case`() {
+        // What is tested: deduplication of the explicit include path, which the wildcard path already had.
+        // Success criteria: `["Accept", "accept"]` selects the header once, under the first spelling.
+        // Why it matters: a duplicated name=value pair on the line is the one input the validation does
+        //   not normalise.
+        // Given
+        val section = HeaderLogProperties(includes = listOf("Accept", "accept"), masked = emptyList())
+
+        // When
+        val selected = section.select(listOf("accept"), HeaderValueMasker.DEFAULT) { "text/plain" }
+
+        // Then
+        assertThat(selected).containsExactly("Accept" to "text/plain")
+    }
+
+    @Test
+    fun `should reject blank entries in every list at construction time`() {
+        // What is tested: the four blank-entry checks - the validation surface the masking fuzz target
+        //   relies on (it catches the IllegalArgumentException) but never proves.
+        // Success criteria: each list rejects a blank entry with a message naming the list.
+        // Why it matters: a blank name binds silently otherwise and matches nothing, an operator's typo
+        //   turning into a missing header without feedback.
+        // Given/When/Then
+        val cases =
+            listOf(
+                "includes" to { HeaderLogProperties(includes = listOf(" ")) },
+                "excludes" to { HeaderLogProperties(excludes = listOf("")) },
+                "masked" to { HeaderLogProperties(masked = listOf("Authorization", " ")) },
+                "unmasked" to { HeaderLogProperties(unmasked = listOf("\t")) },
+            )
+        cases.forEach { (list, construct) ->
+            assertThat(catchThrowable { construct() })
+                .describedAs(list)
+                .isInstanceOf(IllegalArgumentException::class.java)
+                .hasMessageContaining("$list contains blank entries")
+        }
+    }
 }

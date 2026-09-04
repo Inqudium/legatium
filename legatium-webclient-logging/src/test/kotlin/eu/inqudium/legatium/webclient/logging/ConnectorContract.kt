@@ -77,10 +77,14 @@ abstract class ConnectorContract {
         closeables.clear()
     }
 
-    private fun client(baseUrl: String): WebClient =
+    /** A client on this connector; [timeout] applies to connect AND response - SHORT only where the timeout is the subject. */
+    private fun client(
+        baseUrl: String,
+        timeout: Duration = GENEROUS,
+    ): WebClient =
         webClientBuilder
             .baseUrl(baseUrl)
-            .clientConnector(connector(connectTimeout = SHORT, responseTimeout = SHORT))
+            .clientConnector(connector(connectTimeout = timeout, responseTimeout = timeout))
             .build()
 
     @Test
@@ -131,7 +135,7 @@ abstract class ConnectorContract {
         // Given/When
         val thrown =
             catchThrowable {
-                client(peer.baseUrl)
+                client(peer.baseUrl, timeout = SHORT)
                     .get()
                     .uri("/slow")
                     .retrieve()
@@ -161,7 +165,7 @@ abstract class ConnectorContract {
         // When
         val thrown =
             catchThrowable {
-                client(tarpit.baseUrl)
+                client(tarpit.baseUrl, timeout = SHORT)
                     .get()
                     .uri("/things/1")
                     .retrieve()
@@ -203,6 +207,9 @@ abstract class ConnectorContract {
 
     companion object {
         private val SHORT: Duration = Duration.ofMillis(200)
+
+        /** For every scenario whose subject is not the timeout: a loaded runner must not turn a tee test into a timeout test. */
+        private val GENEROUS: Duration = Duration.ofSeconds(10)
         private lateinit var peer: PeerServer
 
         @JvmStatic

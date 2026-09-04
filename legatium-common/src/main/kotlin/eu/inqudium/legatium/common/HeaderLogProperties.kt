@@ -56,11 +56,15 @@ data class HeaderLogProperties(
     private val maskAll: Boolean = WILDCARD in masked
     private val wildcardInclude: Boolean = WILDCARD in includes
 
+    // Explicit includes deduplicated case-insensitively (first spelling wins), like the wildcard path
+    // deduplicates the available names: `["Accept", "accept"]` must log the header once.
+    private val explicitIncludes: List<String> = includes.distinctBy { it.lowercase() }
+
     /**
      * The headers this section logs, as `(name, logged value)` pairs: included minus excluded, values
      * masked by [masker] unless the name is unmasked. [availableNames] is consulted only for the `*` include
-     * (deduplicated case-insensitively there); explicit includes are looked up directly and keep their
-     * configured spelling.
+     * (deduplicated case-insensitively there); explicit includes are looked up directly, deduplicated
+     * case-insensitively as well, and keep their configured spelling.
      */
     fun select(
         availableNames: Collection<String>,
@@ -70,7 +74,7 @@ data class HeaderLogProperties(
         if (includes.isEmpty()) {
             return emptyList()
         }
-        val names = if (wildcardInclude) availableNames.distinctBy { it.lowercase() } else includes
+        val names = if (wildcardInclude) availableNames.distinctBy { it.lowercase() } else explicitIncludes
         return names.mapNotNull { name ->
             val lower = name.lowercase()
             if (lower in excludedLower) {

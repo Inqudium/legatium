@@ -375,4 +375,33 @@ class ClientRequestLoggingMetricsTest {
             ).isEqualTo(1.0)
         }
     }
+
+    @Test
+    fun `should fold a recorded template without a placeholder into the untemplated tag value`() {
+        // What is tested: the cardinality guard of the body meters' `uri` tag - the client records
+        //   whatever string was passed to uri(String, ...), so `uri("/things/" + id)` would put one tag
+        //   value per id on the meter.
+        // Success criteria: a template with a placeholder is kept; one without, or none, folds to UNKNOWN.
+        // Why it matters: an unbounded tag set is a slow memory leak in the host registry.
+        // Given/When/Then
+        assertThat(ClientLoggingMetrics.uriTag("https://api.example.com/things/{id}")).isEqualTo("https://api.example.com/things/{id}")
+        assertThat(ClientLoggingMetrics.uriTag("https://api.example.com/things/42")).isEqualTo(ClientLoggingMetrics.UNTEMPLATED_URI)
+        assertThat(ClientLoggingMetrics.uriTag(null)).isEqualTo(ClientLoggingMetrics.UNTEMPLATED_URI)
+    }
+
+    @Test
+    fun `should register the open-exchanges gauge under this twin's client tag`() {
+        // What is tested: the gauge id carries a `client` tag naming the twin.
+        // Success criteria: the gauge is found under client=webclient.
+        // Why it matters: Micrometer deduplicates by id and keeps the FIRST gauge registered under a
+        //   bare name - in a host carrying both twins the second twin's open exchanges would vanish.
+        // Given/When/Then
+        assertThat(
+            registry
+                .get(ClientLoggingMetrics.OPEN_EXCHANGES_METER)
+                .tag(ClientLoggingMetrics.CLIENT_TAG, "webclient")
+                .gauge()
+                .value(),
+        ).isZero()
+    }
 }

@@ -1,6 +1,7 @@
 package eu.inqudium.legatium.restclient.logging
 
 import eu.inqudium.legatium.common.ClientLoggingProperties
+import eu.inqudium.legatium.common.CorrelationHeader
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.MdcKeys
@@ -184,6 +185,23 @@ class ClientRequestLoggingInterceptor
             try {
                 val response = execution.execute(request, body)
                 exchange.response = response
+                // Status and headers are final at handover and the engine can still answer; snapshot them
+                // now, so the emission after the client's close never asks a closed response. A refusing
+                // engine costs the status (`-> -`), counted as wiring, never the event.
+                try {
+                    exchange.responseStatus = response.statusCode.value()
+                    exchange.responseHeaders = response.headers
+                } catch (e: Exception) {
+                    reportQuietly {
+                        metrics.wiringFailure()
+                        internalLog.warn(
+                            "Response status and headers could not be read for {} {} - the event will show no status: {}",
+                            exchange.method,
+                            exchange.target,
+                            e.toString(),
+                        )
+                    }
+                }
                 // Pure object construction, no host call - nothing here can fail and strand the response.
                 return CapturingClientHttpResponse(
                     delegate = response,
@@ -208,6 +226,12 @@ class ClientRequestLoggingInterceptor
                 }
                 completeExchange(exchange)
                 throw e
+            } catch (t: Throwable) {
+                // An Error (LinkageError, VirtualMachineError, AssertionError from an inner interceptor) is
+                // outside the fail-open promise (see FailOpenDiagnostics) - but not outside the gauge: the
+                // exchange is abandoned, the liveness signal stays truthful, no emission is attempted.
+                abandonExchange(exchange, t)
+                throw t
             } finally {
                 // Restoration is guarded separately: a throwing MDC adapter here must neither fail the call
                 // nor MASK an exception already propagating out of it - it costs the restoration, counted
@@ -246,24 +270,32 @@ class ClientRequestLoggingInterceptor
             // correlation header already on the request or generates a fresh id, and only a traceless
             // call without one gets the header ADDED - a traced call goes out observationally untouched.
             val trace = Traceparent.parse(headers.getFirst(Traceparent.HEADER))
+            // A correlation id already on the request is accepted only within the CorrelationHeader rule
+            // (length, visible ASCII); anything else counts as absent and is REPLACED on the wire.
             val headerCorrelationId =
                 if (trace == null) {
-                    headers.getFirst(properties.correlationIdHeader)?.takeUnless { it.isBlank() }
+                    CorrelationHeader.accept(headers.getFirst(properties.correlationIdHeader))
                 } else {
                     null
                 }
+            // A retrying OUTER interceptor re-enters with the request this module already stamped: the
+            // header then carries the id generated on attempt 1, remembered on the request, and the
+            // origin counter must keep calling it `generated` - reusing the id across attempts is right,
+            // counting the module's own write as propagation would dilute the very signal the counter is.
+            val generatedEarlier = request.attributes[GENERATED_ID_ATTRIBUTE] as? String
             val requestId = trace?.first ?: headerCorrelationId ?: correlationIds.nextCorrelationId()
             // Guarded inside the metrics: a throwing host counter must not turn the call into an unlogged
             // pass-through.
             metrics.requestId(
                 when {
                     trace != null -> ClientLoggingMetrics.REQUEST_ID_SOURCE_TRACE
-                    headerCorrelationId != null -> ClientLoggingMetrics.REQUEST_ID_SOURCE_HEADER
+                    headerCorrelationId != null && headerCorrelationId != generatedEarlier -> ClientLoggingMetrics.REQUEST_ID_SOURCE_HEADER
                     else -> ClientLoggingMetrics.REQUEST_ID_SOURCE_GENERATED
                 },
             )
             if (trace == null && headerCorrelationId == null) {
                 headers.set(properties.correlationIdHeader, requestId)
+                request.attributes[GENERATED_ID_ATTRIBUTE] = requestId
             }
 
             // The request body is what the client hands the interceptor: complete, in memory, already
@@ -338,6 +370,24 @@ class ClientRequestLoggingInterceptor
             emitter.logExchange(exchange)
         }
 
+        /**
+         * The exactly-once end of an exchange the wire call left with an [Error]: the gauge closes, no
+         * event is attempted (the logging backend is the likeliest source of such an Error), one WARN
+         * breadcrumb on the module's logger, quietly.
+         */
+        private fun abandonExchange(
+            exchange: Exchange,
+            error: Throwable,
+        ) {
+            if (!exchange.completed.compareAndSet(false, true)) {
+                return
+            }
+            reportQuietly {
+                metrics.exchangeCompleted()
+                internalLog.warn("Adapter http exchange abandoned: {} {} - {} [{}={}]", exchange.method, exchange.target, error.toString(), MdcKeys.REQUEST_ID, exchange.requestId)
+            }
+        }
+
         companion object {
             /**
              * Request attribute under which `RestClient` records the URI template of a call made through the
@@ -347,6 +397,9 @@ class ClientRequestLoggingInterceptor
              * and stays null for an expanded `URI` and for `RestTemplate`, which records no such attribute.
              */
             const val URI_TEMPLATE_ATTRIBUTE = "org.springframework.web.client.RestClient.uriTemplate"
+
+            /** Request attribute remembering the correlation id this module generated and sent, for re-entries by a retrying outer interceptor. */
+            const val GENERATED_ID_ATTRIBUTE = "eu.inqudium.legatium.restclient.logging.generatedCorrelationId"
 
             // The breadcrumb and wiring failures go to the module's own logger, never onto the exchange
             // logger - the exchange log stream stays parseable.

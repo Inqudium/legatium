@@ -11,6 +11,8 @@ import org.springframework.core.env.EnumerablePropertySource
 import org.springframework.core.env.MapPropertySource
 import org.springframework.core.env.PropertySource
 import org.springframework.core.io.ClassPathResource
+import kotlin.reflect.KClass
+import kotlin.reflect.full.primaryConstructor
 
 /**
  * Lockstep between the repository-shared reference configuration and the shared
@@ -56,36 +58,13 @@ class ClientLoggingReferenceConfigTest {
         // What is tested: that the reference contains no stale or misspelled keys - the Binder silently
         //   IGNORES unknown keys, so the equality test above cannot catch a typo on its own - and that
         //   no existing key goes undocumented.
-        // Success criteria: the adapter-logging.* key set of the YAML equals the known property names.
+        // Success criteria: the adapter-logging.* key set of the YAML equals the property names derived
+        //   from the class's primary constructor (nested sections recursed).
         // Why it matters: a documented key that does not bind is worse than an undocumented one - readers
         //   copy it and believe it works.
-        // Given: the kebab-case names of all properties
-        val knownKeys =
-            setOf(
-                "enabled",
-                "logger-name",
-                "correlation-id-header",
-                "include-query-string",
-                "log-request-start",
-                "include-path-patterns",
-                "exclude-path-prefixes",
-                "exclude-hosts",
-                "slow-request-threshold",
-                "request-headers.includes",
-                "request-headers.excludes",
-                "request-headers.masked",
-                "request-headers.unmasked",
-                "response-headers.includes",
-                "response-headers.excludes",
-                "response-headers.masked",
-                "response-headers.unmasked",
-                "log-request-body",
-                "log-response-body",
-                "measure-request-body-size",
-                "measure-response-body-size",
-                "max-body-bytes",
-                "masking-key",
-            )
+        // Given: the kebab-case names of all properties, DERIVED from the class - a literal set would pass
+        //   unchanged when a property is added and the reference forgotten
+        val knownKeys = configurationKeysOf(ClientLoggingProperties::class)
 
         // When/Then
         assertThat(documentedKeys(referenceSources)).isEqualTo(knownKeys)
@@ -113,3 +92,22 @@ class ClientLoggingReferenceConfigTest {
         assertThatThrownBy { bind("adapter-logging.log-response-body" to "true") }.isInstanceOf(BindException::class.java)
     }
 }
+
+/** The `kebab-case` configuration keys of a properties data class, nested sections recursed with a dotted prefix. */
+private fun configurationKeysOf(
+    type: KClass<*>,
+    prefix: String = "",
+): Set<String> =
+    type.primaryConstructor!!
+        .parameters
+        .flatMap { parameter ->
+            val key = prefix + kebabCase(parameter.name!!)
+            val classifier = parameter.type.classifier as KClass<*>
+            if (classifier.isData && classifier.primaryConstructor != null && classifier.qualifiedName!!.startsWith("eu.inqudium")) {
+                configurationKeysOf(classifier, "$key.")
+            } else {
+                listOf(key)
+            }
+        }.toSet()
+
+private fun kebabCase(camel: String): String = camel.replace(Regex("([a-z0-9])([A-Z])")) { "${it.groupValues[1]}-${it.groupValues[2].lowercase()}" }

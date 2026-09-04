@@ -140,8 +140,19 @@ class ClientRequestLoggingInterceptorIntegrationTest {
 
     @Test
     fun `should log a refused connection as ERROR failure without a status`() {
-        // Given: a port nobody listens on
-        val client = restClientBuilder.baseUrl("http://127.0.0.1:1").build()
+        // Given: a port nobody listens on - with a connect timeout, so a host that DROPs instead of
+        //   refusing cannot hang the test
+        val client =
+            restClientBuilder
+                .baseUrl("http://127.0.0.1:1")
+                .requestFactory(
+                    JdkClientHttpRequestFactory(
+                        java.net.http.HttpClient
+                            .newBuilder()
+                            .connectTimeout(Duration.ofSeconds(2))
+                            .build(),
+                    ),
+                ).build()
 
         // When
         val thrown =

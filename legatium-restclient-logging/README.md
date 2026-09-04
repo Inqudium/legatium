@@ -35,7 +35,7 @@ code it inlines:
 
 | Concern | This module | WebClient twin |
 |---|---|---|
-| Disposition vocabulary | `success` / `failure` / `timeout` | plus **`cancelled`** — a cancelled subscription is the reactive reality a blocking call cannot have |
+| Disposition vocabulary | `success` / `failure` / `timeout` | plus **`cancelled`** — a subscription the caller abandoned is the reactive reality a blocking call cannot have; a consumer that stops reading the body because it has read enough is `success`, partially read |
 | Emission point | response **close** — which `RestClient` and `RestTemplate` do in a `finally` after their converters read the body, so status, headers and body are final and `adapter_duration_ms` is **response occupancy** including the body read, not bare round-trip time; a call without a response emits right away with `-> -` | the response **body's terminal signal** (complete, error or cancel) |
 | Never-completing exchange | a response the application never closes (a raw `exchange(..., close = false)`) stays open on the `adapter.logging.exchanges.open` gauge — the liveness signal — rather than logging a guess | a response body nobody subscribes to or releases stays open on the gauge |
 | Request body | the byte array the client hands the interceptor — complete, captured at wiring | teed at the connector's `writeWith` as the caller's `BodyInserter` writes it |

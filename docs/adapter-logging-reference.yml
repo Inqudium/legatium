@@ -131,6 +131,9 @@ adapter-logging:
   # `adapter.response.body.read` (tag `state` = unread | partial | complete): the tee mirrors what the
   # application CONSUMED, so this is the one signal that tells a body the peer sent but the application
   # dropped from a body that was never sent.
+  # Cardinality precondition: the meters are tagged `uri` (the recorded URI template, kept only when it
+  # carries a placeholder - `uri("/things/" + id)` folds to UNKNOWN) and `host` (the peer host as called,
+  # NOT folded). A host that calls many peer hosts pays one tag set per host in its registry.
   measure-request-body-size: false
   measure-response-body-size: false
 

@@ -53,6 +53,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `http-adapter-exchange`, namespace `adapter-logging.*`. Code names keep
   their `Client*` form. Chosen over `client` (ECS names the remote party so),
   `upstream` (hop-relative) and `dependency` (Maven).
+- Reactive body consumption vs. abandonment: a consumer that stops reading the
+  body from within its own delivery - Spring's body skip for
+  `bodyToMono(Void.class)` / `toEntity(Void.class)` / an unsupported media
+  type, a `take(n)` - completes the exchange as `success` with the body
+  partially read; `cancelled` is reserved for a subscription the caller
+  abandoned (a timeout operator's timer, a disposed caller, a disconnect).
+  Previously every fire-and-forget call logged `cancelled` at WARN and, in
+  `on-failure` body mode, wrote both bodies of the healthy call. The filter
+  wires per subscription (a resubscribing outer retry logs one line per
+  attempt), an empty connector completion is a `failure`, and a cancel of the
+  response `Mono` after delivery no longer ends the exchange.
+- Both twins in one registry: the open-exchanges gauge carries a `client` tag
+  (`restclient` / `webclient`), so the second twin's gauge is no longer
+  silently dropped by Micrometer's id deduplication.
+- RestClient twin: a body that cannot be OPENED, or a read that throws an
+  unchecked exception, is a `failure` (previously `success`); status and
+  headers are snapshotted at handover; an `Error` from the wire call closes
+  the gauge without an emission (the `Exception`/`Throwable` boundary is now a
+  documented decision); the origin counter keeps calling a re-entered
+  generated id `generated`.
+- Body-meter cardinality: the `uri` tag keeps a recorded template only when it
+  carries a placeholder (`uri("/things/" + id)` folds to `UNKNOWN`); the
+  `host` tag is documented as caller-controlled. Zero-copy file uploads keep
+  their `sendfile` path under request-body capture (counted, not copied).
+- Correlation header acceptance rule (ADR-0002 amendment): a propagated id is
+  adopted only within 200 visible-ASCII characters; anything else is replaced
+  by a generated id. Timeouts carried as suppressed exceptions of a composite
+  error classify as `timeout`; explicitly listed header names are
+  deduplicated; the truncated-body decoder sizes its buffer exactly.
+- Test evidence: seed corpora for the three fuzz targets (regression mode now
+  replays real inputs), the interrupt-flag restoration of the fail-open guard,
+  every binding-time `require`, the previous-value restore and suppressed
+  aggregation of `MdcScope`, and the reactive filter under Spring's body skip,
+  a resubscription, an out-of-band cancel and an empty completion.
 - Connector-agnostic WebClient twin, pinned: the shared timeout classification
   recognises Reactor Netty's connect timeout (`io.netty.channel.ConnectTimeoutException`,
   a `ConnectException` no JDK timeout type covers) by name, next to Netty's

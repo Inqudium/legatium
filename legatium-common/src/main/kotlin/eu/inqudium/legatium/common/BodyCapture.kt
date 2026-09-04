@@ -42,8 +42,19 @@ internal fun decodeTruncated(
             .newDecoder()
             .onMalformedInput(CodingErrorAction.REPLACE)
             .onUnmappableCharacter(CodingErrorAction.REPLACE)
-    val chars = CharBuffer.allocate((bytes.size * decoder.maxCharsPerByte()).toInt() + 1)
-    decoder.decode(ByteBuffer.wrap(bytes), chars, false)
-    chars.flip()
-    return chars.toString()
+    // Sized in double precision and rounded UP: maxCharsPerByte is a float, and a float product
+    // truncated to Int can undershoot for large captures - the OVERFLOW result below is the guard
+    // against a decoder whose declared maximum is wrong, not the normal path.
+    var capacity = Math.ceil(bytes.size.toDouble() * decoder.maxCharsPerByte()).toInt() + 1
+    val input = ByteBuffer.wrap(bytes)
+    while (true) {
+        val chars = CharBuffer.allocate(capacity)
+        input.rewind()
+        val result = decoder.reset().decode(input, chars, false)
+        if (!result.isOverflow) {
+            chars.flip()
+            return chars.toString()
+        }
+        capacity *= 2
+    }
 }

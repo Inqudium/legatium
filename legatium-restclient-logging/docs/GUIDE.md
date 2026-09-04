@@ -404,6 +404,16 @@ feature with no completeness guarantee; a regulatory audit trail of outbound cal
 fail-closed component. The compensating controls are `adapter.logging.failopen` and the
 `exchanges.open` gauge ([§5.5](#55-reading-the-meters-together)) — alert on them.
 
+**The boundary is `Exception`, not `Throwable` — a decision.** Every guard confines an `Exception` and
+lets an `Error` propagate: a `VirtualMachineError`, a `LinkageError` from a broken logging backend or a
+`StackOverflowError` is a JVM-level condition no logging library can meaningfully absorb, and swallowing
+it would hide a process that is already failing. The one thing the module protects against an `Error` is
+its own bookkeeping: a wire call that dies with an `Error` (an inner interceptor's `AssertionError`, a
+`LinkageError` in the engine on first use) still closes the open-exchange gauge (`abandonExchange`, no
+emission attempted, one WARN breadcrumb), so the liveness signal cannot drift over something the module
+never caused. An `Error` thrown by the logging backend *during* the emission at response close is outside
+the promise and reaches the client's `finally`.
+
 ### 2.8 Injectable collaborators
 
 Time and randomness are injected, not ambient:
@@ -908,6 +918,14 @@ Rules that hold for every combination:
 - `measure-response-body-size` additionally records `adapter.response.body.read` — whether the application
   consumed the body completely, partially, or not at all ([§5.4](#54-meters)).
 
+**Cardinality of the body meters.** The size summaries and the read-state counter are tagged `uri` and
+`host`. The `uri` tag is the URI template the client recorded — and only when it carries a placeholder:
+`RestClient` records whatever string was passed to `uri(String, ...)`, so a concatenated
+`uri("/things/" + id)` would otherwise put one tag value per id on the meter; such values fold to
+`UNKNOWN` (as does every `RestTemplate` call, which records no template). The `host` tag is
+caller-controlled and is **not** folded: a host that fans out to many peer hosts (webhooks, per-tenant
+endpoints) should leave the measuring properties off or accept one tag set per host in its registry.
+
 ### 4.4 Activation: hosts and paths
 
 ```
@@ -1095,7 +1113,7 @@ are deliberately left to `http.client.requests` and the log fields.
 |---|---|---|---|
 | `adapter.logging.failopen` | counter | `stage` = `emission` \| `arrival` \| `wiring` | Logging failures the fail-open path swallowed. `emission`: an exchange event was **lost**. `arrival`: a start line was lost. `wiring`: bookkeeping failed (pass-through degradation, a lost sample or counter) — the event usually still follows. A lost log line cannot report itself through the same pipeline; this counter is the independent channel. |
 | `adapter.logging.events` | counter | `outcome` = `success` \| `failure` \| `timeout` | Exchange events actually **emitted** on the exchange logger — after the level gate, arrival lines excluded. The reconciliation ground truth against the log index. |
-| `adapter.logging.exchanges.open` | gauge | — | Exchanges between interceptor entry (wiring) and response close. Hovers near the in-flight call count in health. |
+| `adapter.logging.exchanges.open` | gauge | `client=restclient` | Exchanges between interceptor entry (wiring) and response close. Hovers near the in-flight call count in health. Tagged per twin so that a host carrying both twins gets two gauges instead of Micrometer silently keeping the first one registered; sum over `client` for the total. |
 | `adapter.logging.correlation.id` | counter | `source` = `trace` \| `header` \| `generated` | Origin of each call's request id (ADR-0002). |
 | `adapter.response.body.read` | counter | `uri` = template, `UNKNOWN` without one; `host`; `state` = `unread` \| `partial` \| `complete` | How far the application **consumed** the response body, opt-in via `measure-response-body-size`. Recorded once per call that received a response — including bodiless consumption (`toBodilessEntity`), which is the `unread` share the counter exists to show. `partial` = the stream was opened but EOF was never observed (a converter that stopped early, an exception mid-read). Created lazily per tag set on first use. |
 | `adapter.request.body.size` / `adapter.response.body.size` | distribution summary, base unit `bytes` | `uri`, `host` | Bytes that **actually flowed**, opt-in via `measure-*-body-size`, independent of body logging and level. Exact beyond `max-body-bytes`. Zero-byte bodies record no sample. Created lazily per tag set on first use. |

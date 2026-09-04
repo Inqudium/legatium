@@ -1,6 +1,7 @@
 package eu.inqudium.legatium.webclient.logging
 
 import eu.inqudium.legatium.common.ClientLoggingProperties
+import eu.inqudium.legatium.common.CorrelationHeader
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.NanoTimeSource
@@ -15,7 +16,6 @@ import org.springframework.web.reactive.function.client.ExchangeFilterFunction
 import org.springframework.web.reactive.function.client.ExchangeFunction
 import org.springframework.web.util.pattern.PathPattern
 import org.springframework.web.util.pattern.PathPatternParser
-import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import reactor.core.publisher.SignalType
 import java.net.URI
@@ -26,11 +26,14 @@ import java.net.URI
  * `adapter-logging.*` configuration (see [ClientLoggingProperties]). Stack-inherent differences to the
  * RestClient twin, all deliberate:
  *
- * - **Disposition vocabulary:** `cancelled` in addition to `success`/`failure`/`timeout` - a cancelled
- *   subscription (a downstream `timeout()` operator, a `take`, a disposed caller) is the reactive
- *   reality a blocking call cannot have. Note the consequence: a `Mono.timeout()` the CALLER applies
- *   reaches this filter as a CANCEL and logs `cancelled`; a timeout the CONNECTOR raises (Reactor
- *   Netty's response timeout) arrives as an error signal and logs `timeout`.
+ * - **Disposition vocabulary:** `cancelled` in addition to `success`/`failure`/`timeout` - a subscription
+ *   the CALLER abandoned (a downstream `timeout()` operator, a disposed caller, a client that
+ *   disconnected mid-stream) is the reactive reality a blocking call cannot have. A consumer that
+ *   cancels the body from within its own delivery because it has read enough - Spring's body skip for
+ *   `bodyToMono(Void.class)`, a `take(n)` - is NOT that: the exchange completes as `success` with the
+ *   body partially read (see [ObservedBody]). Note the consequence: a `Mono.timeout()` the CALLER
+ *   applies reaches this filter as a CANCEL and logs `cancelled`; a timeout the CONNECTOR raises
+ *   (Reactor Netty's response timeout) arrives as an error signal and logs `timeout`.
  * - **No call-wide THREAD-LOCAL MDC:** the call hops event-loop threads; the exchange identity rides
  *   the emission's `MdcScope` (and the message inline). Handler-side propagation of the identity into
  *   reactive operators is the host's context-propagation business, not this filter's.
@@ -125,27 +128,52 @@ class ClientRequestLoggingFilter
             if (shouldNotFilter(request.url())) {
                 return next.exchange(request)
             }
-            val wiring = wireOrNull(request) ?: return next.exchange(request)
-            val exchange = wiring.exchange
-            if (properties.logRequestStart) {
-                emitter.logRequestStart(exchange)
-            }
-            // Mono.defer: a downstream filter that THROWS while assembling its publisher (instead of
-            // returning Mono.error) must become THIS pipeline's error signal - invoked bare, the exception
-            // would propagate synchronously past doOnError/doFinally, lose the exchange event and leak the
-            // open-exchange gauge.
-            return Mono
-                .defer { next.exchange(wiring.request) }
-                .map { response -> onResponse(exchange, response) }
-                .doOnError { exchange.failure = it }
-                .doOnCancel { exchange.cancelled = true }
-                .doFinally { signal ->
-                    // A delivered response hands the completion to the body's terminal signal; everything
-                    // else (error, cancel, or an empty completion from a broken connector) ends here.
-                    if (signal != SignalType.ON_COMPLETE || exchange.state.get() != ExchangeState.RESPONDED) {
+            // Mono.defer around EVERYTHING, not only the connector call: wiring, the arrival line and the
+            // gauge then run once per SUBSCRIPTION, so a retrying outer filter that resubscribes this Mono
+            // gets one exchange - and one line - per attempt instead of a completed exchange it cannot
+            // reopen. And a downstream filter that THROWS while assembling its publisher (instead of
+            // returning Mono.error) becomes THIS pipeline's error signal - invoked bare, the exception would
+            // propagate synchronously past doOnError/doFinally, lose the exchange event and leak the gauge.
+            return Mono.defer {
+                val wiring = wireOrNull(request) ?: return@defer next.exchange(request)
+                val exchange = wiring.exchange
+                if (properties.logRequestStart) {
+                    emitter.logRequestStart(exchange)
+                }
+                val call =
+                    try {
+                        next.exchange(wiring.request)
+                    } catch (e: Exception) {
+                        // Thrown while assembling, inside this defer: routed into the chain below as the
+                        // error signal, so doOnError/doFinally complete the exchange.
+                        Mono.error(e)
+                    } catch (t: Throwable) {
+                        // An Error is outside the fail-open promise (see FailOpenDiagnostics) and, being
+                        // fatal to Reactor, bypasses every signal hook - the gauge still closes.
+                        abandonExchange(exchange, t)
+                        throw t
+                    }
+                call
+                    .map { response -> onResponse(exchange, response) }
+                    .doOnError { exchange.failure = it }
+                    // A cancel BEFORE the response is the caller walking away; once the response was
+                    // delivered the body owns the exchange, and a host operator that cancels this Mono
+                    // after onNext (a `next()`, a future bridge) must not end it here.
+                    .doOnCancel { if (exchange.state.get() != ExchangeState.RESPONDED) exchange.cancelled = true }
+                    .doFinally { signal ->
+                        val state = exchange.state.get()
+                        if (state == ExchangeState.RESPONDED) {
+                            // A delivered response hands the completion to the body's terminal signal.
+                            return@doFinally
+                        }
+                        if (signal == SignalType.ON_COMPLETE && state == ExchangeState.OPEN) {
+                            // An EMPTY completion - a broken connector, a host filter that swallowed an error
+                            // into Mono.empty() - is a failure: WebClient raises exactly this for the caller.
+                            exchange.failure = IllegalStateException(NO_RESPONSE_MESSAGE)
+                        }
                         complete(exchange)
                     }
-                }
+            }
         }
 
         /**
@@ -164,17 +192,33 @@ class ClientRequestLoggingFilter
             val capture = exchange.responseCapture
             return response
                 .mutate()
-                .body { body ->
-                    Flux
-                        .defer {
-                            capture?.markStarted()
-                            body
-                        }.map { buffer -> if (capture == null) buffer else tee(capture, buffer) }
-                        .doOnComplete { capture?.markCompleted() }
-                        .doOnError { exchange.failure = it }
-                        .doOnCancel { exchange.cancelled = true }
-                        .doFinally { complete(exchange) }
-                }.build()
+                .body { body -> ObservedBody(body, exchange, capture, ::complete, ::teeFailure) }
+                .build()
+        }
+
+        /** A tee that threw cost the capture of one buffer - counted as wiring, the call untouched. */
+        private fun teeFailure(e: Exception) {
+            reportQuietly {
+                metrics.wiringFailure()
+                internalLog.warn("Response body tee failed - the logged body may be incomplete: {}", e.toString())
+            }
+        }
+
+        /**
+         * The exactly-once end of an exchange whose connector call left with an [Error]: the gauge closes,
+         * no event is attempted, one WARN breadcrumb on the module's logger, quietly.
+         */
+        private fun abandonExchange(
+            exchange: Exchange,
+            error: Throwable,
+        ) {
+            if (exchange.state.getAndSet(ExchangeState.COMPLETED) == ExchangeState.COMPLETED) {
+                return
+            }
+            reportQuietly {
+                metrics.exchangeCompleted()
+                internalLog.warn("Adapter http exchange abandoned: {} {} - {}", exchange.method, exchange.target, error.toString())
+            }
         }
 
         /**
@@ -227,9 +271,11 @@ class ClientRequestLoggingFilter
             // correlation header already on the request or generates a fresh id, and only a traceless
             // call without one gets the header ADDED - a traced call goes out observationally untouched.
             val trace = Traceparent.parse(headers.getFirst(Traceparent.HEADER))
+            // A correlation id already on the request is accepted only within the CorrelationHeader rule
+            // (length, visible ASCII); anything else counts as absent and is REPLACED on the wire.
             val headerCorrelationId =
                 if (trace == null) {
-                    headers.getFirst(properties.correlationIdHeader)?.takeUnless { it.isBlank() }
+                    CorrelationHeader.accept(headers.getFirst(properties.correlationIdHeader))
                 } else {
                     null
                 }
@@ -266,7 +312,7 @@ class ClientRequestLoggingFilter
             // so both go through one rebuild; untouched otherwise.
             var outgoing = request
             if (sendCorrelationHeader) {
-                outgoing = ClientRequest.from(outgoing).header(properties.correlationIdHeader, requestId).build()
+                outgoing = ClientRequest.from(outgoing).headers { it.set(properties.correlationIdHeader, requestId) }.build()
             }
             if (requestCapture != null) {
                 outgoing = outgoing.withRequestBodyTee(requestCapture)
@@ -327,6 +373,9 @@ class ClientRequestLoggingFilter
              * stays absent for an expanded `URI`.
              */
             const val URI_TEMPLATE_ATTRIBUTE = "org.springframework.web.reactive.function.client.WebClient.uriTemplate"
+
+            /** The cause attached to an exchange whose connector completed empty - WebClient's own message for the caller. */
+            const val NO_RESPONSE_MESSAGE = "The underlying HTTP client completed without emitting a response"
 
             // Wiring failures go to the module's own logger, never onto the exchange logger - the exchange
             // log stream stays parseable.

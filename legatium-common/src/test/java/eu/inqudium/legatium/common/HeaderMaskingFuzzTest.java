@@ -3,6 +3,9 @@ package eu.inqudium.legatium.common;
 import com.code_intelligence.jazzer.api.FuzzedDataProvider;
 import com.code_intelligence.jazzer.junit.FuzzTest;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -14,11 +17,14 @@ import java.util.regex.Pattern;
  * inline, ADR-0003): arbitrary include/exclude/masked configurations
  * against arbitrary header names and values.
  *
- * Invariants under test: construction rejects only its documented cases
- * (blank entries, wildcard exclude or unmasked) and select() never throws; a
- * value configured as masked and not unmasked never appears in the output in
- * plaintext but always as the stable length:hash fingerprint; the default masker is deterministic and matches its
- * documented shape.
+ * Invariants under test: construction rejects exactly its documented cases
+ * (blank entries, wildcard exclude or unmasked) - a rejection without one of
+ * those triggers, or an acceptance despite one, fails; select() never throws and
+ * selects exactly the included-minus-excluded names that carry a value, once
+ * each; a value configured as masked and not unmasked never appears in the
+ * output in plaintext but always as the stable length:hash fingerprint, and a
+ * value not masked appears verbatim; the default masker is deterministic and
+ * matches its documented shape.
  *
  * Runs as a regression test (checked-in inputs plus the empty input) in every
  * build; the scheduled Fuzz workflow explores for real (JAZZER_FUZZ=1).
@@ -36,9 +42,24 @@ class HeaderMaskingFuzzTest {
         HeaderLogProperties properties;
         try {
             properties = new HeaderLogProperties(includes, excludes, masked, unmasked);
-        } catch (IllegalArgumentException expected) {
-            // Documented rejection: blank entries, or the '*' wildcard in excludes or unmasked.
+        } catch (IllegalArgumentException rejected) {
+            // Documented rejection ONLY: blank entries, or the '*' wildcard in excludes or unmasked.
+            boolean documented =
+                    hasBlank(includes)
+                            || hasBlank(excludes)
+                            || hasBlank(masked)
+                            || hasBlank(unmasked)
+                            || excludes.contains(HeaderLogProperties.WILDCARD)
+                            || unmasked.contains(HeaderLogProperties.WILDCARD);
+            if (!documented) {
+                throw new IllegalStateException("undocumented rejection: " + rejected.getMessage(), rejected);
+            }
             return;
+        }
+        if (hasBlank(includes) || hasBlank(excludes) || hasBlank(masked) || hasBlank(unmasked)
+                || excludes.contains(HeaderLogProperties.WILDCARD)
+                || unmasked.contains(HeaderLogProperties.WILDCARD)) {
+            throw new IllegalStateException("documented rejection not applied for " + includes + excludes + masked + unmasked);
         }
 
         Map<String, String> headers = new HashMap<>();
@@ -54,9 +75,35 @@ class HeaderMaskingFuzzTest {
         }
 
         List<kotlin.Pair<String, String>> selected =
-                properties.select(headers.keySet(), HeaderValueMasker.Companion.getDEFAULT(), headers::get);
+                properties.select(
+                        headers.keySet(),
+                        HeaderValueMasker.Companion.getDEFAULT(),
+                        name -> lookupIgnoreCase(headers, name)); // case-insensitive, like HttpHeaders
 
         boolean maskAll = masked.contains(HeaderLogProperties.WILDCARD);
+        // Selection oracle: exactly the included-minus-excluded names that carry a value, once each.
+        Set<String> expectedNames = new HashSet<>();
+        Collection<String> candidates =
+                includes.contains(HeaderLogProperties.WILDCARD) ? headers.keySet() : includes;
+        for (String name : candidates) {
+            String lower = name.toLowerCase(Locale.ROOT);
+            boolean excluded = excludes.stream().anyMatch(e -> e.toLowerCase(Locale.ROOT).equals(lower));
+            if (!excluded && lookupIgnoreCase(headers, name) != null) {
+                expectedNames.add(lower);
+            }
+        }
+        if (includes.isEmpty() && !selected.isEmpty()) {
+            throw new IllegalStateException("empty includes selected " + selected);
+        }
+        Set<String> selectedNames = new HashSet<>();
+        for (kotlin.Pair<String, String> entry : selected) {
+            if (!selectedNames.add(entry.getFirst().toLowerCase(Locale.ROOT))) {
+                throw new IllegalStateException("header selected twice: " + entry.getFirst());
+            }
+        }
+        if (!selectedNames.equals(expectedNames)) {
+            throw new IllegalStateException("selection mismatch: expected " + expectedNames + ", got " + selectedNames);
+        }
         for (kotlin.Pair<String, String> entry : selected) {
             String name = entry.getFirst();
             String value = entry.getSecond();
@@ -79,6 +126,9 @@ class HeaderMaskingFuzzTest {
                 if (original != null && !original.isEmpty() && value.equals(original)) {
                     throw new IllegalStateException("masked value leaked in plaintext: " + name);
                 }
+            } else if (!value.equals(original)) {
+                // Plaintext oracle: an unmasked (or not-masked) name renders its original value verbatim.
+                throw new IllegalStateException("plaintext value altered: " + name + "=" + value + " (original " + original + ")");
             }
         }
 
@@ -94,6 +144,10 @@ class HeaderMaskingFuzzTest {
             throw new IllegalStateException(
                     "mask() length prefix wrong: " + fingerprint + " for length " + probe.length());
         }
+    }
+
+    private static boolean hasBlank(List<String> names) {
+        return names.stream().anyMatch(String::isBlank);
     }
 
     private static List<String> consumeNames(FuzzedDataProvider data) {

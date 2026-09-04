@@ -321,11 +321,21 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
         }
 
         @Test
-        fun `should not install a tee when neither logging nor measuring is on`() {
-            // Given: the defaults - the response body must pass through untouched
-            val body = interceptorWith(base).intercept(request(), ByteArray(0), answering(body = "raw")).consumeAndClose()
+        fun `should not attach a capture when neither logging nor measuring is on`() {
+            // What is tested: the zero-cost default path - with body logging and measuring off, no capture
+            //   buffers or counts the body (the read-failure reporting wrapper exists either way).
+            // Success criteria: the returned response reports no capture; the body passes through
+            //   unchanged; no body field on the event.
+            // Why it matters: an absent key alone cannot observe this (a capture with logging off also
+            //   yields no key) - the seam is what proves no capture was installed.
+            // Given: the defaults
+            val response = interceptorWith(base).intercept(request(), ByteArray(0), answering(body = "raw"))
 
-            // When/Then
+            // When
+            val body = response.consumeAndClose()
+
+            // Then
+            assertThat((response as CapturingClientHttpResponse).capturing).isFalse()
             assertThat(body).isEqualTo("raw")
             assertThat(keyValues(log.events.single())).doesNotContainKey("adapter_response_body")
         }

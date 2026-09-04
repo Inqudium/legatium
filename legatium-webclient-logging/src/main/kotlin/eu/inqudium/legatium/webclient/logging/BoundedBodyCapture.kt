@@ -69,18 +69,6 @@ internal class BoundedBodyCapture(
     val totalBytes: Long
         get() = lock.withLock { total }
 
-    fun capture(b: Int) {
-        lock.withLock {
-            if (frozen) {
-                return
-            }
-            if (buffer.size() < maxBytes) {
-                buffer.write(b)
-            }
-            total += 1
-        }
-    }
-
     fun capture(
         bytes: ByteArray,
         offset: Int,
@@ -109,7 +97,10 @@ internal class BoundedBodyCapture(
      * Counts [length] bytes that flowed WITHOUT buffering them: the reactive tee's path for everything
      * beyond [remainingCapacity], and its whole path in count-only mode.
      */
-    fun count(length: Int) =
+    fun count(length: Int) = count(length.toLong())
+
+    /** [count] for a byte count that never passed through user space (a zero-copy file transfer). */
+    fun count(length: Long) =
         lock.withLock {
             if (!frozen) {
                 total += length

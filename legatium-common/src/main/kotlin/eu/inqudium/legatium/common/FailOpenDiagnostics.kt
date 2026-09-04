@@ -31,6 +31,15 @@ internal inline fun reportQuietly(report: () -> Unit) {
  * interceptor's and filter's call-through), a produced value (fail-open wiring), or work that must still
  * happen after a confined failure (the terminal handling completes the exchange) - those keep their
  * explicit try/catch, where the deviation is visible.
+ *
+ * ## The boundary is `Exception`, not `Throwable` - a decision
+ *
+ * Every fail-open guard in the twins confines [Exception] and lets an [Error] propagate: a
+ * `VirtualMachineError`, a `LinkageError` from a broken logging backend or a `StackOverflowError` is a
+ * JVM-level condition no logging library can meaningfully absorb, and swallowing it would hide a
+ * process that is already failing. The one thing the twins DO protect against an `Error` is their own
+ * bookkeeping: a wire call that dies with an `Error` still closes the open-exchange gauge (without an
+ * emission attempt), so the liveness signal cannot drift over something the module never caused.
  */
 internal inline fun failOpen(
     onInterrupted: (InterruptedException) -> Unit,

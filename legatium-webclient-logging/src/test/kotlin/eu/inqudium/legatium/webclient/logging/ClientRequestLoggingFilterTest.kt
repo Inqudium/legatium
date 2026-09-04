@@ -12,6 +12,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.reactivestreams.Subscription
 import org.slf4j.MDC
 import org.springframework.core.io.buffer.DataBuffer
 import org.springframework.core.io.buffer.DefaultDataBufferFactory
@@ -20,6 +21,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.web.reactive.function.client.ClientResponse
 import org.springframework.web.reactive.function.client.ExchangeFunction
 import org.springframework.web.util.pattern.PatternParseException
+import reactor.core.publisher.BaseSubscriber
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import reactor.test.StepVerifier
@@ -359,16 +361,77 @@ class ClientRequestLoggingFilterTest {
         }
 
         @Test
-        fun `should log outcome cancelled with the received status when the body subscription is cancelled`() {
-            // Given: a response whose body never ends
+        fun `should log a body the consumer stopped reading from within its delivery as success, partially read`() {
+            // What is tested: a `take(1)` cancels the body from WITHIN onNext of the first buffer - the
+            //   consumer decided it has read enough. That is consumption, not abandonment.
+            // Success criteria: INFO, outcome success, the received 200, and the read-state counter shows
+            //   `partial` for the exchange.
+            // Why it matters: the same signal shape is Spring's own body skip (next test); logging it as
+            //   cancelled flags healthy calls at WARN.
+            // Given: a measuring filter and a response whose body never ends
+            val registry = SimpleMeterRegistry()
+            val measuring = ClientRequestLoggingFilter(properties.copy(measureResponseBodySize = true), { ticker.get() }, { "generated-42" }, registry)
             val endless = ClientResponse.create(HttpStatus.OK).body(Flux.concat(Mono.just(buffer("partial")), Flux.never())).build()
-            val response = filter.filter(request(), ExchangeFunction { Mono.just(endless) }).block()!!
+            val response = measuring.filter(request(), ExchangeFunction { Mono.just(endless) }).block()!!
 
-            // When: the caller takes one chunk and cancels
+            // When: the caller takes one chunk and cancels the rest
             StepVerifier
                 .create(response.bodyToFlux(DataBuffer::class.java).take(1))
                 .expectNextCount(1)
                 .verifyComplete()
+
+            // Then
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.INFO)
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "success").containsEntry("adapter_response_status_code", 200)
+            assertThat(
+                registry
+                    .get(ClientLoggingMetrics.RESPONSE_BODY_READ_METER)
+                    .tag("state", "partial")
+                    .counter()
+                    .count(),
+            ).isEqualTo(1.0)
+        }
+
+        @Test
+        fun `should log Spring's body skip for a Void body type as success`() {
+            // What is tested: `bodyToMono(Void.class)` (and `toEntity(Void.class)`, an unsupported media
+            //   type) drains a body-carrying ClientHttpResponse through takeWhile(release; false), which
+            //   cancels upstream in onNext of the FIRST buffer - a framework-internal cancel.
+            // Success criteria: INFO, outcome success, the received 200, one event.
+            // Why it matters: the fire-and-forget idiom of every WebClient user was logged as cancelled at
+            //   WARN, and in on-failure body mode both bodies of the healthy call were written.
+            // Given: a response with a body the caller declares it does not want
+            val withBody = ClientResponse.create(HttpStatus.OK).body(Flux.just(buffer("ack"), buffer("nowledged"))).build()
+            val response = filter.filter(request(), ExchangeFunction { Mono.just(withBody) }).block()!!
+
+            // When
+            response.bodyToMono(Void::class.java).block()
+
+            // Then
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.INFO)
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "success").containsEntry("adapter_response_status_code", 200)
+        }
+
+        @Test
+        fun `should log outcome cancelled with the received status when the body is cancelled out of band`() {
+            // What is tested: a cancel from OUTSIDE a delivery - a timeout operator's timer, a disposed
+            //   caller, a client that disconnected - is the caller walking away.
+            // Success criteria: one WARN event, outcome cancelled, with the received 200.
+            // Why it matters: this is the disposition the reactive stack adds; it must survive the
+            //   consumption-limited distinction above.
+            // Given: a response whose body never ends, one buffer delivered, then the caller cancels later
+            val endless = ClientResponse.create(HttpStatus.OK).body(Flux.concat(Mono.just(buffer("partial")), Flux.never())).build()
+            val response = filter.filter(request(), ExchangeFunction { Mono.just(endless) }).block()!!
+            val subscriber =
+                object : BaseSubscriber<DataBuffer>() {
+                    override fun hookOnSubscribe(subscription: Subscription) = request(1)
+                }
+            response.bodyToFlux(DataBuffer::class.java).subscribe(subscriber)
+
+            // When: the delivery is over, the caller disposes the subscription
+            subscriber.cancel()
 
             // Then
             val event = log.events.single()
@@ -530,4 +593,97 @@ class ClientRequestLoggingFilterTest {
     }
 
     private fun buffer(text: String): DataBuffer = DefaultDataBufferFactory.sharedInstance.wrap(text.toByteArray())
+
+    @Nested
+    inner class `Subscription and completion shapes` {
+        @Test
+        fun `should log one line per subscription when an outer filter resubscribes the call`() {
+            // What is tested: wiring runs per SUBSCRIPTION - a retrying outer filter that resubscribes
+            //   this filter's Mono (retry, retryWhen) must see one exchange per attempt.
+            // Success criteria: two subscriptions, two success lines, the gauge back at zero.
+            // Why it matters: wired at assembly time, attempt 2 hit a completed exchange and was never
+            //   logged - the class documentation promised one line per attempt.
+            // Given: the Mono an outer filter would hold
+            val call = filter.filter(request(), ExchangeFunction { answering().exchange(it) })
+
+            // When: subscribed twice
+            call.flatMap { it.bodyToMono(String::class.java) }.block()
+            call.flatMap { it.bodyToMono(String::class.java) }.block()
+
+            // Then
+            assertThat(log.events).hasSize(2)
+            assertThat(log.events.map { keyValues(it)["adapter_outcome"] }).containsExactly("success", "success")
+            assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+        }
+
+        @Test
+        fun `should log an empty completion of the connector as ERROR failure without a status`() {
+            // What is tested: a connector (or a host filter swallowing an error into Mono.empty()) that
+            //   completes without a response.
+            // Success criteria: ERROR, outcome failure, `-> -`, the cause naming the missing response - the
+            //   same words WebClient raises for the caller.
+            // Why it matters: the caller sees an error; a success line for it would be a lie.
+            // Given/When
+            val response = filter.filter(request(), ExchangeFunction { Mono.empty() }).block()
+
+            // Then
+            assertThat(response).isNull()
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.ERROR)
+            assertThat(event.formattedMessage).contains("-> - [")
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").doesNotContainKey("adapter_response_status_code")
+            assertThat(event.throwableProxy.message).isEqualTo(ClientRequestLoggingFilter.NO_RESPONSE_MESSAGE)
+        }
+
+        @Test
+        fun `should let the body own the exchange when a host operator cancels the response Mono after delivery`() {
+            // What is tested: an operator between this filter and the client that cancels the response
+            //   Mono right after onNext (`next()`, a future bridge) - the response was delivered, the body
+            //   is consumed afterwards.
+            // Success criteria: one success line at the body's completion, not a cancelled line at the
+            //   operator's cancel.
+            // Why it matters: the outer cancel arrives while the exchange is RESPONDED; ending it there
+            //   would misclassify the call and truncate the logged body.
+            // Given/When
+            val body =
+                filter
+                    .filter(request(), ExchangeFunction { answering(body = "payload").exchange(it) })
+                    .flux()
+                    .next()
+                    .flatMap { it.bodyToMono(String::class.java) }
+                    .block()
+
+            // Then
+            assertThat(body).isEqualTo("payload")
+            val event = log.events.single()
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "success").containsEntry("adapter_response_status_code", 200)
+        }
+
+        @Test
+        fun `should replace a correlation header outside the acceptance rule with a generated id`() {
+            // What is tested: the CorrelationHeader rule at the filter - a forged value counts as absent.
+            // Success criteria: the connector receives the generated id INSTEAD of the foreign value; the
+            //   event carries the generated id and no trace of the forged one.
+            // Why it matters: the value lands verbatim in the message and the MDC.
+            // Given
+            var sent: org.springframework.web.reactive.function.client.ClientRequest? = null
+            val forged = request { header("X-Correlation-Id", "abc\r\nforged=line") }
+
+            // When
+            filter.call(
+                forged,
+                ExchangeFunction { req ->
+                    sent = req
+                    answering().exchange(req)
+                },
+            )
+
+            // Then
+            assertThat(sent!!.headers().getFirst("X-Correlation-Id")).isEqualTo("generated-42")
+            assertThat(sent!!.headers()["X-Correlation-Id"]).containsExactly("generated-42")
+            val event = log.events.single()
+            assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42")
+            assertThat(event.formattedMessage).doesNotContain("forged")
+        }
+    }
 }

@@ -113,4 +113,54 @@ class ClientLoggingPropertiesTest {
             assertThat(properties.correlationIdHeader).isEqualTo("X-Corr.Id_42!#$%&'*+^`|~")
         }
     }
+
+    @Nested
+    inner class `Binding-time validation` {
+        @Test
+        fun `should reject a blank logger name and a blank correlation header name`() {
+            // What is tested: the two blank-name checks - a logger with no name and a header with no name
+            //   are both misconfigurations Boot would bind silently.
+            // Success criteria: construction fails naming the property.
+            // Why it matters: a blank logger name routes the exchange stream nowhere an operator expects; a
+            //   blank header name cannot go on the wire.
+            // Given/When/Then
+            assertThat(catchThrowable { ClientLoggingProperties(loggerName = " ") })
+                .isInstanceOf(IllegalArgumentException::class.java)
+                .hasMessageContaining("loggerName")
+            assertThat(catchThrowable { ClientLoggingProperties(correlationIdHeader = "") })
+                .isInstanceOf(IllegalArgumentException::class.java)
+                .hasMessageContaining("correlationIdHeader")
+        }
+
+        @Test
+        fun `should reject a non-positive body capture limit`() {
+            // What is tested: `max-body-bytes` must be positive - count-only mode is selected by the
+            //   body modes, never by a zero limit.
+            // Success criteria: zero and a negative limit fail naming the property.
+            // Why it matters: a zero limit would log every body as truncated to nothing without saying why.
+            // Given/When/Then
+            assertThat(catchThrowable { ClientLoggingProperties(maxBodyBytes = 0) })
+                .isInstanceOf(IllegalArgumentException::class.java)
+                .hasMessageContaining("maxBodyBytes must be positive")
+            assertThat(catchThrowable { ClientLoggingProperties(maxBodyBytes = -1) })
+                .isInstanceOf(IllegalArgumentException::class.java)
+        }
+
+        @Test
+        fun `should reject blank entries in the activation lists`() {
+            // What is tested: the three blank-entry checks of the activation lists.
+            // Success criteria: each list rejects a blank entry with a message naming the list.
+            // Why it matters: a blank pattern or prefix matches nothing or everything by accident.
+            // Given/When/Then
+            assertThat(catchThrowable { ClientLoggingProperties(includePathPatterns = listOf("/api/**", " ")) })
+                .isInstanceOf(IllegalArgumentException::class.java)
+                .hasMessageContaining("includePathPatterns")
+            assertThat(catchThrowable { ClientLoggingProperties(excludePathPrefixes = listOf("")) })
+                .isInstanceOf(IllegalArgumentException::class.java)
+                .hasMessageContaining("excludePathPrefixes")
+            assertThat(catchThrowable { ClientLoggingProperties(excludeHosts = listOf("\t")) })
+                .isInstanceOf(IllegalArgumentException::class.java)
+                .hasMessageContaining("excludeHosts")
+        }
+    }
 }

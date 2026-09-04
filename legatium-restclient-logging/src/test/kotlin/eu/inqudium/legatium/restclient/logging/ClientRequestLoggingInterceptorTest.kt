@@ -564,4 +564,136 @@ class ClientRequestLoggingInterceptorTest {
             assertThat(keyValues(log.events.last())).containsEntry("adapter_outcome", "success")
         }
     }
+
+    @Nested
+    inner class `Read failures, errors and re-entries` {
+        @Test
+        fun `should classify a body that could not even be opened as a failure with the received status`() {
+            // What is tested: the engine call that OPENS the body stream (getBody throws IOException) is
+            //   guarded like a read - not only the reads on the stream.
+            // Success criteria: the exception reaches the application unchanged; at close the event is
+            //   ERROR, outcome failure, WITH the 200 that was received and the cause attached.
+            // Why it matters: a body that failed to open logged as success is wrong on exactly the calls
+            //   the outcome exists for.
+            // Given: a response whose body stream cannot be opened
+            val unopenable =
+                ClientHttpRequestExecution { _, _ ->
+                    object : MockClientHttpResponse("late".toByteArray(), HttpStatus.OK) {
+                        override fun getBody(): InputStream = throw IOException("connection dropped before the body")
+                    }
+                }
+            val response = interceptor.intercept(request(), ByteArray(0), unopenable)
+
+            // When: the application opens the body and the client closes the response in its finally
+            val thrown = catchThrowable { response.body }
+            response.close()
+
+            // Then
+            assertThat(thrown).isInstanceOf(IOException::class.java).hasMessageContaining("before the body")
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.ERROR)
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").containsEntry("adapter_response_status_code", 200)
+            assertThat(event.throwableProxy.message).contains("before the body")
+        }
+
+        @Test
+        fun `should classify an unchecked exception thrown while reading the body as a failure`() {
+            // What is tested: the read guard covers ANY exception, not only IOException - an engine's
+            //   unchecked wrapper (UncheckedIOException, a runtime decoding error) is a failed read too.
+            // Success criteria: rethrown unchanged; ERROR with outcome failure at close.
+            // Why it matters: an engine that wraps its I/O errors would otherwise log every dropped
+            //   connection as a success.
+            // Given: a body stream that throws unchecked mid-read
+            val broken =
+                ClientHttpRequestExecution { _, _ ->
+                    object : MockClientHttpResponse("x".toByteArray(), HttpStatus.OK) {
+                        override fun getBody(): InputStream =
+                            object : InputStream() {
+                                override fun read(): Int = throw java.io.UncheckedIOException(IOException("reset"))
+                            }
+                    }
+                }
+            val response = interceptor.intercept(request(), ByteArray(0), broken)
+
+            // When
+            val thrown = catchThrowable { response.body.read() }
+            response.close()
+
+            // Then
+            assertThat(thrown).isInstanceOf(java.io.UncheckedIOException::class.java)
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_outcome", "failure")
+        }
+
+        @Test
+        fun `should close the gauge without an event when the wire call dies with an Error`() {
+            // What is tested: the Throwable boundary decided in FailOpenDiagnostics - an Error from the
+            //   execution (an inner interceptor's AssertionError, a LinkageError in the engine) is outside
+            //   the fail-open promise, but the open-exchange gauge must not drift over it.
+            // Success criteria: the Error propagates unchanged, no exchange event is emitted, the gauge is
+            //   back at zero.
+            // Why it matters: a permanently open exchange on the gauge is a false "never closed" baseline
+            //   - the liveness signal crying wolf forever.
+            // Given/When
+            val thrown = catchThrowable { interceptor.intercept(request(), ByteArray(0)) { _, _ -> throw AssertionError("inner interceptor bug") } }
+
+            // Then
+            assertThat(thrown).isInstanceOf(AssertionError::class.java)
+            assertThat(log.events).isEmpty()
+            assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+        }
+
+        @Test
+        fun `should keep counting the id as generated when a retrying outer interceptor re-enters with it`() {
+            // What is tested: the origin counter across re-entries - attempt 1 generated and stamped the
+            //   header, attempt 2 finds that header on the SAME request.
+            // Success criteria: both attempts count `generated`, none `header`; the id is the same on both.
+            // Why it matters: counting the module's own write as propagation would dilute the very signal
+            //   the counter exists for (a rising `generated` share).
+            // Given: one request re-entering twice, as an outer retry does
+            val request = request()
+
+            // When
+            interceptor.intercept(request, ByteArray(0), answering()).consumeAndClose()
+            interceptor.intercept(request, ByteArray(0), answering()).consumeAndClose()
+
+            // Then
+            fun origin(source: String) =
+                meterRegistry
+                    .get(ClientLoggingMetrics.CORRELATION_METER)
+                    .tag("source", source)
+                    .counter()
+                    .count()
+            assertThat(origin(ClientLoggingMetrics.REQUEST_ID_SOURCE_GENERATED)).isEqualTo(2.0)
+            assertThat(origin(ClientLoggingMetrics.REQUEST_ID_SOURCE_HEADER)).isZero()
+            assertThat(log.events.map { it.mdcPropertyMap[MdcKeys.REQUEST_ID] }).containsExactly("generated-42", "generated-42")
+        }
+
+        @Test
+        fun `should replace a correlation header outside the acceptance rule with a generated id`() {
+            // What is tested: the CorrelationHeader rule at the interceptor - a value with control
+            //   characters (or over-long, or non-ASCII) counts as absent.
+            // Success criteria: the generated id goes on the wire INSTEAD of the foreign value, the event
+            //   and the MDC carry the generated id, the origin counts `generated`.
+            // Why it matters: the value lands verbatim in the message and the MDC of every line of the
+            //   call - a CR/LF in it forges lines in every plain-text sink.
+            // Given: a request carrying a forged correlation id
+            val request = request().apply { headers.set("X-Correlation-Id", "abc\r\nforged=line") }
+
+            // When
+            interceptor.intercept(request, ByteArray(0), answering()).consumeAndClose()
+
+            // Then
+            assertThat(request.headers.getFirst("X-Correlation-Id")).isEqualTo("generated-42")
+            val event = log.events.single()
+            assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42")
+            assertThat(event.formattedMessage).doesNotContain("forged")
+            assertThat(
+                meterRegistry
+                    .get(ClientLoggingMetrics.CORRELATION_METER)
+                    .tag("source", "generated")
+                    .counter()
+                    .count(),
+            ).isEqualTo(1.0)
+        }
+    }
 }

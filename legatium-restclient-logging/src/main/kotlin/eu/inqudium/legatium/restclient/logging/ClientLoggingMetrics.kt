@@ -106,6 +106,10 @@ internal class ClientLoggingMetrics private constructor(
             registerOrFallback(OPEN_EXCHANGES_METER) { registry ->
                 Gauge
                     .builder(OPEN_EXCHANGES_METER, open) { it.get().toDouble() }
+                    // Tagged per twin: Micrometer deduplicates by id and would silently keep the FIRST
+                    // gauge registered under a bare name, so in a host carrying both twins the second
+                    // twin's open exchanges would vanish. Two ids, two gauges; sum over the tag for the total.
+                    .tag(CLIENT_TAG, "restclient")
                     .description(
                         "Exchanges between interceptor entry and response close; a growing baseline means " +
                             "responses are not being closed and exchange events are silently lost",
@@ -208,14 +212,16 @@ internal class ClientLoggingMetrics private constructor(
         Counter
             .builder(RESPONSE_BODY_READ_METER)
             .description("Exchanges by how far the application consumed the response body: unread, partial, or complete")
-            .tag("uri", template ?: UNTEMPLATED_URI)
+            .tag("uri", uriTag(template))
             .tag("host", host ?: UNKNOWN_HOST)
             .tag("state", state.tagValue)
             .register(registry)
     }.increment()
 
     /**
-     * Bytes that ACTUALLY flowed, tagged by the low-cardinality URI template and the peer host. A
+     * Bytes that ACTUALLY flowed, tagged by the URI template (low-cardinality by construction: a recorded
+     * value without a placeholder is folded to [UNTEMPLATED_URI], see [uriTag]) and the peer host - which
+     * is caller-controlled and therefore a documented precondition of the opt-in measuring properties. A
      * zero-byte body records no sample - the distribution describes bodies that exist, and the sum stays
      * exact either way. The summaries are created per tag set on first use; Micrometer's registry
      * deduplicates by id.
@@ -234,7 +240,7 @@ internal class ClientLoggingMetrics private constructor(
                 .builder(meterName)
                 .baseUnit("bytes")
                 .description("Bytes of the body that actually flowed through the exchange")
-                .tag("uri", template ?: UNTEMPLATED_URI)
+                .tag("uri", uriTag(template))
                 .tag("host", host ?: UNKNOWN_HOST)
                 .register(registry)
         }.record(bytes.toDouble())
@@ -299,8 +305,18 @@ internal class ClientLoggingMetrics private constructor(
          */
         const val RESPONSE_BODY_READ_METER = "adapter.response.body.read"
 
-        /** The `uri` tag value for exchanges the client recorded no URI template for. */
+        /**
+         * The `uri` tag value for exchanges the client recorded no URI template for - and for a recorded
+         * "template" without a placeholder: the client records whatever string `uri(String, ...)` was
+         * given, so `uri("/things/" + id)` would otherwise put one tag value per id on the meter.
+         */
         const val UNTEMPLATED_URI = "UNKNOWN"
+
+        /** The `client` tag of the open-exchanges gauge, distinguishing the two twins' gauges in one registry. */
+        const val CLIENT_TAG = "client"
+
+        /** The `uri` tag for a recorded template: the template itself when it carries a placeholder, [UNTEMPLATED_URI] otherwise. */
+        fun uriTag(template: String?): String = template?.takeIf { '{' in it } ?: UNTEMPLATED_URI
 
         /** The `host` tag value for exchanges whose request URI carries no host. */
         const val UNKNOWN_HOST = "UNKNOWN"

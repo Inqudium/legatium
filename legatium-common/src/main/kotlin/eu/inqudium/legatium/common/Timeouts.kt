@@ -27,16 +27,26 @@ internal object Timeouts {
             "io.netty.channel.ConnectTimeoutException",
         )
 
-    /** True when [throwable] or any cause is a timeout as defined on this object. Null is never a timeout. */
+    /**
+     * True when [throwable], any cause, or any SUPPRESSED exception (recursively) is a timeout as defined
+     * on this object - Reactor's composite errors (`Exceptions.multiple` from `zip`/`merge`/`when`) carry
+     * their components as suppressed, not as the cause. Null is never a timeout.
+     */
     fun isTimeout(throwable: Throwable?): Boolean {
-        var current = throwable
-        // A cause chain is finite in practice, but a cycle is legal; the visited set bounds the walk.
+        // A cause graph is finite in practice, but a cycle is legal; the visited set bounds the walk.
         val visited = HashSet<Throwable>()
-        while (current != null && visited.add(current)) {
+        val pending = ArrayDeque<Throwable>()
+        throwable?.let(pending::add)
+        while (pending.isNotEmpty()) {
+            val current = pending.removeFirst()
+            if (!visited.add(current)) {
+                continue
+            }
             if (isTimeoutType(current.javaClass)) {
                 return true
             }
-            current = current.cause
+            current.cause?.let(pending::add)
+            current.suppressed.forEach(pending::add)
         }
         return false
     }
