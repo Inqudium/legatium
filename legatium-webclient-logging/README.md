@@ -192,8 +192,8 @@ response shows `-> -` and no status field; a cancelled one `adapter_outcome=canc
 (`adapter_url_query`, `adapter_slow`, the header and body sections) are present only when they apply.
 Which encoder produces which shape — and why the default console pattern shows none of the fields —
 is the guide's [§3.7](docs/GUIDE.md#37-logging-backend-and-structured-output); the field family itself is
-documented once, in the RestClient twin's [README](../legatium-restclient-logging/README.md#the-exchange-line)
-and in the guide's [§5.1](docs/GUIDE.md#51-log-fields).
+documented once, in the guide's [§5.1](docs/GUIDE.md#51-log-fields), and mapped by the component template
+in [`/docs/elk/`](../docs/elk/README.md).
 
 ## Coroutines
 
