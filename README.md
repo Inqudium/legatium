@@ -71,14 +71,32 @@ guides, Elasticsearch mapping, generated [test evidence](https://inqudium.github
   reference implementation: architecture, integration, configuration, metrics.
 - [WebClient guide](legatium-webclient-logging/docs/GUIDE.md) — the twin's guide, including
   the deliberate stack differences.
-- [Module READMEs](legatium-restclient-logging/README.md) ([WebClient](legatium-webclient-logging/README.md)) —
-  summary, field family, property table.
 - [Configuration reference](docs/adapter-logging-reference.yml) —
   every `adapter-logging.*` key with its default, contract-tested against both twins.
 - [Elasticsearch mapping](docs/elk/README.md) — the ready-made
   component template for the `adapter_*` fields.
 - [Decision records](docs/adr/) — why the trace id is the request id, why the shared code is
   inlined, why the default id counts instead of rolling dice.
+
+
+### Quick start
+
+Pick the module for the client the host calls out with and follow the **Usage** section of its README —
+prerequisites, the dependency with the current version, how the interceptor or filter is wired
+automatically, when and how to wire it by hand, and what one logged exchange looks like as text and as
+JSON:
+
+- **`RestClient` / `RestTemplate`** (blocking):
+  [`legatium-restclient-logging` → Usage](legatium-restclient-logging/README.md#usage) —
+  [automatic wiring](legatium-restclient-logging/README.md#automatic-wiring),
+  [manual wiring](legatium-restclient-logging/README.md#manual-wiring).
+- **`WebClient`** (reactive, also from coroutines):
+  [`legatium-webclient-logging` → Usage](legatium-webclient-logging/README.md#usage) —
+  [automatic wiring](legatium-webclient-logging/README.md#automatic-wiring),
+  [manual wiring](legatium-webclient-logging/README.md#manual-wiring).
+
+An application may carry both jars — a servlet host using `RestClient` for most calls and `WebClient`
+for a streaming one gets both logged, in one format.
 
 ## Build
 
