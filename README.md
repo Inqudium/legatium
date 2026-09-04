@@ -80,6 +80,10 @@ guides, Elasticsearch mapping, generated [test evidence](https://inqudium.github
   component template for the `adapter_*` fields.
 - [Decision records](docs/adr/) — why the trace id is the request id, why the shared code is
   inlined, why the default id counts instead of rolling dice.
+- [**Limesium**](https://github.com/Inqudium/limesium) — the sibling project for the *inbound*
+  side: one structured `endpoint_*` line per request the service receives, on the logger
+  `endpoint-http-exchange`, built to the same design. Run both and a log document holds the
+  server line and the client lines of the calls it made, joined by the shared request id.
 
 
 ### Quick start
