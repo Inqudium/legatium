@@ -5,7 +5,7 @@ import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.NanoTimeSource
 import io.micrometer.core.instrument.MeterRegistry
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import io.micrometer.core.instrument.composite.CompositeMeterRegistry
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
@@ -54,9 +54,9 @@ class ClientLoggingAutoConfiguration {
      * The interceptor as its own bean, so a host can replace it while keeping the customizers below.
      *
      * The meter registry arrives as an [ObjectProvider] and is CONSUMED, never exported: a logging
-     * library must not define the host's `MeterRegistry`. A host without one - no actuator - gets a
-     * private [SimpleMeterRegistry]: the fail-open counters then count unexported, and the module works
-     * unchanged.
+     * library must not define the host's `MeterRegistry`. A host without one - no actuator - gets an
+     * empty [CompositeMeterRegistry]: Micrometer's meters against it are no-ops, so nothing is
+     * accumulated in a registry nobody reads, and the module works unchanged.
      */
     @Bean
     @ConditionalOnMissingBean
@@ -66,7 +66,7 @@ class ClientLoggingAutoConfiguration {
         correlationIds: CorrelationIdGenerator,
         masker: HeaderValueMasker,
         meterRegistry: ObjectProvider<MeterRegistry>,
-    ): ClientRequestLoggingInterceptor = ClientRequestLoggingInterceptor(properties, nanoTime, correlationIds, meterRegistry.getIfAvailable { SimpleMeterRegistry() }, masker)
+    ): ClientRequestLoggingInterceptor = ClientRequestLoggingInterceptor(properties, nanoTime, correlationIds, meterRegistry.getIfAvailable { CompositeMeterRegistry() }, masker)
 
     /**
      * Attaches the interceptor to every `RestClient.Builder` Boot hands out (and to every HTTP service

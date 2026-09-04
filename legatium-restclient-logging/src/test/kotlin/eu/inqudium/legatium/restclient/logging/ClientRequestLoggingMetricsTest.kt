@@ -10,8 +10,6 @@ import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.NanoTimeSource
-import io.micrometer.core.instrument.Counter
-import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
@@ -33,9 +31,12 @@ import java.net.SocketTimeoutException
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * The six meters of [ClientLoggingMetrics] as driven by the interceptor: pre-registration, the events
- * counter per outcome, the open-exchanges gauge across the response's lifetime, the request-id source
- * counter, the body meters, the fail-open stages, and the one-owner-per-registry rule.
+ * The six meters of [ClientLoggingMetrics] as driven by the interceptor - the lifecycle facts only this
+ * entry point can show: pre-registration under this stack, the events counter per outcome, the
+ * open-exchanges gauge across the response's lifetime, the request-id source counter, the body meters
+ * and the fail-open stages. The registration behaviour of the shared owner itself (fallback registry,
+ * gauge collision, guarded updates, tag folding) is tested once, in `ClientLoggingMetricsTest` of
+ * legatium-common.
  */
 class ClientRequestLoggingMetricsTest {
     private val ticker = AtomicLong(0)
@@ -99,14 +100,23 @@ class ClientRequestLoggingMetricsTest {
         fun `should pre-register the outcome vocabulary and count emitted events per outcome`() {
             // What is tested: every fixed-tag meter exists at zero before the first call, and the events
             //   counter counts emitted events by outcome.
-            // Success criteria: success/failure/timeout exist at zero; one call each moves its side.
-            // Why it matters: a rate() alert must see the zero before the first occurrence.
+            // Success criteria: success/failure/timeout exist at zero, the gauge under client=restclient;
+            //   one call each moves its side.
+            // Why it matters: a rate() alert must see the zero before the first occurrence; the client
+            //   tag is what keeps this twin's gauge apart from the reactive twin's in one host.
             // Given: nothing happened yet
             assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "success")).isZero()
             assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "failure")).isZero()
             assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "timeout")).isZero()
             assertThat(registry.get(ClientLoggingMetrics.FAIL_OPEN_METER).counters()).hasSize(3)
             assertThat(registry.get(ClientLoggingMetrics.CORRELATION_METER).counters()).hasSize(3)
+            assertThat(
+                registry
+                    .get(ClientLoggingMetrics.OPEN_EXCHANGES_METER)
+                    .tag(ClientLoggingMetrics.CLIENT_TAG, "restclient")
+                    .gauge()
+                    .value(),
+            ).isZero()
 
             // When: a success, a 5xx, a timeout
             interceptor.intercept(request(), ByteArray(0), answering()).consumeAndClose()
@@ -465,139 +475,5 @@ class ClientRequestLoggingMetricsTest {
                 context.turboFilterList.remove(throwing)
             }
         }
-
-        @Test
-        fun `should keep working with a private meter when the host registry rejects a registration`() {
-            // What is tested: fail-open registration - a host registry already holding a client.* id
-            //   with a different meter type.
-            // Success criteria: construction succeeds, the call is logged, the conflicting meter is
-            //   absent from the host registry (kept private).
-            // Why it matters: a registration conflict must never abort the context or suppress events.
-            // Given: the events meter's success id taken by a gauge
-            val conflicting: MeterRegistry = SimpleMeterRegistry()
-            io.micrometer.core.instrument.Gauge
-                .builder(ClientLoggingMetrics.EVENTS_METER) { 1.0 }
-                .tag("outcome", "success")
-                .register(conflicting)
-
-            // When
-            val onConflict = ClientRequestLoggingInterceptor(properties, { ticker.get() }, { "generated-42" }, conflicting)
-            onConflict.intercept(request(), ByteArray(0), answering()).consumeAndClose()
-
-            // Then: the call is logged, the host's gauge is untouched, the conflicting counter stayed
-            //   private, the non-conflicting ones landed in the host registry
-            assertThat(log.events).hasSize(1)
-            assertThat(conflicting.find(ClientLoggingMetrics.EVENTS_METER).tag("outcome", "success").gauge()).isNotNull()
-            assertThat(conflicting.find(ClientLoggingMetrics.EVENTS_METER).tag("outcome", "success").counter()).isNull()
-            assertThat(conflicting.find(ClientLoggingMetrics.EVENTS_METER).tag("outcome", "failure").counter()).isNotNull()
-            assertThat(conflicting.find(ClientLoggingMetrics.FAIL_OPEN_METER).counters()).hasSize(3)
-        }
-
-        @Test
-        fun `should count a throwing host counter as stage wiring and still log the exchange`() {
-            // What is tested: updateQuietly around the correlation counter's increment at wiring
-            //   time - a host Counter that registered fine but throws on increment.
-            // Success criteria: the exchange is logged as usual and the fail-open counter shows
-            //   exactly one stage=wiring increment on the hostile registry.
-            // Why it matters: a bookkeeping failure in a host meter must degrade to a lost count,
-            //   never turn the call into an unlogged pass-through.
-            // Given: a registry whose correlation counter throws on increment
-            val hostile: MeterRegistry =
-                object : SimpleMeterRegistry() {
-                    override fun newCounter(id: io.micrometer.core.instrument.Meter.Id): Counter {
-                        val real = super.newCounter(id)
-                        if (id.name != ClientLoggingMetrics.CORRELATION_METER) return real
-                        return object : Counter by real {
-                            override fun increment(amount: Double) = throw IllegalStateException("counter broke")
-                        }
-                    }
-                }
-            val onHostile = ClientRequestLoggingInterceptor(properties, { ticker.get() }, { "generated-42" }, hostile)
-
-            // When
-            onHostile.intercept(request(), ByteArray(0), answering()).consumeAndClose()
-
-            // Then: the exchange is logged, the bookkeeping loss is counted
-            assertThat(log.events).hasSize(1)
-            assertThat(
-                hostile
-                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
-                    .tags("stage", "wiring")
-                    .counter()
-                    .count(),
-            ).isEqualTo(1.0)
-        }
-    }
-
-    @Test
-    fun `should fold a recorded template without a placeholder into the untemplated tag value`() {
-        // What is tested: the cardinality guard of the body meters' `uri` tag - the client records
-        //   whatever string was passed to uri(String, ...), so `uri("/things/" + id)` would put one tag
-        //   value per id on the meter.
-        // Success criteria: a template with a placeholder is kept; one without, or none, folds to UNKNOWN.
-        // Why it matters: an unbounded tag set is a slow memory leak in the host registry.
-        // Given/When/Then
-        assertThat(ClientLoggingMetrics.uriTag("https://api.example.com/things/{id}")).isEqualTo("https://api.example.com/things/{id}")
-        assertThat(ClientLoggingMetrics.uriTag("https://api.example.com/things/42")).isEqualTo(ClientLoggingMetrics.UNTEMPLATED_URI)
-        assertThat(ClientLoggingMetrics.uriTag(null)).isEqualTo(ClientLoggingMetrics.UNTEMPLATED_URI)
-    }
-
-    @Test
-    fun `should keep the gauge private with a warning when the host registry already holds an identical gauge`() {
-        // What is tested: the same-type collision check of the gauge registration - a host (or an
-        //   older library copy) already registered adapter.logging.exchanges.open{client=restclient};
-        //   Micrometer would return that gauge unchanged and drop this owner's state function.
-        // Success criteria: the host's gauge keeps its own value (7) while an exchange is open, the
-        //   registry holds exactly one meter under the id, one WARN on the metrics logger names the
-        //   meter as kept private, and the exchange is still logged.
-        // Why it matters: without the check the liveness gauge showed a foreign value and this
-        //   instance's open exchanges were invisible - no fallback, no warning, the one silent-loss
-        //   signal itself lost silently.
-        // Given: a host gauge under the exact id, and the metrics logger captured
-        val hostRegistry = SimpleMeterRegistry()
-        val hostState = AtomicLong(7)
-        io.micrometer.core.instrument.Gauge
-            .builder(ClientLoggingMetrics.OPEN_EXCHANGES_METER, hostState) { it.get().toDouble() }
-            .tag(ClientLoggingMetrics.CLIENT_TAG, "restclient")
-            .register(hostRegistry)
-        val metricsLog = CapturedLogger(ClientLoggingMetrics::class.java.name)
-        try {
-            // When
-            val onCollision = ClientRequestLoggingInterceptor(properties, { ticker.get() }, { "generated-42" }, hostRegistry)
-            val response = onCollision.intercept(request(), ByteArray(0), answering())
-            val hostGaugeWhileOpen =
-                hostRegistry
-                    .get(ClientLoggingMetrics.OPEN_EXCHANGES_METER)
-                    .tag(ClientLoggingMetrics.CLIENT_TAG, "restclient")
-                    .gauge()
-                    .value()
-            response.close()
-
-            // Then
-            assertThat(hostGaugeWhileOpen).isEqualTo(7.0)
-            assertThat(hostRegistry.find(ClientLoggingMetrics.OPEN_EXCHANGES_METER).meters()).hasSize(1)
-            val warning = metricsLog.events.single()
-            assertThat(warning.level).isEqualTo(Level.WARN)
-            assertThat(warning.formattedMessage).contains(ClientLoggingMetrics.OPEN_EXCHANGES_METER).contains("kept private")
-            assertThat(log.events).hasSize(1)
-        } finally {
-            metricsLog.detach()
-        }
-    }
-
-    @Test
-    fun `should register the open-exchanges gauge under this twin's client tag`() {
-        // What is tested: the gauge id carries a `client` tag naming the twin.
-        // Success criteria: the gauge is found under client=restclient.
-        // Why it matters: Micrometer deduplicates by id and keeps the FIRST gauge registered under a
-        //   bare name - in a host carrying both twins the second twin's open exchanges would vanish.
-        // Given/When/Then
-        assertThat(
-            registry
-                .get(ClientLoggingMetrics.OPEN_EXCHANGES_METER)
-                .tag(ClientLoggingMetrics.CLIENT_TAG, "restclient")
-                .gauge()
-                .value(),
-        ).isZero()
     }
 }

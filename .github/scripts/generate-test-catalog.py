@@ -4,8 +4,9 @@
 Reads every module's target/surefire-reports/TEST-*.xml (the
 authoritative record of what actually ran) and enriches each test with
 its rationale block extracted from the test sources
-(*/src/test/kotlin/**): the "What is tested / Success criteria / Why it
-matters" comment run at the top of the test body. Writes
+(*/src/test/kotlin/**/*Test.kt and the Java Jazzer targets under
+*/src/test/java/**/*FuzzTest.java): the "What is tested / Success
+criteria / Why it matters" comment run at the top of the test body. Writes
 docs/tests/test-evidence.md, which the Docs workflow feeds into MkDocs.
 
 The page is GENERATED - it must never be checked in or edited by hand,
@@ -25,7 +26,13 @@ from pathlib import Path
 
 OUTPUT = Path(sys.argv[1] if len(sys.argv) > 1 else "docs/tests/test-evidence.md")
 
+# Kotlin test methods carry backticked sentence names; the Java fuzz targets
+# are plain `void name(FuzzedDataProvider data)` methods.
 FUN_RE = re.compile(r"^\s*fun `([^`]+)`\(")
+JAVA_FUN_RE = re.compile(r"^\s*(?:public\s+)?void\s+(\w+)\(")
+# Surefire names a Jazzer regression invocation `method(FuzzedDataProvider)[n]`;
+# the rationale is keyed by the bare method name.
+INVOCATION_SUFFIX_RE = re.compile(r"\(.*$")
 QUESTIONS = [
     ("What is tested?", re.compile(r"What is tested:")),
     ("How is success determined?", re.compile(r"Success criteria:")),
@@ -36,14 +43,15 @@ QUESTIONS = [
 STAGES_RE = re.compile(r"\b(?:Given|When|Then|And)\b\s*(?:\([^)]*\))?:")
 
 
-def extract_rationales(src_dir: Path) -> dict:
+def extract_rationales(module: Path) -> dict:
     """Map (top-level test class, test method name) -> {question: text}.
 
     The rationale block is the run of '//' comment lines directly after
     the test function's opening line, cut off at the first Given/When/
     Then stage label; method names are sentence-shaped and unique per
     file, so the file's class name plus the method name is a sufficient
-    key.
+    key. Kotlin tests under src/test/kotlin and the Java fuzz targets
+    under src/test/java are read alike.
 
     A detected rationale must answer all three questions (the
     CONTRIBUTING.md contract); a partial block fails the run with the
@@ -52,11 +60,13 @@ def extract_rationales(src_dir: Path) -> dict:
     """
     rationales = {}
     incomplete = []
-    for kt in sorted(src_dir.rglob("*Test.kt")):
+    sources = [(kt, FUN_RE) for kt in sorted((module / "src" / "test" / "kotlin").rglob("*Test.kt"))]
+    sources += [(java, JAVA_FUN_RE) for java in sorted((module / "src" / "test" / "java").rglob("*FuzzTest.java"))]
+    for kt, fun_re in sources:
         clazz = kt.stem
         lines = kt.read_text(encoding="utf-8").splitlines()
         for i, line in enumerate(lines):
-            m = FUN_RE.match(line)
+            m = fun_re.match(line)
             if not m:
                 continue
             comment = []
@@ -127,7 +137,7 @@ def main() -> None:
     grand = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0, "time": 0.0}
     per_module = {}
     for module in modules:
-        rationales = extract_rationales(Path(module) / "src" / "test" / "kotlin")
+        rationales = extract_rationales(Path(module))
         suites, totals, times = load_suites(Path(module) / "target" / "surefire-reports")
         per_module[module] = (suites, totals, times, rationales)
         for key in grand:
@@ -192,7 +202,7 @@ def main() -> None:
                 for name in sorted(suites[top][group]):
                     out.append(f"**{md_escape(name)}**")
                     out.append("")
-                    rationale = rationales.get((top, name))
+                    rationale = rationales.get((top, name)) or rationales.get((top, INVOCATION_SUFFIX_RE.sub("", name)))
                     if rationale:
                         out.append('??? quote "Rationale"')
                         for label, answer in rationale.items():
@@ -207,7 +217,7 @@ def main() -> None:
         for top in per_module[module][0]
         for g in per_module[module][0][top]
         for n in per_module[module][0][top][g]
-        if (top, n) in per_module[module][3]
+        if (top, n) in per_module[module][3] or (top, INVOCATION_SUFFIX_RE.sub("", n)) in per_module[module][3]
     )
     print(f"wrote {OUTPUT}: {grand['tests']} tests, {documented} with rationale blocks")
 

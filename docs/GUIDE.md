@@ -52,7 +52,7 @@ two disagree, the code wins.
 | **Clients built through Boot** | the interceptor or filter is attached to the injected builder bean (`RestClient.Builder`, `RestTemplateBuilder`, `WebClient.Builder`) and to every HTTP service client group built from one; a client built by hand (`RestClient.create()`, `WebClient.create()`, a `RestTemplate()` constructed directly) gets nothing unless the host adds it |
 | **An HTTP engine or connector** | the RestClient twin is engine-agnostic (JDK `HttpClient` by default, Apache HttpComponents, ...); the WebClient twin is connector-agnostic and pinned against Reactor Netty, the JDK `HttpClient`, Jetty and Apache HttpComponents 5 by its connector suites |
 | **SLF4J 2.x binding** with an encoder that renders key-value pairs and the MDC | the fields ride SLF4J's fluent `addKeyValue`, the identity rides the MDC; Boot's default console pattern prints only the message — [§4](#4-logging-backend-and-structured-output) |
-| **A `MeterRegistry` in the host** (actuator) — optional | the six meters are consumed from it, never exported; without one a private `SimpleMeterRegistry` absorbs the counts unseen |
+| **A `MeterRegistry` in the host** (actuator) — optional | the six meters are consumed from it, never exported ([ADR-0008](adr/ADR-0008-six-meters-consumed-not-exported.md)); without one the meters are no-ops (an empty `CompositeMeterRegistry`) |
 | **The index mapping composed before the first event** — for an ELK target | the component template in [`/docs/elk/`](elk/README.md) keeps body and header fields out of the dynamic mapping ([§5](#5-index-mapping-elk)) |
 | Kotlin stdlib | the modules are written in Kotlin; a Java host needs nothing extra, the jars pull `kotlin-stdlib` transitively |
 
@@ -537,9 +537,10 @@ it never turns a completed call into a failure.
 
 ### 7.4 Meters
 
-Six meters, all **consumed** from the host's `MeterRegistry` (an `ObjectProvider`; without one a private
-`SimpleMeterRegistry` absorbs the values) — one shared implementation (`ClientLoggingMetrics`),
-parameterised by the stack. All fixed-tag meters are **pre-registered at construction**, so a `rate()`
+Six meters, all **consumed** from the host's `MeterRegistry` (an `ObjectProvider`; without one the
+auto-configuration passes an empty `CompositeMeterRegistry`, whose meters are Micrometer no-ops) — one
+shared implementation (`ClientLoggingMetrics`), parameterised by the stack. Why these six and no others,
+and the rule for adding one, is [ADR-0008](adr/ADR-0008-six-meters-consumed-not-exported.md). All fixed-tag meters are **pre-registered at construction**, so a `rate()`
 alert sees the zero before the first occurrence. Rates, latencies and status distributions are
 deliberately left to `http.client.requests` and the log fields.
 

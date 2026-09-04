@@ -1,103 +1,31 @@
 package eu.inqudium.legatium.restclient.logging
 
-import eu.inqudium.legatium.common.BodyReadState
-import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
-import eu.inqudium.legatium.common.ClientOutcome
-import eu.inqudium.legatium.common.HeaderValueMasker
-import eu.inqudium.legatium.common.MdcKeys
-import eu.inqudium.legatium.common.TraceMdcKeys
+import eu.inqudium.legatium.common.ClientStack
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
 /**
- * Literal pins of the contracts DUPLICATED across the adapter-logging twins that the cross-module
- * lockstep tests do not cover: meter names, MDC key values, the masking fingerprint, and the message
- * text of the arrival and exchange lines. Both twins carry this test with the identical literals - a
- * drift in either module breaks that module's build.
+ * Literal pins of the twin contract this stack OWNS: the outcome vocabulary it pre-registers and the
+ * message text of the arrival and exchange lines, which its own emitter renders. The contracts shared
+ * with the reactive twin - meter names, MDC keys, read states, the outcome literals, the masking
+ * fingerprint - live once in legatium-common and are pinned there (`SharedContractTest`,
+ * `HeaderValueMaskerTest`); the packaging of the shared classes into this jar is verified by the
+ * consumer smoke build (`consumer-smoke/`).
  */
 class TwinContractTest {
     @Test
-    fun `should pin the meter names to the literal twin contract`() {
-        // What is tested: the duplicated meter-name constants, spelled out as literals - the
-        //   cross-module lockstep tests cover configuration and field names, but not these.
-        // Success criteria: every meter name matches the literal both twins ship.
-        // Why it matters: a renamed meter in ONE twin would split every dashboard by stack - silently.
+    fun `should pin this stack's client tag and outcome vocabulary`() {
+        // What is tested: the ClientStack.RESTCLIENT facts the shared metrics owner is parameterised
+        //   with - the client tag of the gauge and the outcomes pre-registered on the events counter.
+        // Success criteria: client=restclient, and exactly success, failure and timeout in this order;
+        //   cancelled belongs to the reactive twin alone.
+        // Why it matters: alerts on adapter.logging.events{outcome=...} for this stack must find every
+        //   value at zero from the start, and none the blocking stack can never produce.
         // Given/When/Then
-        assertThat(ClientLoggingMetrics.FAIL_OPEN_METER).isEqualTo("adapter.logging.failopen")
-        assertThat(ClientLoggingMetrics.EVENTS_METER).isEqualTo("adapter.logging.events")
-        assertThat(ClientLoggingMetrics.OPEN_EXCHANGES_METER).isEqualTo("adapter.logging.exchanges.open")
-        assertThat(ClientLoggingMetrics.CORRELATION_METER).isEqualTo("adapter.logging.correlation.id")
-        assertThat(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).isEqualTo("adapter.request.body.size")
-        assertThat(ClientLoggingMetrics.RESPONSE_BODY_SIZE_METER).isEqualTo("adapter.response.body.size")
-        assertThat(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).isEqualTo("adapter.response.body.read")
-        assertThat(ClientLoggingMetrics.UNTEMPLATED_URI).isEqualTo("UNKNOWN")
-        assertThat(ClientLoggingMetrics.UNKNOWN_HOST).isEqualTo("UNKNOWN")
-    }
-
-    @Test
-    fun `should pin the response body read states to the literal twin contract`() {
-        // What is tested: the tagValue literals of BodyReadState and the size of the enum - the
-        //   state tag of adapter.response.body.read, spelled out rather than derived from the enum.
-        // Success criteria: unread, partial and complete exactly, and no fourth value.
-        // Why it matters: the tag values are what alert rules and dashboards key on across both
-        //   twins; an added or renamed state would split or silently empty those queries.
-        // Given/When/Then: the literal tag values, pinned
-        assertThat(BodyReadState.UNREAD.tagValue).isEqualTo("unread")
-        assertThat(BodyReadState.PARTIAL.tagValue).isEqualTo("partial")
-        assertThat(BodyReadState.COMPLETE.tagValue).isEqualTo("complete")
-        assertThat(BodyReadState.entries).hasSize(3)
-    }
-
-    @Test
-    fun `should pin the MDC keys to the literal twin contract`() {
-        // What is tested: the MdcKeys and TraceMdcKeys literals - the adapter_ family every line of
-        //   a call carries, and Boot's traceId/spanId keys the emission overlay reuses.
-        // Success criteria: adapter_request_id, adapter_method, adapter_route, traceId and spanId,
-        //   spelled exactly so.
-        // Why it matters: an encoder emits these as fields by name - the adapter_ prefix keeps them
-        //   beside limesium's endpoint_ keys, and only Boot's own trace key names make the join with
-        //   the tracing bridge hold.
-        // Given/When/Then: the literal MDC keys, pinned - the client family beside limesium's
-        //   endpoint family, and Boot's own trace keys for the join
-        assertThat(MdcKeys.REQUEST_ID).isEqualTo("adapter_request_id")
-        assertThat(MdcKeys.REQUEST_METHOD).isEqualTo("adapter_method")
-        assertThat(MdcKeys.ROUTE).isEqualTo("adapter_route")
-        assertThat(TraceMdcKeys.TRACE_ID).isEqualTo("traceId")
-        assertThat(TraceMdcKeys.SPAN_ID).isEqualTo("spanId")
-    }
-
-    @Test
-    fun `should pin the masking fingerprint format to the literal twin contract`() {
-        // What is tested: HeaderValueMasker.DEFAULT end to end - character length, colon, first 8
-        //   bytes of SHA-256 over the UTF-8 bytes as lowercase hex - against a hardcoded expected
-        //   value.
-        // Success criteria: "secret-token" renders as "12:930bbdc51b6aed5c", the same literal the
-        //   other twin and limesium pin.
-        // Why it matters: the fingerprint is stable so a masked token correlates across the server
-        //   line and both client lines; a changed digest prefix or hex casing would break that
-        //   correlation without failing anything.
-        // The expected value is hardcoded, not derived: the first 64 bits of SHA-256 over the UTF-8
-        //   bytes are stable across JVMs - and identical to limesium's, so a masked token correlates
-        //   across the server line and the client line.
-        // Given/When/Then
-        assertThat(HeaderValueMasker.DEFAULT.mask("secret-token")).isEqualTo("12:930bbdc51b6aed5c")
-    }
-
-    @Test
-    fun `should pin the outcome vocabulary of this stack`() {
-        // What is tested: the tagValue literals of the three ClientOutcome values the RestClient
-        //   stack pre-registers on the events counter - success, failure and timeout; cancelled
-        //   belongs to the reactive twin alone.
-        // Success criteria: the three tag values match the literals exactly.
-        // Why it matters: adapter_outcome and the outcome tag of adapter.logging.events are queried
-        //   by these strings; a renamed value would empty every existing alert on this stack.
-        // Given/When/Then: the literal outcome vocabulary, pinned - the blocking stack has no
-        //   cancellation
-        assertThat(ClientOutcome.SUCCESS.tagValue).isEqualTo("success")
-        assertThat(ClientOutcome.FAILURE.tagValue).isEqualTo("failure")
-        assertThat(ClientOutcome.TIMEOUT.tagValue).isEqualTo("timeout")
+        assertThat(ClientStack.RESTCLIENT.tag).isEqualTo("restclient")
+        assertThat(ClientStack.RESTCLIENT.outcomes.map { it.tagValue }).containsExactly("success", "failure", "timeout")
     }
 
     @Test

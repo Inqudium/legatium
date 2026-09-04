@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.1.1</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>eu.inqudium</groupId>
+    <artifactId>legatium-consumer-smoke</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>legatium-consumer-smoke</name>
+    <!-- The one test that runs on the CONSUMER's side of the Shade boundary (ADR-0003). Surefire in the
+         reactor tests the twins against the legatium-common module in the `test` phase; Shade inlines
+         the common classes and writes the dependency-reduced POM only afterwards, in `package`. Nothing
+         in the reactor therefore ever loads the jars a consumer receives. This standalone project does:
+         it depends on both published twins exactly like an application would, resolves them from the
+         local repository, and checks that the shaded classes are there, that the auto-configurations
+         wire up, and that one call per client ends in one exchange line.
+
+         DELIBERATELY not a reactor child (like limesium's benchmarks/): `mvn verify` at the root must
+         not depend on its own install, and a consumer resolves POMs, not reactor projects. Build with
+
+             mvn -DskipTests -Djacoco.skip=true install
+             rm -rf ~/.m2/repository/eu/inqudium/legatium-common     # what a consumer never has
+             mvn -f consumer-smoke/pom.xml verify
+
+         The removal is the point: a dependency-reduced POM that still named legatium-common would fail
+         resolution here instead of at the first consumer. The CI job `consumer-smoke` runs exactly this.
+         Java sources: the consumer view needs no Kotlin plugin - the twins bring kotlin-stdlib themselves. -->
+    <description>Consumer-side smoke test of the shaded legatium twins as an application receives them</description>
+
+    <properties>
+        <java.version>21</java.version>
+        <!-- Kept equal to the reactor's `revision`. -->
+        <legatium.version>1.0.0-SNAPSHOT</legatium.version>
+    </properties>
+
+    <dependencies>
+        <!-- The products under test, as a consumer declares them: one artifact each, no BOM entry,
+             no legatium-common. Compile scope on purpose - that is what a consumer uses. -->
+        <dependency>
+            <groupId>eu.inqudium</groupId>
+            <artifactId>legatium-restclient-logging</artifactId>
+            <version>${legatium.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>eu.inqudium</groupId>
+            <artifactId>legatium-webclient-logging</artifactId>
+            <version>${legatium.version}</version>
+        </dependency>
+
+        <!-- The two Boot client starters, so Boot hands out the builders the customizers attach to. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-restclient</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webclient</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Not an application: nothing to repackage, and no main classes to jar. -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <skipIfEmpty>true</skipIfEmpty>
+                </configuration>
+            </plugin>
+            <!-- Warning-free test JVM on JDK 21+: Mockito's inline agent (starter-test) and Netty's
+                 native access would otherwise print JDK warnings the build cannot act on. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>-XX:+EnableDynamicAgentLoading --enable-native-access=ALL-UNNAMED</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -70,9 +70,10 @@ Everything whose twin copies genuinely differ (emitters, exchanges, interceptor 
 with its own concurrency design)
 stays **deliberately duplicated**: one twin per client, standalone jars, contract-level code that changes
 rarely. For that remainder every change is a conscious port in both directions; the pins in
-`TwinContractTest` (and, in `legatium-common`, `ClientLogFieldTest` / `ClientLoggingReferenceConfigTest`) catch *named* contract
-drift (meter names, field names, configuration keys, message text) — not behavioural drift inside
-near-identical code.
+`TwinContractTest` (message text, this stack's outcomes) and, in `legatium-common`, `SharedContractTest` /
+`ClientLogFieldTest` / `ClientLoggingReferenceConfigTest` catch *named* contract drift (meter names, field
+names, configuration keys, message text) — not behavioural drift inside near-identical code. The shaded
+jar a consumer receives is exercised by the standalone `consumer-smoke/` build in CI.
 
 ## Usage
 
@@ -248,4 +249,4 @@ Boot's own `http.client.requests` and to the structured log fields.
 
 Every meter with its type, tags and meaning is the guide's [Legatium guide §7.4](../docs/GUIDE.md#74-meters); how to read
 them together, with a suggested alert set, is [Legatium guide §7.5](../docs/GUIDE.md#75-reading-the-meters-together). The
-names are identical in both twins and pinned by `TwinContractTest`.
+names are one shared contract, pinned once by `SharedContractTest` in `legatium-common` ([ADR-0008](../docs/adr/ADR-0008-six-meters-consumed-not-exported.md)).

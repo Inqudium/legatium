@@ -9,6 +9,17 @@ updates:
         update-types:
           - minor
           - patch
+  # The standalone consumer smoke project (CONTRIBUTING.md) is no reactor
+  # child, so its Boot parent needs its own entry to stay current.
+  - package-ecosystem: maven
+    directory: /consumer-smoke
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: github-actions
     directory: /
     schedule:

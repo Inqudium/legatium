@@ -34,10 +34,11 @@ each twin inlines it into its own jar with the Maven Shade plugin;
   interceptor/filter, and `BoundedBodyCapture` (two different
   concurrency designs: volatile single-writer on the blocking stack, lock
   and freeze on the reactive one). For those the accepted cost is a
-  conscious port in both directions; the lockstep tests
-  (`TwinContractTest`, `ClientLogFieldTest`,
-  `ClientLoggingReferenceConfigTest`) catch *named* contract drift, not
-  behavioural drift.
+  conscious port in both directions; the lockstep tests (each twin's
+  `TwinContractTest` for the message text and the stack's own outcome
+  vocabulary; `SharedContractTest`, `ClientLogFieldTest` and
+  `ClientLoggingReferenceConfigTest` in `legatium-common` for the shared
+  literals) catch *named* contract drift, not behavioural drift.
 - **Shading:** an `artifactSet` restricted to `eu.inqudium:
   legatium-common`, NO relocation (relocating rewrites bytecode but not
   Kotlin metadata), `keepDependenciesWithProvidedScope=false` so the
@@ -169,3 +170,39 @@ kept for the first release; the documented costs (above) are accepted. The
 decision is re-opened by the first of: a consumer that needs the module path
 with both twins, a third twin, or a shared-type API change that would break
 consumers of both jars.
+
+## Amendment (2026-09-05): the proof moves to the consumer's side of the boundary
+
+The architecture review of 2026-09-05 (finding 3) found the evidence for
+this decision sitting on the wrong side of it. Surefire runs the twins'
+tests in the `test` phase against the `legatium-common` module; Shade inlines
+the classes and writes the dependency-reduced POM afterwards, in `package`,
+and nothing ever loaded the jars a consumer receives. Meanwhile ten of the
+twelve methods in the two `TwinContractTest` files pinned literals of types
+that, since the amendments above, exist only once in `legatium-common` - a
+drift "between the twins" they were written against had become impossible.
+
+- **Shared literals are pinned once.** `SharedContractTest` in
+  `legatium-common` pins the meter names and fallback tag values, the read
+  states, the MDC keys, the outcome vocabulary, the fail-open stages and the
+  request-id sources; the masking fingerprint was already pinned in
+  `HeaderValueMaskerTest`. Each twin's `TwinContractTest` keeps the two facts
+  the twin owns: its `ClientStack` (client tag, pre-registered outcomes) and
+  the message text its emitter renders.
+- **The shared owner is tested once.** The registration behaviour of
+  `ClientLoggingMetrics` (fallback registry, gauge collision, guarded
+  updates, tag folding, the no-op composite) moved from both twins' metrics
+  tests into `ClientLoggingMetricsTest` in `legatium-common`
+  ([ADR-0008](ADR-0008-six-meters-consumed-not-exported.md)).
+- **The packaging is verified where it matters.** The standalone project
+  `consumer-smoke/` (no reactor child, like limesium's `benchmarks/`)
+  depends on both twins exactly as an application does and starts a Boot
+  context on the installed jars: the inlined common classes must resolve
+  from exactly the two twin jars and from no `legatium-common` artifact,
+  both auto-configurations must wire up through the jars' own imports files,
+  and one call per client must end in one exchange line against a real
+  local peer. The CI job `consumer-smoke` installs the reactor, DELETES
+  `legatium-common` from the local repository and only then builds the
+  consumer - a dependency-reduced POM that still named the unpublished
+  module fails there, not at the first consumer. The both-twins-on-one-
+  classpath case this ADR documents is thereby exercised on every push.

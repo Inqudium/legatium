@@ -89,8 +89,8 @@ emission, metrics — can ever fail, delay or alter the call it describes.
   a request is the correlation header on a traceless call without one ([Legatium guide §7.6](../../docs/GUIDE.md#76-trace-correlation)).
 - **No body masking transformers and no per-key response sampling.** Bodies are logged verbatim up to the
   capture limit; the logger level is the only volume control ([Legatium guide §6.5](../../docs/GUIDE.md#65-logger-levels)).
-- **No exporting of a `MeterRegistry`.** The host's registry is consumed if present; otherwise a private
-  `SimpleMeterRegistry` absorbs the values.
+- **No exporting of a `MeterRegistry`.** The host's registry is consumed if present; otherwise the
+  meters are no-ops (an empty `CompositeMeterRegistry`).
 - **No call-wide thread-local MDC.** A reactive call hops event-loop threads; the identity rides the
   emission scope and the message ([§2.6](#26-mdc-and-the-reactive-call)).
 - **No clients built by hand.** The customizer covers every client built through Boot's builder (and the
@@ -152,7 +152,7 @@ reference implementation and owns the cross-stack contract:
 |---|---|---|
 | Configuration keys and defaults | [`/docs/adapter-logging-reference.yml`](../../docs/adapter-logging-reference.yml) | `ClientLoggingReferenceConfigTest` in `legatium-common` (one `ClientLoggingProperties` class for both twins, bound against the YAML once) |
 | Field family and index mapping | [`/docs/elk/…component-template.json`](../../docs/elk/README.md) | `ClientLogFieldTest` in `legatium-common` (one enum for both twins, locked against the template once) |
-| Message text and meter names | the RestClient module's emitter and metrics | `TwinContractTest` |
+| Message text, this stack's outcome vocabulary | this module's emitter and `ClientStack` | `TwinContractTest` in both modules; the meter names, MDC keys and shared literals once in `SharedContractTest` (`legatium-common`) |
 
 `legatium-common` pulls both files from the repository-shared `/docs` as **test resources** (declared
 in its `pom.xml`), so a missing checkout fails at resource processing with a clear message rather than
@@ -226,7 +226,7 @@ five layers:
 | `NanoTimeSource` | `@ConditionalOnMissingBean` | `NanoTimeSource.SYSTEM` |
 | `CorrelationIdGenerator` | `@ConditionalOnMissingBean` | `CorrelationIdGenerator.DEFAULT` (counting generator — ADR-0004) |
 | `HeaderValueMasker` | `@ConditionalOnMissingBean` | `HeaderValueMasker.forKey(properties.maskingKey)` — the `length:hash` fingerprint, HMAC-keyed when `masking-key` is set; the one bean both twins mask with (the filter's constructor defaults to the same, so manual wiring honours the key too) |
-| `ClientRequestLoggingFilter` | `@ConditionalOnMissingBean` | the filter, built from the bound properties and the host's `MeterRegistry` (`ObjectProvider`; private `SimpleMeterRegistry` without one) |
+| `ClientRequestLoggingFilter` | `@ConditionalOnMissingBean` | the filter, built from the bound properties and the host's `MeterRegistry` (`ObjectProvider`; an empty, no-op `CompositeMeterRegistry` without one) |
 | `WebClientCustomizer` | `@ConditionalOnClass(WebClientCustomizer)`, `@Order(LOWEST_PRECEDENCE - 10)` | `builder.filter(filter)` on every `WebClient.Builder` Boot hands out |
 
 Because the filter is its own bean, a host can replace it while keeping the customizer
@@ -828,7 +828,7 @@ lists every test with its rationale):
 | `ClientRequestLoggingFilterIntegrationTest` | end to end through Boot's `WebClient.Builder` and Reactor Netty against a real HTTP peer: templates, bodies on pooled buffers, the wire correlation header, refused connection, the connector's response timeout, a downstream timeout operator |
 | Connector suites (`ConnectorContract` run as `ReactorNettyConnectorIntegrationTest`, `JdkHttpClientConnectorIntegrationTest`, `JettyConnectorIntegrationTest`, `HttpComponentsConnectorIntegrationTest`) | the connector-agnosticism contract against every connector Spring ships: the body tees on the engine's own buffers and the wire correlation header, the engine's real response and connect timeout types classified as `timeout` (the connect timeout provoked by a loopback tarpit, `Tarpit`), a refused connection as the `failure` control |
 | `ClientRequestLoggingTracingIntegrationTest` | ADR-0002 beside a real Brave bridge: the injected `traceparent`, the log-to-trace join, no correlation header on traced calls, every call traced |
-| Lockstep/contract tests (`TwinContractTest`, `UriTemplateAttributeTest`) | pin the twin contracts and the mirrored `WebClient` attribute; the field/template and configuration/reference lockstep (`ClientLogFieldTest`, `ClientLoggingReferenceConfigTest`, `ClientLoggingPropertiesTest`) lives once in legatium-common |
+| Lockstep/contract tests (`TwinContractTest`, `UriTemplateAttributeTest`) | pin the message text, this stack's outcome vocabulary and the mirrored `WebClient` attribute; the shared literals (`SharedContractTest`), the field/template and configuration/reference lockstep (`ClientLogFieldTest`, `ClientLoggingReferenceConfigTest`, `ClientLoggingPropertiesTest`) and the metrics owner's registration behaviour (`ClientLoggingMetricsTest`) live once in legatium-common; the shaded jar itself is exercised by the standalone `consumer-smoke/` build |
 
 Fuzzing of the shared `Traceparent` parser and header masking lives in legatium-common; the bounded
 capture's fuzz target lives in the RestClient twin (the reactive capture adds a lock and a freeze around

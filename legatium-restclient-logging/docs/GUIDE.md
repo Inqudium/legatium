@@ -91,8 +91,8 @@ emission, metrics — can ever fail, delay or alter the call it describes.
 - **No body masking transformers and no per-key response sampling.** Bodies are logged verbatim up to the
   capture limit, and the logger level is the only volume control ([Legatium guide §6.5](../../docs/GUIDE.md#65-logger-levels)).
 - **No replaying body cache.** The response tee is passive; an unread response body is logged as absent.
-- **No exporting of a `MeterRegistry`.** The host's registry is consumed if present; otherwise a private
-  `SimpleMeterRegistry` absorbs the values.
+- **No exporting of a `MeterRegistry`.** The host's registry is consumed if present; otherwise the
+  meters are no-ops (an empty `CompositeMeterRegistry`).
 - **No clients built by hand.** The customizers cover every client built through Boot's builders (and the
   HTTP service client groups built from them); a hand-built `RestClient` gets the interceptor bean added
   by the host ([§3.2](#32-manual-wiring)).
@@ -156,7 +156,7 @@ files, and the twin's build binds them:
 |---|---|---|
 | Configuration keys and defaults | [`/docs/adapter-logging-reference.yml`](../../docs/adapter-logging-reference.yml) | `ClientLoggingReferenceConfigTest` in `legatium-common` (one `ClientLoggingProperties` class for both twins, bound against the YAML once) |
 | Field family and index mapping | [`/docs/elk/…component-template.json`](../../docs/elk/README.md) | `ClientLogFieldTest` in `legatium-common` (one enum for both twins, locked against the template once) |
-| Message text and meter names | this module's emitter and metrics | `TwinContractTest` in both modules |
+| Message text, this stack's outcome vocabulary | this module's emitter and `ClientStack` | `TwinContractTest` in both modules; the meter names, MDC keys and shared literals once in `SharedContractTest` (`legatium-common`) |
 
 The consequence for a consumer: a dashboard, alert or index mapping written for one client works
 unchanged for the other — and a host that uses both clients (a servlet application with a `WebClient` for
@@ -226,7 +226,7 @@ client too. It registers:
 | `NanoTimeSource` | `@ConditionalOnMissingBean` | `NanoTimeSource.SYSTEM` |
 | `CorrelationIdGenerator` | `@ConditionalOnMissingBean` | `CorrelationIdGenerator.DEFAULT` (counting generator: random per-instance base-36 prefix + counter, 21 chars — ADR-0004) |
 | `HeaderValueMasker` | `@ConditionalOnMissingBean` | `HeaderValueMasker.forKey(properties.maskingKey)` — the `length:hash` fingerprint, HMAC-keyed when `masking-key` is set; the one bean both twins mask with (the interceptor's constructor defaults to the same, so manual wiring honours the key too) |
-| `ClientRequestLoggingInterceptor` | `@ConditionalOnMissingBean` | the interceptor, built from the bound properties and the host's `MeterRegistry` (`ObjectProvider`; private `SimpleMeterRegistry` without one) |
+| `ClientRequestLoggingInterceptor` | `@ConditionalOnMissingBean` | the interceptor, built from the bound properties and the host's `MeterRegistry` (`ObjectProvider`; an empty, no-op `CompositeMeterRegistry` without one) |
 | `RestClientCustomizer` | `@ConditionalOnClass(RestClientCustomizer)`, `@Order(LOWEST_PRECEDENCE - 10)` | `builder.requestInterceptor(interceptor)` on every `RestClient.Builder` Boot hands out |
 | `RestTemplateCustomizer` | `@ConditionalOnClass(RestTemplateCustomizer)`, same order | appends the interceptor to every `RestTemplate` built through `RestTemplateBuilder` |
 
@@ -823,7 +823,7 @@ lists every test with its rationale):
 | `ClientLoggingAutoConfigurationTest` | the shipped activation: beans, customizers attaching the interceptor to Boot's builders, back-off, the optional-dependency boundary |
 | `ClientRequestLoggingInterceptorIntegrationTest` | end to end through Boot's `RestClient.Builder` / `RestTemplateBuilder` and the JDK engine against a real HTTP peer: templates, bodies, the wire correlation header, refused connection, read timeout |
 | `ClientRequestLoggingTracingIntegrationTest` | ADR-0002 beside a real Brave bridge: the injected `traceparent`, the log-to-trace join, no correlation header on traced calls, every call traced |
-| Lockstep/contract tests (`TwinContractTest`, `UriTemplateAttributeTest`) | pin the twin contracts and the mirrored `RestClient` attribute; the field/template and configuration/reference lockstep (`ClientLogFieldTest`, `ClientLoggingReferenceConfigTest`, `ClientLoggingPropertiesTest`) lives once in legatium-common |
+| Lockstep/contract tests (`TwinContractTest`, `UriTemplateAttributeTest`) | pin the message text, this stack's outcome vocabulary and the mirrored `RestClient` attribute; the shared literals (`SharedContractTest`), the field/template and configuration/reference lockstep (`ClientLogFieldTest`, `ClientLoggingReferenceConfigTest`, `ClientLoggingPropertiesTest`) and the metrics owner's registration behaviour (`ClientLoggingMetricsTest`) live once in legatium-common; the shaded jar itself is exercised by the standalone `consumer-smoke/` build |
 
 Fuzzing of the shared `Traceparent` parser and header masking lives in legatium-common; the bounded
 capture's fuzz target lives here.

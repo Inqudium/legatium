@@ -5,7 +5,7 @@ import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.NanoTimeSource
 import io.micrometer.core.instrument.MeterRegistry
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import io.micrometer.core.instrument.composite.CompositeMeterRegistry
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
@@ -28,7 +28,7 @@ import org.springframework.core.annotation.Order
  * Every bean backs off to a host-provided one - the time source, the id generator, the
  * [HeaderValueMasker] (a keyed fingerprint for a compliance regime), the filter itself. The meter registry arrives as an [ObjectProvider] and is
  * CONSUMED, never exported - a logging library must not define the host's `MeterRegistry`; without one
- * (no actuator) a private [SimpleMeterRegistry] absorbs the counts and the module works unchanged.
+ * (no actuator) an empty [CompositeMeterRegistry] makes every meter a no-op and the module works unchanged.
  *
  * The customizer lives in a nested configuration conditional on Boot's `spring-boot-webclient` module
  * (an optional dependency of this one): a host that builds its clients by hand keeps the filter bean
@@ -59,7 +59,7 @@ class ClientLoggingAutoConfiguration {
         correlationIds: CorrelationIdGenerator,
         masker: HeaderValueMasker,
         meterRegistry: ObjectProvider<MeterRegistry>,
-    ): ClientRequestLoggingFilter = ClientRequestLoggingFilter(properties, nanoTime, correlationIds, meterRegistry.getIfAvailable { SimpleMeterRegistry() }, masker)
+    ): ClientRequestLoggingFilter = ClientRequestLoggingFilter(properties, nanoTime, correlationIds, meterRegistry.getIfAvailable { CompositeMeterRegistry() }, masker)
 
     /**
      * Attaches the filter to every `WebClient.Builder` Boot hands out (and to every HTTP service client

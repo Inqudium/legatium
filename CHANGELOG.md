@@ -152,7 +152,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the `adapter-logging.*` properties class themselves (ADR-0003 amendments of
   2026-09-03: the twins' copies were byte-identical).
 - Elasticsearch component template for the `adapter_*` fields, the shared
-  configuration reference, and the lockstep tests binding both to both twins.
+  configuration reference, and the lockstep tests binding both to both twins;
+  the shared literals (meter names, MDC keys, read states, outcome vocabulary)
+  pinned once in `legatium-common`, each twin pinning only its message text
+  and its own outcome vocabulary.
+- Six meter families as a decided scope ([ADR-0008](docs/adr/ADR-0008-six-meters-consumed-not-exported.md)):
+  consumed from the host's registry, never exported; a host without a
+  `MeterRegistry` gets no-op meters (an empty `CompositeMeterRegistry`) instead
+  of a private registry accumulating unread values. The owner's registration
+  behaviour is tested once in `legatium-common`.
+- Consumer smoke test (`consumer-smoke/`, CI job `consumer-smoke`): the shaded
+  twin jars are resolved and started like an application would, with
+  `legatium-common` removed from the local repository first - the inlined
+  classes, the auto-configuration imports and one exchange line per client
+  are verified on the consumer's side of the Shade boundary (ADR-0003
+  amendment of 2026-09-05).
 - Documentation site (MkDocs Material), test-evidence and coverage pages,
   Dokka API references; CI with SBOM/OSV scan, CodeQL, OpenSSF Scorecard,
   nightly Jazzer fuzzing, SLSA-attested releases - the Inqudium project setup.
