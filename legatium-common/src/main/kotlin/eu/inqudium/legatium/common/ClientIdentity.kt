@@ -10,7 +10,7 @@ import org.springframework.http.HttpHeaders
  * [CorrelationHeader] rule) or generates a fresh id, and only a traceless call without an acceptable
  * one gets the header SENT - a traced call goes out observationally untouched.
  *
- * [source] is what the correlation counter records; [generatedEarlier] lets a re-entry by a retrying
+ * [source] is what the correlation counter records; `generatedEarlier` (a parameter of [resolve]) lets a re-entry by a retrying
  * outer interceptor - which finds the id this module generated on attempt 1 already on the request -
  * keep counting as `generated`.
  */
