@@ -65,18 +65,135 @@ near-identical code.
 
 ## Usage
 
+The host must be a **Spring Boot 4.x** application on Java 21 with an SLF4J 2.x binding, a connector,
+and — for the automatic wiring below — Boot's `spring-boot-webclient` module. The full list with the
+reasons is the guide's [prerequisites table](docs/GUIDE.md#31-prerequisites); how the `adapter_*`
+fields become visible in the log output is [§3.7](docs/GUIDE.md#37-logging-backend-and-structured-output).
+
 ```xml
 <dependency>
     <groupId>eu.inqudium</groupId>
     <artifactId>legatium-webclient-logging</artifactId>
+    <version><!-- current release: see the badge below --></version>
 </dependency>
 ```
 
-Auto-configures in ANY Spring Boot application that has `WebClient` on the classpath — servlet,
-reactive, or none — and attaches the filter to every `WebClient.Builder` Boot hands out (and to every
-HTTP service client group built from one). An application may carry both twins: a servlet host that
-uses `RestClient` for most calls and `WebClient` for a streaming one gets both logged, in one format.
-Keep the two versions equal (both jars inline the same shared classes).
+[![Maven Central](https://img.shields.io/maven-central/v/eu.inqudium/legatium-webclient-logging.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/eu.inqudium/legatium-webclient-logging)
+— there is no BOM; the version is declared on the dependency itself. An application may carry both
+twins (a servlet host using `RestClient` for most calls and `WebClient` for a streaming one gets both
+logged, in one format); keep them at the same version, both jars inline the same shared classes.
+`adapter-logging.enabled=false` removes the module again without touching the classpath.
+
+### Automatic wiring
+
+The long form is the guide's [§3.3](docs/GUIDE.md#33-automatic-wiring).
+
+With `spring-boot-webclient` on the classpath (it comes with `spring-boot-starter-webclient` and
+`spring-boot-starter-webflux`) the auto-configuration registers the filter bean **and** a late
+`WebClientCustomizer` that appends it to every `WebClient.Builder` Boot hands out — and thereby to every
+HTTP service client group built from one.
+
+The hook is Boot's **`WebClient.Builder` Spring bean**: Boot's `WebClientAutoConfiguration` defines it
+(prototype-scoped, one fresh builder per injection point) and applies every `WebClientCustomizer` to it,
+this module's included. Only clients built from that bean carry the filter. Every adapter must therefore
+obtain its client from the **injected** builder, never from `WebClient.create(...)` or the static
+`WebClient.builder()` — those bypass Boot's customizers and log nothing (see manual wiring below).
+
+```kotlin
+@Service
+class ThingsAdapter(builder: WebClient.Builder) {        // Boot's WebClient.Builder bean, injected
+    private val client = builder.baseUrl("https://api.example.com").build()
+}
+```
+
+The customizer is ordered late (`Ordered.LOWEST_PRECEDENCE - 10`), so the filter runs inside the filters
+of earlier customizers, closest to the connector: an authentication filter has already added its
+header, a retrying filter invokes it once per attempt
+([§3.5](docs/GUIDE.md#35-filter-order-and-other-filters)).
+
+### Manual wiring
+
+The long form — including the switch-safe `ObjectProvider` variant and construction outside a Spring
+context — is the guide's [§3.4](docs/GUIDE.md#34-manual-wiring).
+
+The filter bean `ClientRequestLoggingFilter` exists in every case; only its *attachment* depends on Boot.
+Attach it yourself when a client does not pass through Boot's builder:
+
+- **The host wires its clients by hand** — `WebClient.create(...)` or the static `WebClient.builder()`
+  instead of the injected `WebClient.Builder`. Boot's customizers never see such a client, so the filter
+  is not on it.
+- **`spring-boot-webclient` is absent** — a host that depends on `spring-webflux` directly, without a
+  Boot starter for the client. The nested customizer configuration is conditional on that module and
+  backs off silently; the filter bean stays.
+- **A builder obtained from Boot is customised after the customizers ran** — filters the host adds
+  directly on the builder run *inside* this one, outside the ordering guarantee above. Where the
+  logging filter must stay innermost, add it last by hand instead.
+
+In each case inject the bean and append it as the **last** filter, so it sits closest to the connector:
+
+```kotlin
+@Configuration(proxyBeanMethods = false)
+class ThingsClientConfiguration {
+    @Bean
+    fun thingsClient(loggingFilter: ClientRequestLoggingFilter): WebClient =
+        WebClient.builder()
+            .baseUrl("https://api.example.com")
+            .filter(authenticationFilter)
+            .filter(loggingFilter)
+            .build()
+}
+```
+
+Reuse the one bean rather than constructing a second filter: the meters are identified by name, so all
+filters on one `MeterRegistry` share one metrics owner and the `adapter.logging.exchanges.open` gauge
+reports the total across them ([§6.9](docs/GUIDE.md#69-one-metrics-instance-per-registry)). Replacing
+the filter itself (a host-defined `ClientRequestLoggingFilter` bean) is a different thing: the
+automatic wiring still attaches the replacement ([§3.6](docs/GUIDE.md#36-overriding-beans)).
+
+### The exchange line
+
+On the `http-adapter-exchange` logger a completed exchange is one event. In a plain-text appender only
+the message shows; it repeats the gist inline for exactly that case:
+
+```
+Client http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
+```
+
+With Spring Boot's structured logging (`logging.structured.format.console=ecs`) the same event is one
+JSON document: the `adapter_*` key-values and the MDC-carried identity become flat, typed top-level
+fields next to the encoder's own envelope:
+
+```json
+{
+  "@timestamp": "2026-09-04T13:54:58.534Z",
+  "log": { "level": "INFO", "logger": "http-adapter-exchange" },
+  "process": { "pid": 4711, "thread": { "name": "reactor-http-epoll-2" } },
+  "service": { "name": "things-service" },
+  "message": "Client http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
+  "adapter_request_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "adapter_method": "POST",
+  "adapter_route": "https://api.example.com/things/42",
+  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "spanId": "00f067aa0ba902b7",
+  "adapter_outcome": "success",
+  "adapter_duration_ms": 17,
+  "adapter_request_method": "POST",
+  "adapter_response_status_code": 200,
+  "adapter_url_host": "api.example.com",
+  "adapter_url_path": "/things/42",
+  "adapter_url_template": "https://api.example.com/things/{id}",
+  "ecs": { "version": "8.11" }
+}
+```
+
+The trace keys and the trace suffix in the message appear only on a traced call; a traceless call
+carries the request id alone and has sent it to the peer as `X-Correlation-Id`. A call without a
+response shows `-> -` and no status field; a cancelled one `adapter_outcome=cancelled`. Optional fields
+(`adapter_url_query`, `adapter_slow`, the header and body sections) are present only when they apply.
+Which encoder produces which shape — and why the default console pattern shows none of the fields —
+is the guide's [§3.7](docs/GUIDE.md#37-logging-backend-and-structured-output); the field family itself is
+documented once, in the RestClient twin's [README](../legatium-restclient-logging/README.md#the-exchange-line)
+and in the guide's [§5.1](docs/GUIDE.md#51-log-fields).
 
 ## Coroutines
 

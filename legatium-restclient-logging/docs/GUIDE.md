@@ -32,11 +32,13 @@ code wins.
 3. [Using it in a foreign project](#3-using-it-in-a-foreign-project)
    1. [Prerequisites](#31-prerequisites)
    2. [Adding the dependency](#32-adding-the-dependency)
-   3. [Interceptor order and other interceptors](#33-interceptor-order-and-other-interceptors)
-   4. [Overriding beans](#34-overriding-beans)
-   5. [Logging backend and structured output](#35-logging-backend-and-structured-output)
-   6. [Index mapping (ELK)](#36-index-mapping-elk)
-   7. [Verifying the integration](#37-verifying-the-integration)
+   3. [Automatic wiring](#33-automatic-wiring)
+   4. [Manual wiring](#34-manual-wiring)
+   5. [Interceptor order and other interceptors](#35-interceptor-order-and-other-interceptors)
+   6. [Overriding beans](#36-overriding-beans)
+   7. [Logging backend and structured output](#37-logging-backend-and-structured-output)
+   8. [Index mapping (ELK)](#38-index-mapping-elk)
+   9. [Verifying the integration](#39-verifying-the-integration)
 4. [Configuration](#4-configuration)
    1. [Property reference](#41-property-reference)
    2. [Header sections](#42-header-sections)
@@ -113,7 +115,7 @@ emission, metrics — can ever fail, delay or alter the call it describes.
   `SimpleMeterRegistry` absorbs the values.
 - **No clients built by hand.** The customizers cover every client built through Boot's builders (and the
   HTTP service client groups built from them); a hand-built `RestClient` gets the interceptor bean added
-  by the host ([§3.4](#34-overriding-beans)).
+  by the host ([§3.4](#34-manual-wiring)).
 
 ### 1.3 The exchange line
 
@@ -248,8 +250,8 @@ client too. It registers:
 | `RestTemplateCustomizer` | `@ConditionalOnClass(RestTemplateCustomizer)`, same order | appends the interceptor to every `RestTemplate` built through `RestTemplateBuilder` |
 
 Because the interceptor is its own bean, a host can replace it while keeping the customizers
-([§3.4](#34-overriding-beans)). Boot's `spring-boot-restclient` module is an **optional** dependency:
-without it the interceptor bean still exists and the host attaches it by hand.
+([§3.6](#36-overriding-beans)). Boot's `spring-boot-restclient` module is an **optional** dependency:
+without it the interceptor bean still exists and the host attaches it by hand ([§3.4](#34-manual-wiring)).
 
 ### 2.3 Lifecycle of one exchange
 
@@ -431,7 +433,7 @@ module's tests drive from an `AtomicLong` / a fixed string / a lambda without an
 | Requirement | Notes |
 |---|---|
 | Spring Boot 4.x application using `RestClient` and/or `RestTemplate` | any application type — servlet, reactive, or none; the module is a client-side library |
-| Boot's `spring-boot-restclient` (via `spring-boot-starter-restclient` or transitively) | provides `RestClient.Builder`, `RestTemplateBuilder` and the customizer contracts the auto-configuration hooks; **optional** for the module — without it the interceptor bean is attached by hand |
+| Boot's `spring-boot-restclient` (via `spring-boot-starter-restclient` or transitively) | provides `RestClient.Builder`, `RestTemplateBuilder` and the customizer contracts the auto-configuration hooks; **optional** for the module — without it the interceptor bean is attached by hand ([§3.4](#34-manual-wiring)); note that since Boot 4 the web starters do not pull it |
 | Java 21, Kotlin stdlib | the module is written in Kotlin; a Java host only needs `kotlin-stdlib`, which the jar pulls transitively |
 | SLF4J 2.x binding (Logback by default in Boot) | the module uses the fluent `LoggingEventBuilder` API (`addKeyValue`) |
 | Micrometer core | present via any Boot starter; an actuator `MeterRegistry` is optional |
@@ -454,8 +456,9 @@ backend, no YAML, no HTTP engine are forced onto the host.
 The current release is shown live by the Maven Central badge:
 [![Maven Central](https://img.shields.io/maven-central/v/eu.inqudium/legatium-restclient-logging.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/eu.inqudium/legatium-restclient-logging)
 
-That is all: the auto-configuration registers the interceptor and the customizers, every call through a
-Boot-built `RestClient` or `RestTemplate` is logged on the `http-adapter-exchange` logger at INFO, the
+That is all: the auto-configuration registers the interceptor and the customizers
+([§3.3](#33-automatic-wiring); clients outside Boot's builders: [§3.4](#34-manual-wiring)), every call
+through a Boot-built `RestClient` or `RestTemplate` is logged on the `http-adapter-exchange` logger at INFO, the
 request id comes from the `traceparent` trace id (traceless calls send an `X-Correlation-Id` instead —
 ADR-0002), the `adapter_*` keys are in the MDC for the wire call, and the six meters are registered in
 the host's `MeterRegistry` if one exists.
@@ -467,7 +470,164 @@ adapter-logging:
   enabled: false
 ```
 
-### 3.3 Interceptor order and other interceptors
+### 3.3 Automatic wiring
+
+The shipped activation is not the interceptor bean but the two customizers that attach it. The hooks are
+Boot's **builder Spring beans**, both defined in the `spring-boot-restclient` module:
+
+| Boot bean | Defined by | Scope | When the customizers run |
+|---|---|---|---|
+| `RestClient.Builder` | `RestClientAutoConfiguration` | **prototype** — every injection point receives a fresh builder, so one adapter's `baseUrl` or default headers never leak into another's | on creation, before the builder is handed out: every `RestClientCustomizer` bean, in bean order |
+| `RestTemplateBuilder` | `RestTemplateAutoConfiguration` | singleton, immutable — each configuring call returns a new builder | at `build()`: every `RestTemplateCustomizer` bean, in bean order, on the freshly built `RestTemplate` |
+
+This module contributes one customizer of each kind, both ordered at `Ordered.LOWEST_PRECEDENCE - 10`:
+the `RestClientCustomizer` does exactly `builder.requestInterceptor(interceptor)`, the
+`RestTemplateCustomizer` appends the interceptor to the template's interceptor list — in both cases the
+interceptor lands at the **end** of the list, innermost
+([§3.5](#35-interceptor-order-and-other-interceptors)).
+
+Consequently the rule for the host is: **every adapter obtains its client from the injected builder
+bean.** Constructor injection is the usual form; a `@Bean` method parameter or a builder obtained from
+the `ApplicationContext` is the same bean with the same customizers applied.
+
+```kotlin
+@Service
+class ThingsAdapter(builder: RestClient.Builder) {       // Boot's RestClient.Builder bean, injected
+    private val client = builder
+        .baseUrl("https://api.example.com")
+        .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
+        .build()
+
+    fun thing(id: Long): Thing =
+        client.get().uri("/things/{id}", id).retrieve().body(Thing::class.java)!!
+}
+
+@Service
+class LegacyThingsAdapter(builder: RestTemplateBuilder) { // Boot's RestTemplateBuilder bean, injected
+    private val template = builder.rootUri("https://api.example.com").build()
+
+    fun thing(id: Long): Thing = template.getForObject("/things/{id}", Thing::class.java, id)!!
+}
+```
+
+Covered by the automatic wiring:
+
+- every `RestClient` built from an injected `RestClient.Builder`, however many `build()` calls the
+  adapter makes on it;
+- every `RestTemplate` built through the injected `RestTemplateBuilder`, whatever chain of configuring
+  calls precedes the `build()`;
+- every HTTP service client group Boot builds through its `RestClient.Builder`
+  (`HttpServiceClientAutoConfiguration`, `@ImportHttpServices`) — the proxies' underlying client carries
+  the interceptor like any other.
+
+**Not** covered — these clients never meet Boot's customizers and therefore log nothing:
+
+- `RestClient.create()` / `RestClient.create(baseUrl)` and the static `RestClient.builder()`;
+- a `RestTemplate` constructed directly (`RestTemplate()`, `RestTemplate(requestFactory)`);
+- a builder the host constructs and then customises itself.
+
+For those, [§3.4](#34-manual-wiring) applies.
+
+The automatic wiring is conditional on two things, both pinned by `ClientLoggingAutoConfigurationTest`:
+`adapter-logging.enabled` (default `true`; `false` removes the interceptor bean and both customizers
+together), and Boot's customizer classes being present (`@ConditionalOnClass` on each nested
+configuration) — without `spring-boot-restclient` both back off silently while the interceptor bean
+remains. Note that since Boot 4 the web starters no longer pull `spring-boot-restclient`: a host with
+only `spring-boot-starter-web` has `RestClient` and `RestTemplate` on the classpath (from `spring-web`)
+but neither Boot's builder beans nor the customizer contracts — it adds `spring-boot-starter-restclient`,
+or wires by hand. The wiring itself is fail-open like everything else: a failure inside the interceptor's
+setup for a call degrades that call to a pass-through with a `stage=wiring` report
+([§2.7](#27-fail-open-contract)); the customizers cannot fail in a way that breaks a builder.
+
+To confirm the attachment at runtime — in a test or a startup check — read the builder's interceptor
+list; the module's interceptor must be the last entry (a built `RestTemplate` exposes the same through
+`interceptors`):
+
+```kotlin
+val builder: RestClient.Builder = context.getBean(RestClient.Builder::class.java)
+builder.requestInterceptors { interceptors -> check(interceptors.last() is ClientRequestLoggingInterceptor) }
+```
+
+### 3.4 Manual wiring
+
+The interceptor bean `ClientRequestLoggingInterceptor` exists in every enabled context; only its
+**attachment** depends on Boot's builders. Attach it yourself when a client does not pass through them:
+
+| Situation | Why the automatic wiring does not reach it |
+|---|---|
+| The host builds clients by hand — `RestClient.create(...)`, the static `RestClient.builder()`, a `RestTemplate` constructed directly, or a builder it constructs itself | Boot's customizers run only on the builder beans Boot defines; a client built elsewhere never sees them |
+| `spring-boot-restclient` is absent — the host depends on `spring-web` directly, or only on `spring-boot-starter-web`, without `spring-boot-starter-restclient` | both nested customizer configurations are `@ConditionalOnClass` and back off; there are no builder beans either, so every client is hand-built anyway |
+| A builder obtained from Boot is customised **after** the customizers ran and the logging interceptor must stay innermost | interceptors the host appends on that builder land behind this one and run *inside* it ([§3.5](#35-interceptor-order-and-other-interceptors)); where the logged request must be what those later interceptors produce, the host takes over the ordering |
+| A client is built outside a Spring context — a library's own client, an integration test without Boot | there is no context to hold the bean, so the interceptor is constructed directly (below) |
+
+The mechanics are one line per client: inject the bean and append it as the **last** interceptor, so it
+sits closest to the wire and sees the request as the peer receives it, once per attempt of any retry
+outside it:
+
+```kotlin
+@Configuration(proxyBeanMethods = false)
+class ThingsClientConfiguration {
+    @Bean
+    fun thingsClient(loggingInterceptor: ClientRequestLoggingInterceptor, auth: AuthenticationInterceptor): RestClient =
+        RestClient.builder()
+            .baseUrl("https://api.example.com")
+            .requestInterceptor(auth)                 // outside: its header is what gets logged
+            .requestInterceptor(loggingInterceptor)   // last = innermost, closest to the wire
+            .build()
+
+    @Bean
+    fun legacyTemplate(loggingInterceptor: ClientRequestLoggingInterceptor): RestTemplate =
+        RestTemplate().apply { interceptors = interceptors + loggingInterceptor }
+}
+```
+
+Rules for manual wiring:
+
+- **Reuse the one bean; do not construct a second interceptor in a Boot context.** The meters are
+  identified by name, so every interceptor on one `MeterRegistry` shares one metrics owner and the
+  `adapter.logging.exchanges.open` gauge reports the total across them
+  ([§6.9](#69-one-metrics-instance-per-registry)). A second instance would not break anything, but it
+  buys nothing.
+- **Honour the switch.** With `adapter-logging.enabled=false` the bean does not exist, and a plain
+  injection point fails to start the context. A client configuration that must survive the switch takes
+  an `ObjectProvider<ClientRequestLoggingInterceptor>` and attaches the interceptor only if it is
+  available:
+
+  ```kotlin
+  @Bean
+  fun thingsClient(loggingInterceptor: ObjectProvider<ClientRequestLoggingInterceptor>): RestClient =
+      RestClient.builder()
+          .baseUrl("https://api.example.com")
+          .also { builder -> loggingInterceptor.ifAvailable { builder.requestInterceptor(it) } }
+          .build()
+  ```
+
+- **Activation is not the host's business.** Host and path activation (`adapter-logging.exclude-hosts`,
+  `include-path-patterns`, `exclude-path-prefixes`) is evaluated inside the interceptor
+  ([§4.4](#44-activation-hosts-and-paths)), so a manually attached interceptor applies the same rules as
+  an automatically attached one. There is no need to attach it selectively.
+- **Ordering is the host's business.** The automatic wiring guarantees "innermost" by its late
+  customizers; a manual `requestInterceptor(...)` call is appended wherever it is made. Put it last.
+
+Outside a Spring context the interceptor is constructed directly. The constructor takes the bound
+properties, the time source, the id generator and a `MeterRegistry`, plus an optional trailing
+`HeaderValueMasker` (the built-in fingerprint when omitted) — all defaults are public:
+
+```kotlin
+val interceptor = ClientRequestLoggingInterceptor(
+    ClientLoggingProperties(),              // every default; or a copy(...) with the fields to change
+    NanoTimeSource.SYSTEM,
+    CorrelationIdGenerator.DEFAULT,
+    SimpleMeterRegistry(),                  // or the registry the surrounding code owns
+)
+val client = RestClient.builder().baseUrl(url).requestInterceptor(interceptor).build()
+```
+
+Everything else is unchanged by the way the interceptor was attached: emission point, outcomes, meters,
+the call-wide MDC, header sections, body capture and the fail-open contract behave exactly as under the
+automatic wiring — the interceptor does not know how it got onto the chain.
+
+### 3.5 Interceptor order and other interceptors
 
 The customizers are ordered at `Ordered.LOWEST_PRECEDENCE - 10`, so the interceptor is appended **behind**
 the interceptors of earlier customizers and of the builder's own configuration, and runs **inside** them —
@@ -484,10 +644,10 @@ The `traceparent` header is not affected by the order at all: the client observa
 injects it into the request **before** any interceptor runs ([§5.6](#56-trace-correlation)).
 
 Activation is evaluated **in the interceptor** (`shouldNotFilter`), so its semantics are byte-identical
-with the WebClient twin. If the host needs a different position, it disables the customizers by defining
-its own `RestClientCustomizer` ordering or attaches the bean itself.
+with the WebClient twin. If the host needs a different position, it attaches the bean itself
+([§3.4](#34-manual-wiring)).
 
-### 3.4 Overriding beans
+### 3.6 Overriding beans
 
 Every default is `@ConditionalOnMissingBean`:
 
@@ -527,16 +687,10 @@ fun clientRequestLoggingInterceptor(
 ): ClientRequestLoggingInterceptor = ClientRequestLoggingInterceptor(properties, nanoTime, ids, registry)
 ```
 
-A client built **by hand** (`RestClient.builder()` without Boot's builder bean, a `RestTemplate` constructed
-directly) receives the interceptor from the host:
+Attaching the (default or replaced) interceptor to a client that does not pass through Boot's builders
+is [§3.4](#34-manual-wiring).
 
-```kotlin
-val client = RestClient.builder().baseUrl(url).requestInterceptor(interceptor).build()
-```
-
-Keep in mind the one-instance-per-registry rule of the gauge ([§6.9](#69-one-metrics-instance-per-registry)).
-
-### 3.5 Logging backend and structured output
+### 3.7 Logging backend and structured output
 
 The module emits through SLF4J's fluent API. Every exchange event carries its data in **two places**, and
 an encoder treats them differently:
@@ -603,7 +757,7 @@ logging:
 Key-value pairs and MDC entries become **flat top-level fields**, and values keep their JVM type —
 `adapter_duration_ms` is a number, `adapter_response_status_code` a number, which is what the type
 assertion in `ClientLogField` guarantees on the producing side. This is the shape the component template
-in [§3.6](#36-index-mapping-elk) is written for. `logging.structured.json.include` / `exclude` / `rename`
+in [§3.8](#38-index-mapping-elk) is written for. `logging.structured.json.include` / `exclude` / `rename`
 control the field selection (e.g. to drop `adapter_route`, which duplicates host and path).
 
 | Option | Output | Key-value pairs | MDC | Typed values | Escapes control chars | Use for |
@@ -615,7 +769,7 @@ control the field selection (e.g. to drop `adapter_route`, which duplicates host
 Whatever the option, keep the `eu.inqudium.legatium.restclient.logging` logger at WARN or lower: it
 carries the WARN breadcrumb on a thrown call and the module's own failure reports.
 
-### 3.6 Index mapping (ELK)
+### 3.8 Index mapping (ELK)
 
 The thirteen `adapter_*` fields have a ready-made Elasticsearch component template in
 [`/docs/elk/`](../../docs/elk/README.md):
@@ -632,7 +786,7 @@ deliberately prevents. The MDC-carried keys are intentionally not in the templat
 depends on the host's encoder layout; map them where the encoder configuration lives. The template
 composes beside Limesium's `endpoint_*` template without collision.
 
-### 3.7 Verifying the integration
+### 3.9 Verifying the integration
 
 1. Make any call through a Boot-built `RestClient`:
 
@@ -1083,7 +1237,7 @@ module does not reconstruct templates by guessing.
 
 ### 6.7 Retries yield one line per attempt
 
-The interceptor sits innermost ([§3.3](#33-interceptor-order-and-other-interceptors)), so a retrying
+The interceptor sits innermost ([§3.5](#35-interceptor-order-and-other-interceptors)), so a retrying
 interceptor (or a resilience decorator around the client) invokes it once per attempt. Each attempt is a
 crossing and gets its own line — with the same `adapter_request_id` under a trace, or a **new** generated
 id per attempt on a traceless call (each attempt wires afresh and the retried request already carries the

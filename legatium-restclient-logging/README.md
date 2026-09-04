@@ -33,16 +33,104 @@ metrics and the stack-specific behaviours — is [`docs/GUIDE.md`](docs/GUIDE.md
 
 ## Usage
 
-Add the module to a Spring Boot application — the interceptor attaches itself to every `RestClient` and
-`RestTemplate` built through Boot's builders (and to every HTTP service client group built from them).
-No web application is required: a batch job that calls out is a client too.
+The host must be a **Spring Boot 4.x** application on Java 21 with an SLF4J 2.x binding, an HTTP engine
+behind the request factory, and — for the automatic wiring below — Boot's `spring-boot-restclient`
+module. No web application is required: a batch job that calls out is a client too. The full list with
+the reasons is the guide's [prerequisites table](docs/GUIDE.md#31-prerequisites); how the `adapter_*`
+fields become visible in the log output is [§3.7](docs/GUIDE.md#37-logging-backend-and-structured-output).
 
 ```xml
 <dependency>
     <groupId>eu.inqudium</groupId>
     <artifactId>legatium-restclient-logging</artifactId>
+    <version><!-- current release: see the badge below --></version>
 </dependency>
 ```
+
+[![Maven Central](https://img.shields.io/maven-central/v/eu.inqudium/legatium-restclient-logging.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/eu.inqudium/legatium-restclient-logging)
+— there is no BOM; the version is declared on the dependency itself. An application may carry both
+twins (a servlet host using `RestClient` for most calls and `WebClient` for a streaming one gets both
+logged, in one format); keep them at the same version, both jars inline the same shared classes.
+`adapter-logging.enabled=false` removes the module again without touching the classpath.
+
+### Automatic wiring
+
+With `spring-boot-restclient` on the classpath (it comes with `spring-boot-starter-restclient` — since
+Boot 4 the web starters no longer pull it, so a host that only has `spring-boot-starter-web` must add
+it) the auto-configuration registers the interceptor bean **and** two
+late customizers — a `RestClientCustomizer` and a `RestTemplateCustomizer` — that append it to every
+client Boot builds, and thereby to every HTTP service client group built from Boot's builder. The long
+form is the guide's [§3.3](docs/GUIDE.md#33-automatic-wiring).
+
+The hooks are Boot's **builder Spring beans**: the `RestClient.Builder` bean (prototype-scoped, one fresh
+builder per injection point) and the `RestTemplateBuilder` bean, both defined by Boot's
+`spring-boot-restclient` auto-configurations, which apply every customizer before handing a builder
+out. Only clients built from those beans carry the interceptor. Every adapter must therefore obtain its
+client from the **injected** builder, never from `RestClient.create(...)`, the static
+`RestClient.builder()` or a `RestTemplate()` constructed directly — those bypass Boot's customizers and
+log nothing (see manual wiring below).
+
+```kotlin
+@Service
+class ThingsAdapter(builder: RestClient.Builder) {       // Boot's RestClient.Builder bean, injected
+    private val client = builder.baseUrl("https://api.example.com").build()
+}
+
+@Service
+class LegacyThingsAdapter(builder: RestTemplateBuilder) { // Boot's RestTemplateBuilder bean, injected
+    private val template = builder.rootUri("https://api.example.com").build()
+}
+```
+
+The customizers are ordered late (`Ordered.LOWEST_PRECEDENCE - 10`), so the interceptor runs inside the
+interceptors of earlier customizers, closest to the wire: an authentication interceptor has already
+added its header, a retrying interceptor invokes it once per attempt
+([§3.5](docs/GUIDE.md#35-interceptor-order-and-other-interceptors)).
+
+### Manual wiring
+
+The interceptor bean `ClientRequestLoggingInterceptor` exists in every enabled context; only its
+*attachment* depends on Boot's builders. Attach it yourself when a client does not pass through them
+(the long form — including the switch-safe `ObjectProvider` variant and construction outside a Spring
+context — is the guide's [§3.4](docs/GUIDE.md#34-manual-wiring)):
+
+- **The host wires its clients by hand** — `RestClient.create(...)`, the static `RestClient.builder()`,
+  or a `RestTemplate` constructed directly instead of through the injected builders. Boot's customizers
+  never see such a client, so the interceptor is not on it.
+- **`spring-boot-restclient` is absent** — a host that depends on `spring-web` directly, without a Boot
+  starter for the client. The nested customizer configurations are conditional on that module and back
+  off silently; the interceptor bean stays.
+- **A builder obtained from Boot is customised after the customizers ran** — interceptors the host adds
+  directly on the builder run *inside* this one, outside the ordering guarantee above. Where the logging
+  interceptor must stay innermost, add it last by hand instead.
+
+In each case inject the bean and append it as the **last** interceptor, so it sits closest to the wire:
+
+```kotlin
+@Configuration(proxyBeanMethods = false)
+class ThingsClientConfiguration {
+    @Bean
+    fun thingsClient(loggingInterceptor: ClientRequestLoggingInterceptor): RestClient =
+        RestClient.builder()
+            .baseUrl("https://api.example.com")
+            .requestInterceptor(authenticationInterceptor)
+            .requestInterceptor(loggingInterceptor)
+            .build()
+
+    @Bean
+    fun legacyTemplate(loggingInterceptor: ClientRequestLoggingInterceptor): RestTemplate =
+        RestTemplate().apply { interceptors = interceptors + loggingInterceptor }
+}
+```
+
+Reuse the one bean rather than constructing a second interceptor: the meters are identified by name,
+so all interceptors on one `MeterRegistry` share one metrics owner and the
+`adapter.logging.exchanges.open` gauge reports the total across them
+([§6.9](docs/GUIDE.md#69-one-metrics-instance-per-registry)). Replacing the interceptor itself (a
+host-defined `ClientRequestLoggingInterceptor` bean) is a different thing: the automatic wiring still
+attaches the replacement ([§3.6](docs/GUIDE.md#36-overriding-beans)).
+
+### The exchange line
 
 Example line (on the `http-adapter-exchange` logger):
 
@@ -169,5 +257,5 @@ Define your own bean to replace a default: `NanoTimeSource`, `CorrelationIdGener
 `NanoTimeSource`, `CorrelationIdGenerator`, `HeaderValueMasker` — live in the package
 `eu.inqudium.legatium.common`. A custom interceptor bean takes over the *interceptor*, not the
 wiring: the auto-configured `RestClientCustomizer` and `RestTemplateCustomizer` still attach it to every
-Boot-built client. A host that builds its clients by hand adds the bean itself
-(`builder.requestInterceptor(interceptor)`). Set `adapter-logging.enabled=false` to remove everything.
+Boot-built client. A host that builds its clients by hand adds the bean itself — see
+[manual wiring](#manual-wiring). Set `adapter-logging.enabled=false` to remove everything.

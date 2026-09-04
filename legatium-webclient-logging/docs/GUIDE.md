@@ -31,11 +31,13 @@ wins.
 3. [Using it in a foreign project](#3-using-it-in-a-foreign-project)
    1. [Prerequisites](#31-prerequisites)
    2. [Adding the dependency](#32-adding-the-dependency)
-   3. [Filter order and other filters](#33-filter-order-and-other-filters)
-   4. [Overriding beans](#34-overriding-beans)
-   5. [Logging backend and structured output](#35-logging-backend-and-structured-output)
-   6. [Index mapping (ELK)](#36-index-mapping-elk)
-   7. [Verifying the integration](#37-verifying-the-integration)
+   3. [Automatic wiring](#33-automatic-wiring)
+   4. [Manual wiring](#34-manual-wiring)
+   5. [Filter order and other filters](#35-filter-order-and-other-filters)
+   6. [Overriding beans](#36-overriding-beans)
+   7. [Logging backend and structured output](#37-logging-backend-and-structured-output)
+   8. [Index mapping (ELK)](#38-index-mapping-elk)
+   9. [Verifying the integration](#39-verifying-the-integration)
 4. [Configuration](#4-configuration)
    1. [Property reference](#41-property-reference)
    2. [Header sections](#42-header-sections)
@@ -113,7 +115,7 @@ emission, metrics — can ever fail, delay or alter the call it describes.
   emission scope and the message ([§2.6](#26-mdc-and-the-reactive-call)).
 - **No clients built by hand.** The customizer covers every client built through Boot's builder (and the
   HTTP service client groups built from it); a hand-built `WebClient` gets the filter bean added by the
-  host ([§3.4](#34-overriding-beans)).
+  host ([§3.4](#34-manual-wiring)).
 
 ### 1.3 The exchange line
 
@@ -244,8 +246,9 @@ five layers:
 | `WebClientCustomizer` | `@ConditionalOnClass(WebClientCustomizer)`, `@Order(LOWEST_PRECEDENCE - 10)` | `builder.filter(filter)` on every `WebClient.Builder` Boot hands out |
 
 Because the filter is its own bean, a host can replace it while keeping the customizer
-([§3.4](#34-overriding-beans)). Boot's `spring-boot-webclient` module is an **optional** dependency:
-without it the filter bean still exists and the host attaches it by hand. The same property namespace and
+([§3.6](#36-overriding-beans)). Boot's `spring-boot-webclient` module is an **optional** dependency:
+without it the filter bean still exists and the host attaches it by hand ([§3.4](#34-manual-wiring)).
+The same property namespace and
 the same bean names as the RestClient twin — the two auto-configurations never clash, and both may be
 active in one application.
 
@@ -423,14 +426,15 @@ module's tests drive from an `AtomicLong` / a fixed string / a lambda without an
 
 ### 3.1 Prerequisites
 
-| Requirement | Notes |
+| Requirement | Why |
 |---|---|
-| Spring Boot 4.x application using `WebClient` | any application type — servlet, reactive, or none; `WebClient` itself comes with `spring-webflux` |
-| Boot's `spring-boot-webclient` (via `spring-boot-starter-webclient`, `spring-boot-starter-webflux`, or transitively) | provides `WebClient.Builder` and the `WebClientCustomizer` contract the auto-configuration hooks; **optional** for the module — without it the filter bean is attached by hand |
-| Java 21, Kotlin stdlib | the module is written in Kotlin; a Java host only needs `kotlin-stdlib`, which the jar pulls transitively |
-| SLF4J 2.x binding (Logback by default in Boot) | the module uses the fluent `LoggingEventBuilder` API (`addKeyValue`) |
-| Micrometer core | present via any Boot starter; an actuator `MeterRegistry` is optional |
-| A connector | whatever the host's `WebClient` uses (Reactor Netty by default, the JDK `HttpClient`, Jetty, ...) — the module is connector-agnostic |
+| **Spring Boot 4.x**, Java 21 | the auto-configuration hooks Boot 4's `org.springframework.boot.webclient.WebClientCustomizer`; on Boot 3 the filter bean would exist but never be attached |
+| **Boot's `spring-boot-webclient`** — via `spring-boot-starter-webclient`, `spring-boot-starter-webflux`, or transitively | the `WebClient.Builder` bean and the customizer contract the wiring rests on; it is *optional* for this module, so a host without it keeps the filter bean and must attach it by hand ([§3.4](#34-manual-wiring)). `spring-webflux` itself (`WebClient`, `ExchangeFilterFunction`) comes transitively and is not the condition |
+| **Clients built through Boot** | the filter is attached to the injected `WebClient.Builder` bean (and to every HTTP service client group built from one) — [§3.3](#33-automatic-wiring); a client built with `WebClient.create()` or the static `WebClient.builder()` gets no filter unless the host adds it — [§3.4](#34-manual-wiring) |
+| **A connector** | Reactor Netty (the starters' default), the JDK `HttpClient`, Jetty, ... — `spring-webflux` alone carries none; the module is connector-agnostic, the timeout classification ([§6.3](#63-timeouts-connector-vs-operator)) recognises the JDK and Netty types |
+| **SLF4J 2.x binding** with an encoder that renders key-value pairs and the MDC | the fields ride SLF4J's fluent `addKeyValue`, the identity rides the MDC; Boot's default console pattern prints only the message — `%kvp`/`%mdc` or Boot's structured logging make the `adapter_*` fields visible ([§3.7](#37-logging-backend-and-structured-output)) |
+| **A `MeterRegistry` in the host** (actuator) — optional | the six meters are consumed from it, never exported; without one a private `SimpleMeterRegistry` absorbs the counts unseen |
+| **The index mapping composed before the first event** — for an ELK target | the component template in [`/docs/elk/`](../../docs/elk/README.md) keeps body and header fields out of the dynamic mapping ([§3.8](#38-index-mapping-elk)) |
 
 The module is a **library**, not a starter: it declares `spring-boot-autoconfigure`, `slf4j-api`,
 `spring-webflux`, `reactor-core`, `micrometer-core`, `kotlin-stdlib` and the optional
@@ -449,7 +453,8 @@ The module is a **library**, not a starter: it declares `spring-boot-autoconfigu
 The current release is shown live by the Maven Central badge:
 [![Maven Central](https://img.shields.io/maven-central/v/eu.inqudium/legatium-webclient-logging.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/eu.inqudium/legatium-webclient-logging)
 
-That is all: the auto-configuration registers the filter and the customizer, every call through a
+That is all: the auto-configuration registers the filter and the customizer ([§3.3](#33-automatic-wiring);
+clients outside Boot's builder: [§3.4](#34-manual-wiring)), every call through a
 Boot-built `WebClient` is logged on the `http-adapter-exchange` logger at INFO, the request id comes from
 the `traceparent` trace id (traceless calls send an `X-Correlation-Id` instead — ADR-0002), and the six
 meters are registered in the host's `MeterRegistry` if one exists.
@@ -461,7 +466,142 @@ adapter-logging:
   enabled: false
 ```
 
-### 3.3 Filter order and other filters
+### 3.3 Automatic wiring
+
+The shipped activation is not the filter bean but the customizer that attaches it. The hook is Boot's
+**`WebClient.Builder` Spring bean**, defined by `WebClientAutoConfiguration` in the
+`spring-boot-webclient` module:
+
+1. Boot defines `WebClient.Builder` as a **prototype-scoped** bean — every injection point receives a
+   fresh builder, so one adapter's `baseUrl` or default headers never leak into another's.
+2. Before handing a builder out, Boot applies every `WebClientCustomizer` bean to it, in bean order.
+3. This module contributes one such customizer, ordered at `Ordered.LOWEST_PRECEDENCE - 10`, that does
+   exactly `builder.filter(clientRequestLoggingFilter)` — the filter lands at the **end** of the
+   builder's filter list, innermost ([§3.5](#35-filter-order-and-other-filters)).
+
+Consequently the rule for the host is: **every adapter obtains its client from the injected
+`WebClient.Builder` bean.** Constructor injection is the usual form; a `@Bean` method parameter or a
+`WebClient.Builder` obtained from the `ApplicationContext` is the same builder with the same
+customizers applied.
+
+```kotlin
+@Service
+class ThingsAdapter(builder: WebClient.Builder) {        // Boot's WebClient.Builder bean, injected
+    private val client = builder
+        .baseUrl("https://api.example.com")
+        .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
+        .build()
+
+    fun thing(id: Long): Mono<Thing> =
+        client.get().uri("/things/{id}", id).retrieve().bodyToMono(Thing::class.java)
+}
+```
+
+Covered by the automatic wiring:
+
+- every `WebClient` built from an injected `WebClient.Builder`, however many `build()` calls the
+  adapter makes on it;
+- every HTTP service client group Boot builds through that builder (`@ImportHttpServices` with the
+  WebClient variant) — the proxies' underlying client carries the filter like any other.
+
+**Not** covered — these clients never meet Boot's customizers and therefore log nothing:
+
+- `WebClient.create()` / `WebClient.create(baseUrl)`;
+- the static `WebClient.builder()`;
+- a builder the host constructs and then customises itself.
+
+For those, [§3.4](#34-manual-wiring) applies.
+
+The automatic wiring is conditional on two things, both pinned by `ClientLoggingAutoConfigurationTest`:
+`adapter-logging.enabled` (default `true`; `false` removes the filter bean and the customizer together),
+and Boot's `WebClientCustomizer` class being present (`@ConditionalOnClass`) — without
+`spring-boot-webclient` the nested `WebClientCustomization` backs off silently while the filter bean
+remains. The wiring itself is fail-open like everything else: a failure inside the filter's setup for
+a call degrades that call to a pass-through with a `stage=wiring` report
+([§2.7](#27-fail-open-contract)); the customizer cannot fail in a way that breaks the builder.
+
+To confirm the attachment at runtime — in a test or a startup check — read the builder's filter list;
+the module's filter must be the last entry:
+
+```kotlin
+val builder: WebClient.Builder = context.getBean(WebClient.Builder::class.java)
+builder.filters { filters -> check(filters.last() is ClientRequestLoggingFilter) }
+```
+
+### 3.4 Manual wiring
+
+The filter bean `ClientRequestLoggingFilter` exists in every enabled context; only its **attachment**
+depends on Boot's builder. Attach it yourself when a client does not pass through that builder:
+
+| Situation | Why the automatic wiring does not reach it |
+|---|---|
+| The host builds clients by hand — `WebClient.create(...)`, the static `WebClient.builder()`, or a builder it constructs itself | Boot's customizers run only on the `WebClient.Builder` bean Boot defines; a client built elsewhere never sees them |
+| `spring-boot-webclient` is absent — the host depends on `spring-webflux` directly without a Boot starter for the client | the nested customizer configuration is `@ConditionalOnClass(WebClientCustomizer)` and backs off; there is no `WebClient.Builder` bean either, so every client is hand-built anyway |
+| A builder obtained from Boot is customised **after** the customizers ran and the logging filter must stay innermost | filters the host appends on that builder land behind this one and run *inside* it ([§3.5](#35-filter-order-and-other-filters)); where the logged request must be what those later filters produce, the host takes over the ordering |
+| A client is built outside a Spring context — a library's own client, an integration test without Boot | there is no context to hold the bean, so the filter is constructed directly (below) |
+
+The mechanics are one line: inject the bean and append it as the **last** filter, so it sits closest
+to the connector and sees the request as the peer receives it, once per attempt of any retry outside it:
+
+```kotlin
+@Configuration(proxyBeanMethods = false)
+class ThingsClientConfiguration {
+    @Bean
+    fun thingsClient(loggingFilter: ClientRequestLoggingFilter, auth: AuthenticationFilter): WebClient =
+        WebClient.builder()
+            .baseUrl("https://api.example.com")
+            .filter(auth)               // outside: its header is what gets logged
+            .filter(loggingFilter)      // last = innermost, closest to the connector
+            .build()
+}
+```
+
+Rules for manual wiring:
+
+- **Reuse the one bean; do not construct a second filter in a Boot context.** The meters are identified
+  by name, so every filter on one `MeterRegistry` shares one metrics owner and the
+  `adapter.logging.exchanges.open` gauge reports the total across them
+  ([§6.9](#69-one-metrics-instance-per-registry)). A second instance would not break anything, but it
+  buys nothing.
+- **Honour the switch.** With `adapter-logging.enabled=false` the bean does not exist, and a plain
+  injection point fails to start the context. A client configuration that must survive the switch takes
+  an `ObjectProvider<ClientRequestLoggingFilter>` and attaches the filter only if it is available:
+
+  ```kotlin
+  @Bean
+  fun thingsClient(loggingFilter: ObjectProvider<ClientRequestLoggingFilter>): WebClient =
+      WebClient.builder()
+          .baseUrl("https://api.example.com")
+          .also { builder -> loggingFilter.ifAvailable { builder.filter(it) } }
+          .build()
+  ```
+
+- **Activation is not the host's business.** Host and path activation (`adapter-logging.exclude-hosts`,
+  `include-path-patterns`, `exclude-path-prefixes`) is evaluated inside the filter
+  ([§4.4](#44-activation-hosts-and-paths)), so a manually attached filter applies the same rules as an
+  automatically attached one. There is no need to attach it selectively.
+- **Ordering is the host's business.** The automatic wiring guarantees "innermost" by its late
+  customizer; a manual `filter(...)` call is appended wherever it is made. Put it last.
+
+Outside a Spring context the filter is constructed directly. The constructor takes the bound
+properties, the time source, the id generator and a `MeterRegistry`, plus an optional trailing
+`HeaderValueMasker` (the built-in fingerprint when omitted) — all defaults are public:
+
+```kotlin
+val filter = ClientRequestLoggingFilter(
+    ClientLoggingProperties(),              // every default; or a copy(...) with the fields to change
+    NanoTimeSource.SYSTEM,
+    CorrelationIdGenerator.DEFAULT,
+    SimpleMeterRegistry(),                  // or the registry the surrounding code owns
+)
+val client = WebClient.builder().baseUrl(url).filter(filter).build()
+```
+
+Everything else is unchanged by the way the filter was attached: emission point, outcomes, meters,
+header sections, body capture and the fail-open contract behave exactly as under the automatic wiring —
+the filter does not know how it got onto the chain.
+
+### 3.5 Filter order and other filters
 
 The customizer is ordered at `Ordered.LOWEST_PRECEDENCE - 10`, so the filter is appended **behind** the
 filters of earlier customizers and of the builder's own configuration, and runs **inside** them —
@@ -481,7 +621,7 @@ injects it into the request builder **before** the request is built and the filt
 Activation is evaluated **in the filter** (`shouldNotFilter`), so its semantics are byte-identical with
 the RestClient twin.
 
-### 3.4 Overriding beans
+### 3.6 Overriding beans
 
 Every default is `@ConditionalOnMissingBean`:
 
@@ -521,15 +661,10 @@ fun clientRequestLoggingFilter(
 ): ClientRequestLoggingFilter = ClientRequestLoggingFilter(properties, nanoTime, ids, registry)
 ```
 
-A client built **by hand** receives the filter from the host:
+Attaching the (default or replaced) filter to a client that does not pass through Boot's builder is
+[§3.4](#34-manual-wiring).
 
-```kotlin
-val client = WebClient.builder().baseUrl(url).filter(filter).build()
-```
-
-Keep in mind the one-instance-per-registry rule of the gauge ([§6.9](#69-one-metrics-instance-per-registry)).
-
-### 3.5 Logging backend and structured output
+### 3.7 Logging backend and structured output
 
 The module emits through SLF4J's fluent API. Every exchange event carries its data in **two places**, and
 an encoder treats them differently:
@@ -594,7 +729,7 @@ logging:
 
 Key-value pairs and MDC entries become **flat top-level fields**, and values keep their JVM type — which
 is what the type assertion in `ClientLogField` guarantees on the producing side. This is the shape the
-component template in [§3.6](#36-index-mapping-elk) is written for.
+component template in [§3.8](#38-index-mapping-elk) is written for.
 
 | Option | Output | Key-value pairs | MDC | Typed values | Escapes control chars | Use for |
 |---|---|---|---|---|---|---|
@@ -605,7 +740,7 @@ component template in [§3.6](#36-index-mapping-elk) is written for.
 Whatever the option, keep the `eu.inqudium.legatium.webclient.logging` logger at WARN or lower: it
 carries the module's own failure reports.
 
-### 3.6 Index mapping (ELK)
+### 3.8 Index mapping (ELK)
 
 The thirteen `adapter_*` fields have a ready-made Elasticsearch component template in the repository-shared
 [`/docs/elk/`](../../docs/elk/README.md). Compose it into the data-stream mapping **before** the first
@@ -614,7 +749,7 @@ the payload fields' `index: false` deliberately prevents. The MDC-carried keys a
 that template: where they land depends on the host's encoder layout; map them where the encoder
 configuration lives.
 
-### 3.7 Verifying the integration
+### 3.9 Verifying the integration
 
 1. Make any call through a Boot-built `WebClient`:
 
@@ -1036,7 +1171,7 @@ connector gets the caller's very request object.
 
 ### 6.7 Retries yield one line per attempt
 
-The filter sits innermost ([§3.3](#33-filter-order-and-other-filters)), so a retrying filter — or a
+The filter sits innermost ([§3.5](#35-filter-order-and-other-filters)), so a retrying filter — or a
 `retryWhen` around the call, which re-subscribes the whole exchange — invokes it once per attempt. Each
 attempt is a crossing and gets its own line, with the same `adapter_request_id` under a trace (or, on a
 traceless call, the correlation header the first attempt added to the request the retry re-sends).
