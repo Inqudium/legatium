@@ -123,7 +123,7 @@ On the logger `http-adapter-exchange` (configurable) a completed exchange looks 
 appender:
 
 ```
-Client http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
+Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
 ```
 
 The trace suffix appears only when the outgoing request carried a conformant W3C `traceparent` header —
@@ -132,7 +132,7 @@ key-values that a structured encoder turns into fields:
 
 ```json
 {
-  "message": "Client http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
+  "message": "Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
   "level": "INFO",
   "logger": "http-adapter-exchange",
   "adapter_outcome": "success",
@@ -157,7 +157,7 @@ MDC entries land in the document (flat, nested, renamed) is the encoder's decisi
 With the optional arrival line enabled, a second, earlier line precedes it:
 
 ```
-Client http exchange started POST https://api.example.com/things/42 [adapter_request_id=4bf92f…]
+Adapter http exchange started POST https://api.example.com/things/42 [adapter_request_id=4bf92f…]
 ```
 
 The arrival line carries no outcome, status or duration, so a dashboard keyed on `adapter_outcome` still
@@ -689,7 +689,7 @@ rest; which one fits depends on where the output goes.
 ```
 
 ```
-13:54:58.534 INFO  [reactor-http-epoll-2] http-adapter-exchange - Client http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf9… traceId=4bf9… spanId=00f0…] adapter_outcome=success adapter_duration_ms=17 adapter_request_method=POST adapter_response_status_code=200 adapter_url_host=api.example.com adapter_url_path=/things/42 adapter_url_template=https://api.example.com/things/{id} [adapter_method=POST, adapter_request_id=4bf9…, adapter_route=https://api.example.com/things/42, traceId=4bf9…, spanId=00f0…]
+13:54:58.534 INFO  [reactor-http-epoll-2] http-adapter-exchange - Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf9… traceId=4bf9… spanId=00f0…] adapter_outcome=success adapter_duration_ms=17 adapter_request_method=POST adapter_response_status_code=200 adapter_url_host=api.example.com adapter_url_path=/things/42 adapter_url_template=https://api.example.com/things/{id} [adapter_method=POST, adapter_request_id=4bf9…, adapter_route=https://api.example.com/things/42, traceId=4bf9…, spanId=00f0…]
 ```
 
 - `%kvp{NONE}` leaves values bare; `%mdc` prints every entry that is present, so the trace keys appear

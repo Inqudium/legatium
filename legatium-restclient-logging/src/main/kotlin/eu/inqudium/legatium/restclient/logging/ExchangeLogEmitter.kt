@@ -85,7 +85,7 @@ internal class ExchangeLogEmitter(
                 exchangeLog
                     .atInfo()
                     .setMessage(
-                        "Client http exchange started ${exchange.method} ${exchange.target} " +
+                        "Adapter http exchange started ${exchange.method} ${exchange.target} " +
                             "[${MdcKeys.REQUEST_ID}=${exchange.requestId}]",
                     ).addKeyValue(ClientLogField.REQUEST_METHOD, exchange.method)
                     .addKeyValueIfPresent(ClientLogField.URL_HOST, exchange.host)
@@ -241,7 +241,7 @@ internal class ExchangeLogEmitter(
             exchangeLog
                 .atLevel(level)
                 .setMessage(
-                    "Client http exchange ${exchange.method} ${exchange.target} -> ${status ?: "-"} " +
+                    "Adapter http exchange ${exchange.method} ${exchange.target} -> ${status ?: "-"} " +
                         "[${MdcKeys.REQUEST_ID}=${exchange.requestId}$traceSuffix]",
                 ).addKeyValue(ClientLogField.OUTCOME, outcome)
                 .addKeyValue(ClientLogField.DURATION_MS, durationMs)

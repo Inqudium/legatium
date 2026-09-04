@@ -135,7 +135,7 @@ attaches the replacement ([§3.6](docs/GUIDE.md#36-overriding-beans)).
 Example line (on the `http-adapter-exchange` logger):
 
 ```
-Client http exchange GET https://api.example.com/things/42 -> 200 [adapter_request_id=0f7c...]
+Adapter http exchange GET https://api.example.com/things/42 -> 200 [adapter_request_id=0f7c...]
 ```
 
 plus the structured `adapter_*` key-values: the wire names are a contract with the log index, each field

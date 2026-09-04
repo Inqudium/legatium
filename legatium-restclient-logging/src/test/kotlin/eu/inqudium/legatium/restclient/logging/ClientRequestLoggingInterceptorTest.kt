@@ -84,7 +84,7 @@ class ClientRequestLoggingInterceptorTest {
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.INFO)
             assertThat(event.formattedMessage)
-                .isEqualTo("Client http exchange GET https://api.example.com/things -> 200 [adapter_request_id=generated-42]")
+                .isEqualTo("Adapter http exchange GET https://api.example.com/things -> 200 [adapter_request_id=generated-42]")
             assertThat(keyValues(event))
                 .containsEntry("adapter_outcome", "success")
                 .containsEntry("adapter_request_method", "GET")
@@ -133,7 +133,7 @@ class ClientRequestLoggingInterceptorTest {
 
             // Then: host with port, path and query split, the template beside the path
             val event = log.events.single()
-            assertThat(event.formattedMessage).startsWith("Client http exchange GET http://localhost:8081/things/7 -> 200")
+            assertThat(event.formattedMessage).startsWith("Adapter http exchange GET http://localhost:8081/things/7 -> 200")
             assertThat(keyValues(event))
                 .containsEntry("adapter_url_host", "localhost:8081")
                 .containsEntry("adapter_url_path", "/things/7")
@@ -160,7 +160,7 @@ class ClientRequestLoggingInterceptorTest {
             // Then
             val event = log.events.single()
             assertThat(event.formattedMessage)
-                .isEqualTo("Client http exchange GET https://api.example.com/th%0Aings -> 200 [adapter_request_id=generated-42]")
+                .isEqualTo("Adapter http exchange GET https://api.example.com/th%0Aings -> 200 [adapter_request_id=generated-42]")
             assertThat(keyValues(event))
                 .containsEntry("adapter_url_path", "/th%0Aings")
                 .containsEntry("adapter_url_query", "x=%0D%0Ay")
@@ -176,7 +176,7 @@ class ClientRequestLoggingInterceptorTest {
 
             // When/Then: the wire request line asks for "/", and so does the log
             val event = log.events.single()
-            assertThat(event.formattedMessage).startsWith("Client http exchange GET https://api.example.com/ -> 200")
+            assertThat(event.formattedMessage).startsWith("Adapter http exchange GET https://api.example.com/ -> 200")
             assertThat(keyValues(event)).containsEntry("adapter_url_path", "/")
         }
 
@@ -467,7 +467,7 @@ class ClientRequestLoggingInterceptorTest {
                 val breadcrumb = internal.events.single()
                 assertThat(breadcrumb.level).isEqualTo(Level.WARN)
                 assertThat(breadcrumb.formattedMessage)
-                    .isEqualTo("Client http exchange failed: GET https://api.example.com/things - java.io.IOException: boom [adapter_request_id=generated-42]")
+                    .isEqualTo("Adapter http exchange failed: GET https://api.example.com/things - java.io.IOException: boom [adapter_request_id=generated-42]")
                 assertThat(log.events).hasSize(1)
             } finally {
                 internal.detach()
@@ -557,7 +557,7 @@ class ClientRequestLoggingInterceptorTest {
             // Then: the arrival line was already visible during the call; only the completion line
             //   carries the outcome; the arrival line carries the identity in its MDC
             assertThat(eventsAtCallTime)
-                .containsExactly("Client http exchange started POST https://api.example.com/things [adapter_request_id=generated-42]")
+                .containsExactly("Adapter http exchange started POST https://api.example.com/things [adapter_request_id=generated-42]")
             assertThat(log.events).hasSize(2)
             assertThat(keyValues(log.events.first())).doesNotContainKey("adapter_outcome").containsEntry("adapter_url_host", "api.example.com")
             assertThat(log.events.first().mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42")

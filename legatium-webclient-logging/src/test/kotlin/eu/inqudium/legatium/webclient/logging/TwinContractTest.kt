@@ -80,8 +80,8 @@ class TwinContractTest {
             // Then
             assertThat(log.events.map { it.formattedMessage })
                 .containsExactly(
-                    "Client http exchange started GET https://api.example.com/things [adapter_request_id=generated-42]",
-                    "Client http exchange GET https://api.example.com/things -> 200 [adapter_request_id=generated-42]",
+                    "Adapter http exchange started GET https://api.example.com/things [adapter_request_id=generated-42]",
+                    "Adapter http exchange GET https://api.example.com/things -> 200 [adapter_request_id=generated-42]",
                 )
         } finally {
             log.detach()

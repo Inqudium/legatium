@@ -98,7 +98,7 @@ class ClientRequestLoggingInterceptorIntegrationTest {
         val event = log.events.single()
         assertThat(event.level).isEqualTo(Level.INFO)
         assertThat(event.formattedMessage)
-            .isEqualTo("Client http exchange POST ${peer.baseUrl}/things/7 -> 200 [adapter_request_id=${received.header("X-Correlation-Id")}]")
+            .isEqualTo("Adapter http exchange POST ${peer.baseUrl}/things/7 -> 200 [adapter_request_id=${received.header("X-Correlation-Id")}]")
         assertThat(keyValues(event))
             .containsEntry("adapter_outcome", "success")
             .containsEntry("adapter_request_method", "POST")
@@ -157,7 +157,7 @@ class ClientRequestLoggingInterceptorIntegrationTest {
         assertThat(thrown).isInstanceOf(ResourceAccessException::class.java)
         val event = log.events.single()
         assertThat(event.level).isEqualTo(Level.ERROR)
-        assertThat(event.formattedMessage).startsWith("Client http exchange GET http://127.0.0.1:1/things/1 -> - [")
+        assertThat(event.formattedMessage).startsWith("Adapter http exchange GET http://127.0.0.1:1/things/1 -> - [")
         assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").doesNotContainKey("adapter_response_status_code")
         assertThat(event.throwableProxy).isNotNull()
     }

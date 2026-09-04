@@ -156,7 +156,7 @@ On the `http-adapter-exchange` logger a completed exchange is one event. In a pl
 the message shows; it repeats the gist inline for exactly that case:
 
 ```
-Client http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
+Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
 ```
 
 With Spring Boot's structured logging (`logging.structured.format.console=ecs`) the same event is one
@@ -169,7 +169,7 @@ fields next to the encoder's own envelope:
   "log": { "level": "INFO", "logger": "http-adapter-exchange" },
   "process": { "pid": 4711, "thread": { "name": "reactor-http-epoll-2" } },
   "service": { "name": "things-service" },
-  "message": "Client http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
+  "message": "Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
   "adapter_request_id": "4bf92f3577b34da6a3ce929d0e0e4736",
   "adapter_method": "POST",
   "adapter_route": "https://api.example.com/things/42",

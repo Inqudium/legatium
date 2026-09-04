@@ -94,7 +94,7 @@ class ClientRequestLoggingFilterTest {
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.INFO)
             assertThat(event.formattedMessage)
-                .isEqualTo("Client http exchange GET https://api.example.com/things -> 200 [adapter_request_id=generated-42]")
+                .isEqualTo("Adapter http exchange GET https://api.example.com/things -> 200 [adapter_request_id=generated-42]")
             assertThat(keyValues(event))
                 .containsEntry("adapter_outcome", "success")
                 .containsEntry("adapter_request_method", "GET")
@@ -141,7 +141,7 @@ class ClientRequestLoggingFilterTest {
 
             // Then
             val event = log.events.single()
-            assertThat(event.formattedMessage).startsWith("Client http exchange GET http://localhost:8081/things/7 -> 200")
+            assertThat(event.formattedMessage).startsWith("Adapter http exchange GET http://localhost:8081/things/7 -> 200")
             assertThat(keyValues(event))
                 .containsEntry("adapter_url_host", "localhost:8081")
                 .containsEntry("adapter_url_path", "/things/7")
@@ -162,7 +162,7 @@ class ClientRequestLoggingFilterTest {
             // When/Then
             val event = log.events.single()
             assertThat(event.formattedMessage)
-                .isEqualTo("Client http exchange GET https://api.example.com/th%0Aings -> 200 [adapter_request_id=generated-42]")
+                .isEqualTo("Adapter http exchange GET https://api.example.com/th%0Aings -> 200 [adapter_request_id=generated-42]")
             assertThat(keyValues(event)).containsEntry("adapter_url_path", "/th%0Aings").containsEntry("adapter_url_query", "x=%0D%0Ay")
             assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.ROUTE, "https://api.example.com/th%0Aings")
             assertThat(event.formattedMessage + keyValues(event).values.joinToString() + event.mdcPropertyMap.values.joinToString())
@@ -521,7 +521,7 @@ class ClientRequestLoggingFilterTest {
 
             // Then
             assertThat(eventsAtCallTime)
-                .containsExactly("Client http exchange started POST https://api.example.com/things [adapter_request_id=generated-42]")
+                .containsExactly("Adapter http exchange started POST https://api.example.com/things [adapter_request_id=generated-42]")
             assertThat(log.events).hasSize(2)
             assertThat(keyValues(log.events.first())).doesNotContainKey("adapter_outcome")
             assertThat(log.events.first().mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42")

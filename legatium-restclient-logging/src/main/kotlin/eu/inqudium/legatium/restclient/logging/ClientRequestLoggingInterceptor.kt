@@ -198,7 +198,7 @@ class ClientRequestLoggingInterceptor
                 exchange.failure = e
                 reportQuietly {
                     internalLog.warn(
-                        "Client http exchange failed: {} {} - {} [{}={}]",
+                        "Adapter http exchange failed: {} {} - {} [{}={}]",
                         exchange.method,
                         exchange.target,
                         e.toString(),
