@@ -47,8 +47,12 @@ sibling project [Limesium](https://github.com/Inqudium/limesium) records the
 
 ## Quick start
 
-Add the module matching your client — the interceptor or filter attaches itself
-to every client Boot builds:
+[![legatium-restclient-logging on Maven Central](https://img.shields.io/maven-central/v/eu.inqudium/legatium-restclient-logging.svg?label=legatium-restclient-logging)](https://central.sonatype.com/artifact/eu.inqudium/legatium-restclient-logging)
+[![legatium-webclient-logging on Maven Central](https://img.shields.io/maven-central/v/eu.inqudium/legatium-webclient-logging.svg?label=legatium-webclient-logging)](https://central.sonatype.com/artifact/eu.inqudium/legatium-webclient-logging)
+
+The badges show the current release on Maven Central — use that version where the
+snippets say `...`. Add the module matching your client — the interceptor or filter
+attaches itself to every client Boot builds:
 
 ```xml
 <dependency>
