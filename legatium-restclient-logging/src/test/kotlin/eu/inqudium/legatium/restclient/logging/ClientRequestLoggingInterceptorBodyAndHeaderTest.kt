@@ -1,5 +1,6 @@
 package eu.inqudium.legatium.restclient.logging
 
+import ch.qos.logback.classic.Level
 import eu.inqudium.legatium.common.BodyLogMode
 import eu.inqudium.legatium.common.BodyReadState
 import eu.inqudium.legatium.common.ClientLoggingMetrics
@@ -19,8 +20,13 @@ import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.client.ClientHttpRequestExecution
+import org.springframework.http.client.ClientHttpRequestFactory
+import org.springframework.mock.http.client.MockClientHttpRequest
 import org.springframework.mock.http.client.MockClientHttpResponse
+import org.springframework.web.client.RestClient
+import org.springframework.web.client.RestClientException
 import java.io.IOException
+import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicLong
 
@@ -437,6 +443,81 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
     inner class `Outcome-gated bodies` {
         private val onFailure = base.copy(logRequestBody = BodyLogMode.ON_FAILURE, logResponseBody = BodyLogMode.ON_FAILURE)
 
+        /** A real RestClient over [interceptor] against an engine that answers 200 with a body Jackson cannot map to [Dto]. */
+        private fun clientAnsweringUnmappableJson(interceptor: ClientRequestLoggingInterceptor): RestClient {
+            val engine =
+                ClientHttpRequestFactory { uri: URI, method ->
+                    MockClientHttpRequest(method, uri).apply {
+                        setResponse(
+                            MockClientHttpResponse(UNMAPPABLE_JSON.toByteArray(StandardCharsets.UTF_8), HttpStatus.OK).apply {
+                                headers.contentType = MediaType.APPLICATION_JSON
+                            },
+                        )
+                    }
+                }
+            return RestClient
+                .builder()
+                .requestFactory(engine)
+                .requestInterceptor(interceptor)
+                .build()
+        }
+
+        @Test
+        fun `should log a decoding failure of the application as a successful exchange without bodies in on-failure mode`() {
+            // What is tested: the boundary of the outcome gate - a 200 whose body the client's Jackson
+            //   converter cannot map to the requested type. The converter fails ABOVE the interceptor,
+            //   after every byte flowed through the tee; the exchange itself saw a clean stream.
+            // Success criteria: the caller gets RestClientException; the single event is INFO with
+            //   outcome success, status 200 and NO body fields - on-failure withholds them.
+            // Why it matters: this is the one case where the line's outcome and the caller's outcome
+            //   differ, decided and documented (guide §6.3, ADR-0006): the module observes the wire, not
+            //   the application's decoding, and there is no seam through which a converter failure could
+            //   reach the interceptor. Pinned so a change here is a decision, not an accident.
+            // Given/When
+            val thrown =
+                catchThrowable {
+                    clientAnsweringUnmappableJson(interceptorWith(onFailure))
+                        .get()
+                        .uri("https://peer.example/things/1")
+                        .retrieve()
+                        .body(Dto::class.java)
+                }
+
+            // Then
+            assertThat(thrown).isInstanceOf(RestClientException::class.java)
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.INFO)
+            assertThat(keyValues(event))
+                .containsEntry("adapter_outcome", "success")
+                .containsEntry("adapter_response_status_code", 200)
+                .doesNotContainKeys("adapter_request_body", "adapter_response_body")
+        }
+
+        @Test
+        fun `should log the raw body the converter read when the application's decoding fails in always mode`() {
+            // What is tested: the same decoding failure with log-response-body=always - the tee logged
+            //   what the converter read before it gave up.
+            // Success criteria: the caller gets RestClientException; the single event carries the raw
+            //   JSON as adapter_response_body, outcome success.
+            // Why it matters: `always` is the documented way to see what a peer really sent when the
+            //   application cannot make sense of it - the body must be the bytes, not the failure.
+            // Given/When
+            val thrown =
+                catchThrowable {
+                    clientAnsweringUnmappableJson(interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS)))
+                        .get()
+                        .uri("https://peer.example/things/1")
+                        .retrieve()
+                        .body(Dto::class.java)
+                }
+
+            // Then
+            assertThat(thrown).isInstanceOf(RestClientException::class.java)
+            assertThat(keyValues(log.events.single()))
+                .containsEntry("adapter_outcome", "success")
+                .containsEntry("adapter_response_body", UNMAPPABLE_JSON)
+        }
+
         @Test
         fun `should withhold both bodies from a successful exchange in on-failure mode`() {
             // What is tested: the volume switch - on-failure captures (the outcome is unknown while the
@@ -538,5 +619,14 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             assertThat(registry.get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).summary().totalAmount()).isEqualTo(4.0)
             assertThat(keyValues(log.events.single())).doesNotContainKey("adapter_request_body")
         }
+    }
+
+    /** The type the application asks for; the peer's answer has a string where the int belongs. */
+    data class Dto(
+        val id: Int,
+    )
+
+    private companion object {
+        const val UNMAPPABLE_JSON = """{"id": "not-a-number", "trailing": """
     }
 }

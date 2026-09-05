@@ -56,3 +56,14 @@ way.
   `never`; the properties' type changes from `Boolean` to `BodyLogMode`.
   The reference configuration, the lockstep tests and both twins' guides
   carry the new vocabulary.
+
+## Amendment (2026-09-05): the gate follows the exchange's outcome, not the caller's
+
+A `200` whose body the application's Jackson converter or decoder cannot map to the requested type is a
+failure for the caller and a `success` for the exchange: every byte flowed, the status is final, and the
+decoding happens above the interceptor resp. downstream of the body tee, where neither client offers a
+seam that could inform the module. `on-failure` therefore withholds the bodies of exactly the answer an
+operator would want to see. This is accepted as the boundary of the design - the module observes the
+wire - and documented in the guide (§6.3): `always` is the way to capture such a peer's answers during
+an analysis. Both twins pin the behaviour with a test, so a future change is a decision.
+

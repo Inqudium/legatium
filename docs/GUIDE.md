@@ -322,6 +322,16 @@ outcome vocabulary ([§7.3](#73-levels-and-outcomes)) by one status class: a `4x
 error is exactly what the body explains; a `5xx` is `failure` and logs as well. A slow but healthy call
 stays `success` and logs no bodies.
 
+**A decoding failure is the application's, not the exchange's.** Both clients decode the body *after*
+it flowed: the `RestClient` converters run above the interceptor, the `WebClient` decoders downstream of
+the body tee. When Jackson cannot map a `200` answer to the requested type, the exchange has already
+seen a clean stream, and the line says `success` with status `200` while the caller receives a
+`RestClientException` resp. `DecodingException`. Neither client offers a seam through which that failure
+could reach the module, so this is the one case where the line's outcome and the caller's outcome differ
+- and `on-failure` therefore logs **no** body for it. To see what a peer really sends when the
+application cannot make sense of it, set `log-response-body: always` for the duration of the analysis;
+the field then carries the raw bytes the converter read. Pinned by a test in each twin.
+
 Rules that hold for every combination:
 
 - The captures are passive: bytes are counted and (up to the limit) copied as they flow — the request

@@ -1,5 +1,6 @@
 package eu.inqudium.legatium.webclient.logging
 
+import ch.qos.logback.classic.Level
 import eu.inqudium.legatium.common.BodyLogMode
 import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.springframework.core.codec.DecodingException
 import org.springframework.core.io.buffer.DataBuffer
 import org.springframework.core.io.buffer.DefaultDataBufferFactory
 import org.springframework.http.HttpMethod
@@ -25,6 +27,7 @@ import org.springframework.web.reactive.function.client.ClientRequest
 import org.springframework.web.reactive.function.client.ClientResponse
 import org.springframework.web.reactive.function.client.ExchangeFunction
 import org.springframework.web.reactive.function.client.ExchangeStrategies
+import org.springframework.web.reactive.function.client.WebClient
 import reactor.core.Exceptions
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
@@ -445,6 +448,79 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             body: String,
         ): ClientResponse = ClientResponse.create(status).body(body).build()
 
+        /** A real WebClient over [filter] against a connector that answers 200 with a body Jackson cannot map to [Dto]. */
+        private fun clientAnsweringUnmappableJson(filter: ClientRequestLoggingFilter): WebClient =
+            WebClient
+                .builder()
+                .exchangeFunction {
+                    Mono.just(
+                        ClientResponse
+                            .create(HttpStatus.OK)
+                            .header("Content-Type", "application/json")
+                            .body(UNMAPPABLE_JSON)
+                            .build(),
+                    )
+                }.filter(filter)
+                .build()
+
+        @Test
+        fun `should log a decoding failure of the application as a successful exchange without bodies in on-failure mode`() {
+            // What is tested: the boundary of the outcome gate - a 200 whose body the client's Jackson
+            //   decoder cannot map to the requested type. The decoder fails DOWNSTREAM of the body tee,
+            //   after the body flux completed normally; the exchange itself saw a clean completion.
+            // Success criteria: the caller gets DecodingException; the single event is INFO with outcome
+            //   success, status 200 and NO body fields - on-failure withholds them.
+            // Why it matters: this is the one case where the line's outcome and the caller's outcome
+            //   differ, decided and documented (guide §6.3, ADR-0006): the module observes the wire, not
+            //   the application's decoding, and no signal of the decoder reaches the filter. Pinned so a
+            //   change here is a decision, not an accident.
+            // Given/When
+            val thrown =
+                catchThrowable {
+                    clientAnsweringUnmappableJson(filterWith(onFailure))
+                        .get()
+                        .uri("https://peer.example/things/1")
+                        .retrieve()
+                        .bodyToMono(Dto::class.java)
+                        .block()
+                }
+
+            // Then
+            assertThat(thrown).isInstanceOf(DecodingException::class.java)
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.INFO)
+            assertThat(keyValues(event))
+                .containsEntry("adapter_outcome", "success")
+                .containsEntry("adapter_response_status_code", 200)
+                .doesNotContainKeys("adapter_request_body", "adapter_response_body")
+        }
+
+        @Test
+        fun `should log the raw body the decoder read when the application's decoding fails in always mode`() {
+            // What is tested: the same decoding failure with log-response-body=always - the tee logged
+            //   the buffers the decoder consumed before it gave up.
+            // Success criteria: the caller gets DecodingException; the single event carries the raw JSON
+            //   as adapter_response_body, outcome success.
+            // Why it matters: `always` is the documented way to see what a peer really sent when the
+            //   application cannot make sense of it - the body must be the bytes, not the failure.
+            // Given/When
+            val thrown =
+                catchThrowable {
+                    clientAnsweringUnmappableJson(filterWith(base.copy(logResponseBody = BodyLogMode.ALWAYS)))
+                        .get()
+                        .uri("https://peer.example/things/1")
+                        .retrieve()
+                        .bodyToMono(Dto::class.java)
+                        .block()
+                }
+
+            // Then
+            assertThat(thrown).isInstanceOf(DecodingException::class.java)
+            assertThat(keyValues(log.events.single()))
+                .containsEntry("adapter_outcome", "success")
+                .containsEntry("adapter_response_body", UNMAPPABLE_JSON)
+        }
+
         @Test
         fun `should withhold both bodies from a successful exchange in on-failure mode`() {
             // What is tested: the volume switch - on-failure tees the request body (the outcome is unknown
@@ -547,4 +623,13 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
     }
 
     private fun buffer(text: String): DataBuffer = DefaultDataBufferFactory.sharedInstance.wrap(text.toByteArray())
+
+    /** The type the application asks for; the peer's answer has a string where the int belongs. */
+    data class Dto(
+        val id: Int,
+    )
+
+    private companion object {
+        const val UNMAPPABLE_JSON = """{"id": "not-a-number", "trailing": """
+    }
 }
