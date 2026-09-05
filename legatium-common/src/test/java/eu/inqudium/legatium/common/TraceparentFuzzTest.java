@@ -23,7 +23,7 @@ class TraceparentFuzzTest {
     private static final String HEX = "0123456789abcdef";
 
     @FuzzTest(maxDuration = "10m")
-    void parserUpholdsItsContract(FuzzedDataProvider data) {
+    void parser_upholds_its_contract(FuzzedDataProvider data) {
         // What is tested: Traceparent.parse against arbitrary input - the negative oracle (never throws,
         //   accepts only well-formed lowercase-hex ids of fixed length, neither all zeros) and the positive
         //   oracle (a structurally valid version-00 header built from fuzzed hex always parses).

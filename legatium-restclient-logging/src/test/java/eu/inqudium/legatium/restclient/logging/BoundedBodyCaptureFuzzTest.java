@@ -25,7 +25,7 @@ class BoundedBodyCaptureFuzzTest {
     };
 
     @FuzzTest(maxDuration = "10m")
-    void captureUpholdsItsContract(FuzzedDataProvider data) {
+    void capture_upholds_its_contract(FuzzedDataProvider data) {
         // What is tested: BoundedBodyCapture under a random sequence of single-byte, array and ranged
         //   writes with a random limit and charset - exact byte total, null loggedValue() only for a
         //   zero-byte body, truncation announced exactly when more bytes flowed than the limit holds.
