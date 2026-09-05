@@ -1,13 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 160" width="640" height="160" role="img" aria-label="Legatium — one structured adapter_* line per outbound HTTP exchange">
-  <title>Legatium</title>
-  <rect width="640" height="160" rx="16" fill="#4527A0"/>
-  <g transform="translate(28 32)">
-    <rect x="8" y="10" width="6" height="76" rx="2" fill="#FFB300"/>
-    <path d="M24 48 H70" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"/>
-    <path d="M60 30 L82 48 L60 66" fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="36" cy="48" r="6" fill="#FFB300"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 168" role="img" aria-label="Legatium — one structured adapter_* line per outbound HTTP exchange">
+  <style>
+    :root { --ink:#26221c; --road:#2c5aa0; --muted:#8a6f3c; }
+    @media (prefers-color-scheme: dark) { :root { --ink:#e6e1d6; --road:#4f7fd1; --muted:#b09763; } }
+    .serif { font-family: Georgia, 'Iowan Old Style', 'Times New Roman', serif; fill: var(--ink); }
+    .tagline { font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace; fill: var(--muted); }
+  </style>
+
+  <!-- the envoy's road: starts inside the tile and leaves the banner to the right - outbound -->
+  <circle cx="62" cy="130.5" r="6" fill="var(--road)"/>
+  <rect x="62" y="128" width="658" height="5" fill="var(--road)"/>
+  <path d="M700 118 L712 130.5 L700 143" fill="none" stroke="var(--road)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- element tile (symbol only; the banner road is its road) -->
+  <g transform="translate(20 35.5)">
+    <rect x="10" y="10" width="108" height="108" rx="10" fill="none" stroke="var(--ink)" stroke-width="6"/>
+    <text x="26" y="38" class="serif" font-size="16" font-weight="600">1</text>
+    <text x="64" y="78" class="serif" font-size="48" font-weight="700" text-anchor="middle">Lg</text>
   </g>
-  <text x="150" y="78" font-family="Georgia, 'Times New Roman', serif" font-size="56" font-weight="bold" fill="#FFFFFF">Legatium</text>
-  <text x="152" y="112" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#EDE7F6">one structured adapter_* line per outbound HTTP exchange</text>
-  <text x="152" y="136" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#B39DDB">the envoy's report — the outbound twin of Limesium</text>
+
+  <!-- wordmark: Roman spaced capitals, like the sibling's -->
+  <text x="190" y="98" class="serif" font-size="58" font-weight="700" letter-spacing="7">LEGATIUM</text>
+
+  <!-- tagline as a log line -->
+  <text x="193" y="121" class="tagline" font-size="14.5">one structured adapter_* line per outbound HTTP exchange</text>
 </svg>
