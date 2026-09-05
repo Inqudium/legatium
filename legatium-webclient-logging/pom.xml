@@ -12,6 +12,8 @@
     <artifactId>legatium-webclient-logging</artifactId>
     <name>legatium-webclient-logging</name>
     <description>WebClient twin of legatium-restclient-logging: one structured adapter_* line per outbound HTTP exchange, identical fields and configuration</description>
+    <!-- Explicit, so the published (dependency-reduced) POM carries the homepage itself. -->
+    <url>https://github.com/Inqudium/legatium</url>
 
     <dependencies>
         <!-- The shared twin code (ADR-0003). Inlined into this jar by the Shade plugin at package

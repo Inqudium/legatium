@@ -12,6 +12,8 @@
     <artifactId>legatium-restclient-logging</artifactId>
     <name>legatium-restclient-logging</name>
     <description>Auto-configured RestClient/RestTemplate interceptor that logs one structured line per outbound HTTP exchange</description>
+    <!-- Explicit, so the published (dependency-reduced) POM carries the homepage itself. -->
+    <url>https://github.com/Inqudium/legatium</url>
 
     <dependencies>
         <!-- The shared twin code (ADR-0003). Inlined into this jar by the Shade plugin at package
