@@ -33,8 +33,11 @@ theme:
 # Internal analysis reports - not site pages (tabellarium template pattern).
 exclude_docs: |
   # The shared guide's SOURCE: it links to the module guides and READMEs relatively, which
-  # only the generated copy under guides/ (links rewritten) can resolve on the site.
-  GUIDE.md
+  # only the generated copy under guides/ (links rewritten) can resolve on the site. ANCHORED
+  # with the leading slash: the patterns are gitignore-style, and a bare `GUIDE.md` also
+  # excludes every generated guides/**/GUIDE.md - MkDocs then drops the nav entries with an
+  # INFO line that --strict does not fail on, and the guide URLs 404 (2026-09-04/05).
+  /GUIDE.md
   assessment/
 
 nav:

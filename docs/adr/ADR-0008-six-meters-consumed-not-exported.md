@@ -29,7 +29,7 @@ no-ops, not a private registry.**
   time: the identity propagation of ADR-0002 (`adapter.logging.correlation.id`),
   and the bytes and consumption of bodies the log field deliberately
   truncates (`adapter.*.body.size`, `adapter.response.body.read`, both
-  opt-in). [Legatium guide §7.5](../GUIDE.md#75-reading-the-meters-together)
+  opt-in). [Legatium guide §7.5](https://inqudium.github.io/legatium/guides/GUIDE/#75-reading-the-meters-together)
   lists the blind spot each one closes; a meter without such a row in that
   table does not belong here.
 - **Why these six, and not fewer.** They mirror limesium's `endpoint.*`

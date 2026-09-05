@@ -76,6 +76,15 @@ jobs:
       - name: Build site
         run: mkdocs build --strict
 
+      # --strict does not fail when a nav entry points at an EXCLUDED file - MkDocs only logs an
+      # INFO line and drops the page, which is how the guide URLs 404ed for a day while every run
+      # was green (an unanchored exclude_docs pattern). The generated pages are asserted by path.
+      - name: Assert the generated pages made it into the site
+        run: |
+          for page in guides/GUIDE guides/legatium-restclient-logging/GUIDE guides/legatium-webclient-logging/GUIDE tests/test-evidence; do
+            test -f "site/$page/index.html" || { echo "::error::missing page: $page"; exit 1; }
+          done
+
       # Per module: the Dokka Maven plugin has no aggregate mode, so each
       # module renders its own API reference under /api/<module>/.
       - name: Build API reference (Dokka)
