@@ -10,7 +10,9 @@ import javax.crypto.spec.SecretKeySpec
  * Redacts the VALUE of a logged header - every one, by default (ADR-0005), unless a section's
  * [HeaderLogProperties.unmasked] allows the name in plaintext - before it reaches the log line. The
  * rendering is a stable PSEUDONYM, not anonymisation: equal values stay recognisable as equal, which is
- * the point (correlation) and the limit (a keyed masker is what stops a reader from confirming a guess). Injectable for the same reason as [NanoTimeSource] and [CorrelationIdGenerator]: the
+ * the point (correlation) and the limit (a keyed masker is what stops a reader from confirming a guess).
+ *
+ * Injectable for the same reason as [NanoTimeSource] and [CorrelationIdGenerator]: the
  * fingerprint's shape is a policy the host may own - a keyed HMAC for a compliance regime that forbids
  * unkeyed hashes, a fixed `***` for a host that wants no correlation at all - and both twins take the
  * bean through their auto-configuration (`@ConditionalOnMissingBean`), so one host bean masks the
@@ -26,15 +28,17 @@ import javax.crypto.spec.SecretKeySpec
  * that trades it away does so knowingly.
  */
 fun interface HeaderValueMasker {
+    /** The rendering that replaces [value] on the log line; MUST NOT contain the plaintext. */
     fun mask(value: String): String
 
     companion object {
         /**
          * The production default: the value's character length followed by the first 64 bits of its
-         * SHA-256 digest (UTF-8) in lowercase hex, e.g. `18:930bbdc51b6aed5c` - the same fingerprint in
-         * both twin modules, and the same scheme the sibling project limesium uses on the inbound side,
-         * so a masked token correlates across the server line and the client line. STABLE: identical
-         * values render identically; a 64-bit cryptographic prefix makes accidental collisions negligible.
+         * SHA-256 digest (UTF-8) in lowercase hex: `secret-token` renders as `12:930bbdc51b6aed5c`. The
+         * same fingerprint in both twin modules and in the sibling project limesium's inbound line - both
+         * repositories pin that very literal in their `HeaderValueMasker` tests - so a masked token
+         * correlates across the server line and the client line. STABLE: identical values render
+         * identically; a 64-bit cryptographic prefix makes accidental collisions negligible.
          *
          * Privacy model: the fingerprint is unsalted and unkeyed - it prevents PLAINTEXT exposure, not
          * offline guessing. A log reader with a candidate list (low-entropy values: usernames, tenant

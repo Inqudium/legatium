@@ -29,9 +29,13 @@ package eu.inqudium.legatium.common
  * [unmasked] does not include it. All matching is case-insensitive, as header names are.
  */
 data class HeaderLogProperties(
+    /** The headers to log; empty (the default) logs NONE, the entry `*` logs every header the message carries. */
     val includes: List<String> = emptyList(),
+    /** Removed from the included set - an exclude always wins over an include. No `*` (rejected at binding: an empty [includes] already logs nothing). */
     val excludes: List<String> = emptyList(),
+    /** Logged headers whose VALUE the [HeaderValueMasker] renders; the default `["*"]` masks every logged header, an empty list switches masking off visibly. */
     val masked: List<String> = listOf(WILDCARD),
+    /** Logged headers that appear in PLAINTEXT although [masked] covers them - the allowlist of harmless names; always wins over [masked]. No `*` (rejected at binding). */
     val unmasked: List<String> = emptyList(),
 ) {
     init {

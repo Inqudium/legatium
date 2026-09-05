@@ -10,6 +10,7 @@ package eu.inqudium.legatium.common
  * backend, which keeps the two time domains separate by construction.
  */
 fun interface NanoTimeSource {
+    /** Monotonic nanoseconds with an arbitrary origin; only differences are meaningful. */
     fun nanoTime(): Long
 
     companion object {

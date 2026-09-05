@@ -38,14 +38,17 @@ import org.springframework.core.annotation.Order
 @ConditionalOnProperty(prefix = "adapter-logging", name = ["enabled"], havingValue = "true", matchIfMissing = true)
 @EnableConfigurationProperties(ClientLoggingProperties::class)
 class ClientLoggingAutoConfiguration {
+    /** The system's monotonic clock, unless the host pins a time source. */
     @Bean
     @ConditionalOnMissingBean
     fun clientLoggingNanoTimeSource(): NanoTimeSource = NanoTimeSource.SYSTEM
 
+    /** The counting default of ADR-0004, unless the host pins a generator. */
     @Bean
     @ConditionalOnMissingBean
     fun clientLoggingCorrelationIdGenerator(): CorrelationIdGenerator = CorrelationIdGenerator.DEFAULT
 
+    /** The fingerprint the `masking-key` property selects, unless the host pins a masker. */
     @Bean
     @ConditionalOnMissingBean
     fun clientLoggingHeaderValueMasker(properties: ClientLoggingProperties): HeaderValueMasker = HeaderValueMasker.forKey(properties.maskingKey)
@@ -72,7 +75,7 @@ class ClientLoggingAutoConfiguration {
      * Attaches the interceptor to every `RestClient.Builder` Boot hands out (and to every HTTP service
      * client group built from one). Ordered LATE among the customizers, so the interceptor is appended
      * behind the interceptors of earlier customizers and runs INSIDE them - closest to the wire, once
-     * per attempt of an outer retry (see the interceptor's class documentation).
+     * per attempt of an outer retry ([ClientRequestLoggingInterceptor]).
      */
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(RestClientCustomizer::class)

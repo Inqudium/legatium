@@ -5,9 +5,9 @@ import kotlin.reflect.KClass
 
 /**
  * The structured log fields of an OUTBOUND HTTP exchange: their wire names, and the one rendering each
- * name is allowed to carry. ONE enum for both twins (ADR-0003): the family is a cross-stack contract,
- * and the twins' copies were byte-identical - the RestClient interceptor and the WebClient filter emit
- * the same thirteen fields under the same names with the same shapes; only the VALUE vocabulary of
+ * name is allowed to carry. ONE enum for both twins (ADR-0003): the family is a cross-stack contract -
+ * the RestClient interceptor and the WebClient filter emit the same thirteen fields under the same
+ * names with the same shapes; only the VALUE vocabulary of
  * [OUTCOME] is wider on the reactive stack (`cancelled`), which is a property of the value, not of the
  * field.
  *
@@ -135,8 +135,8 @@ internal enum class ClientLogField(
     /**
      * Whether [value] has the exact JVM type this field puts on the wire - the shape the index template
      * maps. Consulted by `ClientLogFieldTest` for the lockstep pin, not at emission: the emitters are the
-     * only callers of [addKeyValue] and pass values of the declared types, so a runtime gate over the
-     * module's own code guarded a case the tests already exclude (architecture review of 2026-09-04).
+     * only callers of [addKeyValue] and pass values of the declared types, so a runtime gate would guard
+     * a case the lockstep test already excludes.
      */
     fun accepts(value: Any?): Boolean = value != null && type.isInstance(value)
 }

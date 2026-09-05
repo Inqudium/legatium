@@ -27,7 +27,7 @@ import kotlin.concurrent.withLock
  *
  * With `maxBytes = 0` the capture runs in COUNT-ONLY mode: nothing is buffered, [totalBytes] still
  * counts every byte - the mode the body-size metrics use when body logging is off. The tee is fed from
- * mapped `DataBuffer`s (see `CapturingDecorators.kt`).
+ * mapped `DataBuffer`s ([tee]).
  *
  * Besides the bytes, the response capture records HOW FAR the application consumed the body
  * ([readState]): the tee mirrors consumption, not transmission, so a response body the application

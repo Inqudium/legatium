@@ -9,6 +9,7 @@ import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.NanoTimeSource
 import eu.inqudium.legatium.common.RequestTarget
+import eu.inqudium.legatium.common.declaredCharsetOrUtf8
 import eu.inqudium.legatium.common.reportQuietly
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
@@ -35,7 +36,7 @@ import reactor.core.publisher.Mono
  * - **No call-wide THREAD-LOCAL MDC:** the call hops event-loop threads; the exchange identity rides
  *   the emission's `MdcScope` (and the message inline). Handler-side propagation of the identity into
  *   reactive operators is the host's context-propagation business, not this filter's.
- * - **Emission point:** the response BODY's terminal signal instead of a `close()` - see below.
+ * - **Emission point:** the response BODY's terminal signal instead of a `close()` - the next section.
  *
  * ## Emission point: the body's terminal signal
  *
@@ -76,9 +77,13 @@ import reactor.core.publisher.Mono
 class ClientRequestLoggingFilter
     @JvmOverloads
     constructor(
+        /** The bound `adapter-logging.*` configuration; also decides the default [masker]. */
         private val properties: ClientLoggingProperties,
+        /** Monotonic time for `adapter_duration_ms`; tests pin it, production passes [NanoTimeSource.SYSTEM]. */
         private val nanoTime: NanoTimeSource,
+        /** Supplies the id a TRACELESS call sends (ADR-0002); production passes [CorrelationIdGenerator.DEFAULT]. */
         private val correlationIds: CorrelationIdGenerator,
+        /** The host's registry the meters are consumed from; filters on one registry share one metrics owner (see below). */
         meterRegistry: MeterRegistry,
         /**
          * How masked header values render. Defaults to the masker the properties' `masking-key` selects
@@ -121,12 +126,12 @@ class ClientRequestLoggingFilter
                         // error signal, so doOnError/doFinally complete the exchange.
                         Mono.error(e)
                     } catch (t: Throwable) {
-                        // An Error is outside the fail-open promise (see FailOpenDiagnostics) and, being
-                        // fatal to Reactor, bypasses every signal hook - the gauge still closes.
+                        // An Error is outside the fail-open promise ([failOpen]) and, being fatal to
+                        // Reactor, bypasses every signal hook - the gauge still closes.
                         abandonExchange(exchange, t)
                         throw t
                     }
-                // The response Mono's own operator (see ObservedResponse): records and wraps the response,
+                // The response Mono's own operator ([ObservedResponse]): records and wraps the response,
                 // moves the state through DELIVERING to RESPONDED only once the downstream has TAKEN the
                 // response, and completes the exchange itself for an error, an empty completion or a
                 // cancel by the caller before the body owns it.
@@ -254,8 +259,7 @@ class ClientRequestLoggingFilter
         private fun wireExchange(request: ClientRequest): Wiring {
             val headers = request.headers()
             val identity = ClientIdentity.resolve(headers, properties, correlationIds)
-            // Guarded inside the metrics: a throwing host counter must not turn the call into an unlogged
-            // pass-through.
+            // Guarded in [ClientLoggingMetrics.requestId]: a throwing host counter never fails the call.
             metrics.requestId(identity.source)
             val captures = newCaptures()
             // The request the connector gets: the caller's, plus the correlation header on a traceless call
@@ -328,8 +332,7 @@ class ClientRequestLoggingFilter
             /** The cause attached to an exchange whose connector completed empty - WebClient's own message for the caller. */
             const val NO_RESPONSE_MESSAGE = "The underlying HTTP client completed without emitting a response"
 
-            // Wiring failures go to the module's own logger, never onto the exchange logger - the exchange
-            // log stream stays parseable.
+            // The module's own logger, never the exchange logger: the exchange log stream stays parseable.
             private val internalLog = LoggerFactory.getLogger(ClientRequestLoggingFilter::class.java)
         }
     }

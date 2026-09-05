@@ -49,7 +49,7 @@ internal class BoundedBodyCapture(
     /**
      * Every byte that flowed, including those beyond the capture limit - the size metrics' source.
      * Volatile, and always the LAST write of a mutation: its write publishes the buffer state to the
-     * close-time reader (see the class KDoc), and readers must read it FIRST.
+     * close-time reader (the handoff model of the class KDoc), and readers must read it FIRST.
      */
     @Volatile
     var totalBytes: Long = 0

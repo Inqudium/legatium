@@ -6,9 +6,8 @@ import org.springframework.web.util.pattern.PathPatternParser
 import java.net.URI
 
 /**
- * Which outbound calls the logging is active for - ONE implementation for both twins (ADR-0003,
- * amendment of 2026-09-04: the two copies were identical), so the activation semantics the guides call
- * "byte-identical by construction" are so by construction.
+ * Which outbound calls the logging is active for - ONE implementation for both twins (ADR-0003), so
+ * the activation semantics are identical on both stacks by construction.
  *
  * A call is active when its host is not excluded, its path matches ANY include pattern (empty includes
  * = every call) and NO exclude prefix - an exclude always wins. Path matching runs on the raw request

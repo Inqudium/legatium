@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicLong
  * to pin the generated id to a known value without any mocking library.
  */
 fun interface CorrelationIdGenerator {
+    /** A fresh id for one traceless call - sent on the wire and logged as `adapter_request_id`; it must be usable as an HTTP header value. */
     fun nextCorrelationId(): String
 
     companion object {
@@ -44,11 +45,7 @@ fun interface CorrelationIdGenerator {
 internal class CountingCorrelationIdGenerator(
     /** Seeded from [SecureRandom], once, for the entropy of the prefix (ADR-0004). */
     prefixSeed: Long = SecureRandom().nextLong(),
-    /**
-     * Test seam only - production always starts at zero. It exists so the [COUNTER_WIDTH] boundary
-     * is testable without 2.8e12 warm-up calls; see the width-boundary test in
-     * `CountingCorrelationIdGeneratorTest`.
-     */
+    /** Test seam only - production always starts at zero; lets the [COUNTER_WIDTH] boundary be tested without 2.8e12 warm-up calls. */
     counterStart: Long = 0L,
 ) : CorrelationIdGenerator {
     /** Rendered UNSIGNED: a leading minus sign would lengthen the id and break the alphabet; the reinterpretation is a bijection. */

@@ -16,8 +16,7 @@ import java.io.InputStream
  * (`RestClient.exchange(..., close = true)` and `RestTemplate.doExecute` alike). So the moment the
  * response is closed is the moment the exchange is truly over: status, headers and the body that was
  * actually read are FINAL there. Emitting when the interceptor returns would log a body of zero bytes and
- * a duration that excludes the read - the exact wart the sibling project limesium eliminated on the
- * inbound side by emitting at request destruction. A response the application never closes (a raw
+ * a duration that excludes the read. A response the application never closes (a raw
  * `exchange(..., close = false)` the caller forgets to close) never completes - and stays open on the
  * `adapter.logging.exchanges.open` gauge, the module's liveness signal, rather than logging a guess.
  *

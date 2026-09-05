@@ -13,14 +13,13 @@ import eu.inqudium.legatium.common.Timeouts
 import eu.inqudium.legatium.common.TraceMdcKeys
 import eu.inqudium.legatium.common.addKeyValue
 import eu.inqudium.legatium.common.addKeyValueIfPresent
+import eu.inqudium.legatium.common.declaredCharsetOrUtf8
 import eu.inqudium.legatium.common.failOpen
 import eu.inqudium.legatium.common.reportQuietly
 import eu.inqudium.legatium.common.setCauseIfPresent
 import org.slf4j.LoggerFactory
 import org.slf4j.event.Level
 import org.springframework.http.HttpHeaders
-import org.springframework.http.InvalidMediaTypeException
-import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 
@@ -139,8 +138,8 @@ internal class ExchangeLogEmitter(
 
     private fun emitExchange(exchange: Exchange) {
         val elapsedNanos = nanoTime.nanoTime() - exchange.startNanos
-        // Full-precision, overflow-free comparison (twin parity): a 1.5 ms threshold must not flag a 1 ms
-        // exchange. The logged duration keeps millisecond resolution - hence the 1 ms floor in the properties.
+        // Compared at full precision (a 1.5 ms threshold must not flag a 1 ms exchange); the 1 ms floor
+        // is [ClientLoggingProperties.slowRequestThreshold]'s.
         val slow = Duration.ofNanos(elapsedNanos) >= properties.slowRequestThreshold
         // Metrics BEFORE the level gate: a metric must not depend on how loud the logger is configured.
         recordBodySizesQuietly(exchange)
@@ -153,12 +152,8 @@ internal class ExchangeLogEmitter(
         if (!exchangeLog.isEnabledForLevel(level)) {
             return
         }
-        // The emission scope overlays the trace context parsed from the outgoing traceparent header
-        // (ADR-0002), so the encoder emits the SAME traceId/spanId the request went out with. The ids
-        // ride the MDC only, not the key-values; the message suffix is the one extra, for plain-text
-        // appenders that drop the MDC. The scope OWNS the trace keys: an id that was not parsed is
-        // removed for the emission, so a stale bridge id on the closing thread cannot join the event to
-        // a foreign trace.
+        // The emission scope OWNS the trace keys ([MdcScope]): the encoder emits the traceId/spanId the
+        // request went out with, never a stale bridge id of the closing thread.
         val mdcScope = MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true)
         try {
             logEvent(exchange, classification, level, status, elapsedNanos / NANOS_PER_MS, slow)
@@ -221,8 +216,7 @@ internal class ExchangeLogEmitter(
             .addKeyValueIfPresent(ClientLogField.REQUEST_BODY, requestBody)
             .addKeyValueIfPresent(ClientLogField.RESPONSE_BODY, responseBody)
             .log()
-        // Guarded inside the metrics: a throwing host counter after a successful log() must not be
-        // reported as a lost emission.
+        // Guarded in [ClientLoggingMetrics.eventEmitted]: the event is already on the logger.
         metrics.eventEmitted(classification.outcome)
     }
 
@@ -235,10 +229,8 @@ internal class ExchangeLogEmitter(
         } ?: emptyList()
 
     /**
-     * Body fields only when the direction's mode admits THIS outcome: `on-failure` captured the bytes
-     * (the outcome is unknown while they flow) and discards them here for a clean exchange (success
-     * outcome, no 4xx). A capture may also exist in count-only mode for the size metrics, and its empty
-     * buffer must not surface as a truncated-looking field.
+     * Body fields only when the direction's [eu.inqudium.legatium.common.BodyLogMode] admits THIS outcome ("failed" = outcome not
+     * `success`, or a 4xx); a count-only capture (size metrics) must not surface as an empty field.
      */
     private fun loggedBodies(
         exchange: Exchange,
@@ -337,20 +329,7 @@ internal class ExchangeLogEmitter(
     companion object {
         private const val NANOS_PER_MS = 1_000_000L
 
-        // Failures of the logging itself go to the module's own logger, never onto the exchange logger -
-        // the exchange log stream stays parseable.
+        // The module's own logger, never the exchange logger: the exchange log stream stays parseable.
         private val internalLog = LoggerFactory.getLogger(ExchangeLogEmitter::class.java)
     }
 }
-
-/**
- * The charset the `Content-Type` declares, UTF-8 when there is none or the media type does not parse -
- * a malformed header is the peer's (or the caller's) problem and must not cost the log line. One
- * definition for the request side (wiring) and the response side (emission).
- */
-internal fun HttpHeaders.declaredCharsetOrUtf8(): Charset =
-    try {
-        contentType?.charset
-    } catch (e: InvalidMediaTypeException) {
-        null
-    } ?: StandardCharsets.UTF_8

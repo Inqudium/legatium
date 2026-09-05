@@ -15,8 +15,8 @@ import org.junit.jupiter.api.Test
 class SharedContractTest {
     @Test
     fun `should pin the meter names and the fallback tag values`() {
-        // What is tested: the string constants of ClientLoggingMetrics that name the seven meters and
-        //   the two fallback tag values.
+        // What is tested: the string constants of ClientLoggingMetrics that name the seven meters (six
+        //   families) and the two fallback tag values.
         // Success criteria: each constant equals its literal.
         // Why it matters: dashboards and alerts key on these names across both twins and beside
         //   limesium's endpoint.* family; a rename must break the build, not silently split a metric.

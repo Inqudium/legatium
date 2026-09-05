@@ -8,6 +8,12 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
+/**
+ * The format contract of ADR-0004 as [CountingCorrelationIdGenerator] renders it - prefix and counter
+ * widths, the base-36 alphabet, the unsigned rendering - plus the counter's ordering and its thread
+ * safety under contention. Deterministic through the `prefixSeed` and `counterStart` seams; the one
+ * unseeded test covers the production constructor path.
+ */
 class CountingCorrelationIdGeneratorTest {
     private companion object {
         /** 36^8 - the number of counter values the production counter width can render. */

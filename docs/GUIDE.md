@@ -286,7 +286,7 @@ rendered as a fingerprint unless the name is explicitly allowed in plaintext, so
 |---|---|
 | `includes` | Names to log. **Empty logs nothing** (the safe default). The entry `*` logs every header the message carries; names are deduplicated case-insensitively on both paths. |
 | `excludes` | Names removed from the included set — meaningful mainly with `*`. An exclude always wins. `*` is rejected here at binding time (an empty `includes` already logs nothing). |
-| `masked` | Names whose **value** is replaced by what the `HeaderValueMasker` bean renders — by default a fingerprint `length:hex`, the character length plus the first 64 bits of the SHA-256 of the UTF-8 value, e.g. `18:930bbdc51b6aed5c` (a **pseudonym**, not anonymisation: equal values stay recognisable as equal; key it with `masking-key` to stop guess confirmation). **Default `["*"]`: every logged header is masked** (ADR-0005). Narrow it to names, or empty it to switch masking off — a visible decision. Masking affects only headers that are logged; listing a name here does not include it. |
+| `masked` | Names whose **value** is replaced by what the `HeaderValueMasker` bean renders — by default a fingerprint `length:hex`, the character length plus the first 64 bits of the SHA-256 of the UTF-8 value, e.g. `secret-token` renders as `12:930bbdc51b6aed5c` (a **pseudonym**, not anonymisation: equal values stay recognisable as equal; key it with `masking-key` to stop guess confirmation). **Default `["*"]`: every logged header is masked** (ADR-0005). Narrow it to names, or empty it to switch masking off — a visible decision. Masking affects only headers that are logged; listing a name here does not include it. |
 | `unmasked` | Names that appear in **plaintext** although `masked` covers them — the explicit allowlist of harmless names (`Content-Type`, `Accept`, a correlation id). An unmasked name always wins over a masked one. `*` is rejected here: the plaintext set is a list of names by design; to log everything in plaintext, empty `masked` instead. |
 
 Multi-valued headers are joined with `, `. The selected pairs are rendered into one display-only field
@@ -537,7 +537,7 @@ it never turns a completed call into a failure.
 
 ### 7.4 Meters
 
-Six meters, all **consumed** from the host's `MeterRegistry` (an `ObjectProvider`; without one the
+Six meter families under seven meter names, all **consumed** from the host's `MeterRegistry` (an `ObjectProvider`; without one the
 auto-configuration passes an empty `CompositeMeterRegistry`, whose meters are Micrometer no-ops) — one
 shared implementation (`ClientLoggingMetrics`), parameterised by the stack. Why these six and no others,
 and the rule for adding one, is [ADR-0008](adr/ADR-0008-six-meters-consumed-not-exported.md). All fixed-tag meters are **pre-registered at construction**, so a `rate()`

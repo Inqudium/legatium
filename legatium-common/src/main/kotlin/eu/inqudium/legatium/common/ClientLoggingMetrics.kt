@@ -53,8 +53,8 @@ internal enum class RequestIdSource(
 /**
  * The client stack a twin serves - the ONLY facts of the shared metrics owner that differ per twin: the
  * `client` tag of the open-exchanges gauge, the outcome vocabulary of the events counter, and the
- * wording of the gauge's description. Everything else about the six meters is one cross-stack contract
- * (ADR-0003, amendment of 2026-09-04).
+ * wording of the gauge's description. Everything else about the meters is one cross-stack contract
+ * (ADR-0003).
  */
 internal enum class ClientStack(
     /** The `client` tag value of the open-exchanges gauge. */
@@ -80,11 +80,11 @@ internal enum class ClientStack(
 }
 
 /**
- * The module's meters (the `*_METER` constants below), all fed from the host's registry - ONE
- * implementation for both twins, parameterised by the [ClientStack] (ADR-0003, amendment of
- * 2026-09-04: the two copies had converged to 95 % identity). Every meter here observes what neither
- * `http.client.requests` nor the log fields can show; rates, latencies and status distributions are
- * deliberately left to those.
+ * The module's meters - SIX meter families under SEVEN meter names (the request and response body-size
+ * summaries are one family), the `*_METER` constants below - all fed from the host's registry: ONE
+ * implementation for both twins, parameterised by the [ClientStack] (ADR-0003). Every meter here
+ * observes what neither `http.client.requests` nor the log fields can show; rates, latencies and status
+ * distributions are deliberately left to those (ADR-0008).
  *
  * All fixed-tag meters are PRE-registered at construction: a `rate()` alert must see the zero before the
  * first occurrence, not a meter that springs into existence at the very moment it should already fire.
@@ -102,10 +102,9 @@ internal enum class ClientStack(
  * throw at construction would abort the application context - a logging library must not - and at the
  * lazy body-size registration would suppress the exchange event. Every registration therefore falls
  * back to a private [SimpleMeterRegistry] for the conflicting meter, logged once per meter name: the
- * module keeps working and the affected meter is simply not exported. The alternatives were weighed
- * (architecture review of 2026-09-04, finding 7): failing the context start contradicts the fail-open
- * promise, and "not registering" needs a per-type no-op meter and is not simpler than one private
- * registry. The scenario is rare; the shape stays because it is the cheapest one that never throws.
+ * module keeps working and the affected meter is simply not exported. Failing the context start would
+ * contradict the fail-open promise, and "not registering" needs a per-type no-op meter - one private
+ * registry is the cheapest shape that never throws (ADR-0008).
  *
  * The GAUGE has a second collision case Micrometer does not reject: an id of the SAME type that already
  * exists (a host gauge under this name and `client` tag, an older copy of this library on another
@@ -195,8 +194,7 @@ internal class ClientLoggingMetrics private constructor(
         AtomicLong(0).also { open ->
             registerOrFallback(
                 OPEN_EXCHANGES_METER,
-                // A same-type meter under this exact id would be returned unchanged by Micrometer, and this
-                // instance's state function silently discarded (see the class documentation).
+                // The same-type collision case of the class KDoc: a gauge already under this id would keep its own state.
                 taken = { registry -> registry.find(OPEN_EXCHANGES_METER).tag(CLIENT_TAG, stack.tag).meter() != null },
             ) { registry ->
                 Gauge
@@ -233,11 +231,15 @@ internal class ClientLoggingMetrics private constructor(
     fun wiringFailure() = failOpenCounters.getValue(FailOpenStage.WIRING).increment()
 
     /**
-     * Counts one EMITTED exchange event; [outcome] must be one of this stack's [ClientStack.outcomes].
-     * Guarded: the event is already on the logger when this runs, so a failing host counter must
-     * neither be reported as a lost emission nor disturb the caller.
+     * Counts one EMITTED exchange event under [outcome], which must be one of this stack's pre-registered
+     * [ClientStack.outcomes] - checked, so a vocabulary violation is reported by name instead of as a bare
+     * lookup failure. Guarded: the event is already on the logger when this runs, so a failing host
+     * counter must neither be reported as a lost emission nor disturb the caller.
      */
-    fun eventEmitted(outcome: ClientOutcome) = updateQuietly(EVENTS_METER) { eventCounters.getValue(outcome).increment() }
+    fun eventEmitted(outcome: ClientOutcome) =
+        updateQuietly(EVENTS_METER) {
+            checkNotNull(eventCounters[outcome]) { "outcome ${outcome.tagValue} is not in the ${stack.tag} vocabulary" }.increment()
+        }
 
     fun exchangeOpened() {
         openExchanges.incrementAndGet()
@@ -341,21 +343,16 @@ internal class ClientLoggingMetrics private constructor(
     companion object {
         private val internalLog = LoggerFactory.getLogger(ClientLoggingMetrics::class.java)
 
-        // Both sides weak: the KEY must not pin a host registry that outlives its context, and the
-        // VALUE is exactly what every entry point already holds strongly - the owner lives as long as
-        // an interceptor or filter using it does. Residual (accepted): when every entry point of a
-        // still-live registry has been collected and a NEW one is wired against it afterwards, the
-        // fresh owner meets its own pre-registered gauge id again - the same-type collision check then
-        // keeps its gauge private with a warning instead of counting invisibly - a churn pattern
-        // neither the auto-configurations nor per-test registries produce.
+        // Both sides weak: the KEY must not pin a host registry that outlives its context, the VALUE lives
+        // as long as an entry point holds it. Residual (accepted): a NEW entry point wired against a
+        // still-live registry whose earlier owners were all collected meets its own gauge id again and
+        // keeps its gauge private with a warning (the same-type collision case of the class KDoc).
         private val perRegistry = WeakHashMap<MeterRegistry, EnumMap<ClientStack, WeakReference<ClientLoggingMetrics>>>()
 
         /**
          * The metrics owner for [registry] and [stack] - created on first use, SHARED by every later
-         * caller with the same registry and stack. Sharing is what keeps the open-exchanges gauge
-         * truthful when several entry points run against one registry: a duplicate owner's gauge
-         * registration would be silently ignored (see the class documentation), a shared owner makes
-         * the gauge the total across its entry points while the counters merge as before.
+         * caller with the same registry and stack, so the open-exchanges gauge is the total across the
+         * entry points on one registry (the one-instance rule of the class KDoc).
          */
         fun forRegistry(
             registry: MeterRegistry,

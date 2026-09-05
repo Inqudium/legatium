@@ -6,7 +6,7 @@ import java.time.Duration
 /**
  * Configuration surface of both adapter-logging twins, bound from the `adapter-logging.*` namespace. ONE
  * class for the RestClient interceptor and the WebClient filter (ADR-0003): the namespace is a
- * cross-stack contract, key for key and default for default, and the twins' copies were byte-identical.
+ * cross-stack contract, key for key and default for default.
  * `ClientLoggingReferenceConfigTest` binds the shared reference YAML against this class once.
  *
  * Everything an operator may tune is a Boot property with a safe default, and everything a host

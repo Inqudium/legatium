@@ -11,6 +11,7 @@ import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.MdcScope
 import eu.inqudium.legatium.common.NanoTimeSource
 import eu.inqudium.legatium.common.RequestTarget
+import eu.inqudium.legatium.common.declaredCharsetOrUtf8
 import eu.inqudium.legatium.common.reportQuietly
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
@@ -80,9 +81,13 @@ import org.springframework.http.client.ClientHttpResponse
 class ClientRequestLoggingInterceptor
     @JvmOverloads
     constructor(
+        /** The bound `adapter-logging.*` configuration; also decides the default [masker]. */
         private val properties: ClientLoggingProperties,
+        /** Monotonic time for `adapter_duration_ms`; tests pin it, production passes [NanoTimeSource.SYSTEM]. */
         private val nanoTime: NanoTimeSource,
+        /** Supplies the id a TRACELESS call sends (ADR-0002); production passes [CorrelationIdGenerator.DEFAULT]. */
         private val correlationIds: CorrelationIdGenerator,
+        /** The host's registry the meters are consumed from; interceptors on one registry share one metrics owner (see below). */
         meterRegistry: MeterRegistry,
         /**
          * How masked header values render. Defaults to the masker the properties' `masking-key` selects
@@ -107,9 +112,9 @@ class ClientRequestLoggingInterceptor
             }
             val exchange = wireOrNull(request, body) ?: return execution.execute(request, body)
             val callScope = openCallScope(exchange)
-            // The optional arrival line, before the call and OUTSIDE the try below: a failure in it must be
-            // confined (it is, see the emitter - including the level gate), never misattributed as a call
-            // failure.
+            // The optional arrival line, before the call and OUTSIDE the try below: a failure in it is
+            // confined in [ExchangeLogEmitter.logRequestStart] (level gate included), never misattributed
+            // as a call failure.
             if (properties.logRequestStart) {
                 emitter.logRequestStart(exchange)
             }
@@ -132,7 +137,7 @@ class ClientRequestLoggingInterceptor
                 throw e
             } catch (t: Throwable) {
                 // An Error (LinkageError, VirtualMachineError, AssertionError from an inner interceptor) is
-                // outside the fail-open promise (see FailOpenDiagnostics) - but not outside the gauge: the
+                // outside the fail-open promise ([failOpen]) - but not outside the gauge: the
                 // exchange is abandoned, the liveness signal stays truthful, no emission is attempted.
                 abandonExchange(exchange, t)
                 throw t
@@ -301,8 +306,7 @@ class ClientRequestLoggingInterceptor
             // The header stamped on attempt 1 comes back on a re-entry by a retrying OUTER interceptor:
             // remembered on the request, so the origin counter keeps calling it `generated`.
             val identity = ClientIdentity.resolve(headers, properties, correlationIds, generatedEarlier = request.attributes[GENERATED_ID_ATTRIBUTE] as? String)
-            // Guarded inside the metrics: a throwing host counter must not turn the call into an unlogged
-            // pass-through.
+            // Guarded in [ClientLoggingMetrics.requestId]: a throwing host counter never fails the call.
             metrics.requestId(identity.source)
             if (identity.sendCorrelationHeader) {
                 headers.set(properties.correlationIdHeader, identity.requestId)
@@ -312,7 +316,7 @@ class ClientRequestLoggingInterceptor
             // The request body is what the client hands the interceptor: the complete serialized body,
             // in memory, BEFORE the wire call - what the client is about to send, not what reached the
             // peer. The field documents it as exactly that; the size meter records it only once a response
-            // proves the request went out (see the emitter).
+            // proves the request went out ([ExchangeLogEmitter]).
             captures.request?.capture(body, 0, body.size)
             val target = RequestTarget.of(request.uri)
             val exchange =
@@ -401,8 +405,7 @@ class ClientRequestLoggingInterceptor
             /** Request attribute remembering the correlation id this module generated and sent, for re-entries by a retrying outer interceptor. */
             const val GENERATED_ID_ATTRIBUTE = "eu.inqudium.legatium.restclient.logging.generatedCorrelationId"
 
-            // The breadcrumb and wiring failures go to the module's own logger, never onto the exchange
-            // logger - the exchange log stream stays parseable.
+            // The module's own logger, never the exchange logger: the exchange log stream stays parseable.
             private val internalLog = LoggerFactory.getLogger(ClientRequestLoggingInterceptor::class.java)
         }
     }
