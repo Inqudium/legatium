@@ -34,8 +34,20 @@ jobs:
           java-version: 25
           cache: maven
 
+      # `install`, not `verify`: the Dokka reference check below runs per twin
+      # (-pl) and resolves legatium-common as an artifact from the runner's
+      # local repository (ADR-0003) - the same reason the Docs workflow installs.
       - name: Build and test
-        run: mvn --batch-mode --no-transfer-progress verify
+        run: mvn --batch-mode --no-transfer-progress install
+
+      # The KDoc reference check as a PR gate. Dokka runs with failOnWarning, so
+      # an unresolvable [Symbol] link fails this step - here, in the pull
+      # request, instead of in the Docs workflow after the merge, which is
+      # where four consecutive Docs runs went red on one broken link in
+      # 2026-09-04/05 (comment audit of 2026-09-05, guardrails). The rendered
+      # site is discarded; only the verdict counts.
+      - name: Check the KDoc references (Dokka, failOnWarning)
+        run: mvn --batch-mode --no-transfer-progress -pl legatium-restclient-logging,legatium-webclient-logging dokka:dokka
 
       # Repo-local script instead of a third-party reporting action (this
       # workflow pins actions to SHAs; a summary needs no new supply-chain
