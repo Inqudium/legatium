@@ -90,12 +90,13 @@ guides, Elasticsearch mapping, generated [test evidence](https://inqudium.github
 
 ### Quick start
 
-Each Legatium release is built and tested against one Spring Boot and one Kotlin line; the table is the
-history of those lines, newest first. The artifacts target Java 21 (the build itself needs JDK 24+).
+Each Legatium release is built and tested against one Spring Boot line, one Kotlin line and one Java
+target; the table is the history of those lines, newest first. The Java column is the bytecode target the
+artifacts run on - the build itself needs JDK 24+.
 
-| Legatium | Spring Boot | Kotlin |
-|---|---|---|
-| 1.0.0 (unreleased) | 4.1.x | 2.4.x |
+| Legatium | Spring Boot | Kotlin | Java |
+|---|---|---|---|
+| 1.0.0 (unreleased) | 4.1.x | 2.4.x | 21 |
 
 Pick the module for the client the host calls out with and follow the **Usage** section of its README —
 prerequisites, the dependency with the current version, how the interceptor or filter is wired
