@@ -138,6 +138,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every binding-time `require`, the previous-value restore and suppressed
   aggregation of `MdcScope`, and the reactive filter under Spring's body skip,
   a resubscription, an out-of-band cancel and an empty completion.
+- Engine-agnostic RestClient twin, pinned: one `RequestFactoryContract` runs against
+  every request factory Spring ships - the JDK `HttpClient`, Apache HttpComponents 5,
+  Jetty, Reactor Netty and `HttpURLConnection` - for the body tee and its read state on
+  the engine's stream, the wire correlation header, each engine's real read and
+  connect timeout types as `timeout`, a refused connection as the `failure` control,
+  and, per engine, whether a gzip answer reaches application and log decoded or as
+  sent.
 - Connector-agnostic WebClient twin, pinned: the shared timeout classification
   recognises Reactor Netty's connect timeout (`io.netty.channel.ConnectTimeoutException`,
   a `ConnectException` no JDK timeout type covers) by name, next to Netty's

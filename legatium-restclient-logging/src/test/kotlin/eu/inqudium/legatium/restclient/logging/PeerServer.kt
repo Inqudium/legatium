@@ -2,11 +2,13 @@ package eu.inqudium.legatium.restclient.logging
 
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import java.io.ByteArrayOutputStream
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.zip.GZIPOutputStream
 
 /**
  * The foreign party the integration tests send their envoy to: the JDK's own HTTP server on an
@@ -72,6 +74,16 @@ internal class PeerServer : AutoCloseable {
                 exchange.close()
             }
 
+            // Gzip regardless of Accept-Encoding, with the COMPRESSED length declared: what the
+            // application and the tee then see depends on whether the engine decompresses transparently.
+            path == "/gzip" -> {
+                val compressed = ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(GZIP_PLAINTEXT.toByteArray(StandardCharsets.UTF_8)) } }.toByteArray()
+                exchange.responseHeaders.set("Content-Type", "text/plain; charset=utf-8")
+                exchange.responseHeaders.set("Content-Encoding", "gzip")
+                exchange.sendResponseHeaders(200, compressed.size.toLong())
+                exchange.responseBody.use { it.write(compressed) }
+            }
+
             else -> {
                 respond(exchange, 404, "text/plain", "no such route")
             }
@@ -93,5 +105,10 @@ internal class PeerServer : AutoCloseable {
     override fun close() {
         server.stop(0)
         handlers.shutdownNow()
+    }
+
+    companion object {
+        /** The plaintext behind the `/gzip` route - long enough that its gzip form contains no plaintext substring. */
+        const val GZIP_PLAINTEXT = "compressed hello from the peer, repeated so the deflate stream has something to compress, compressed hello"
     }
 }

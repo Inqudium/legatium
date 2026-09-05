@@ -72,6 +72,28 @@
             <artifactId>spring-boot-starter-restclient</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- The other request factories Spring ships, for the per-engine integration suites
+             (RequestFactoryContract): the interceptor is engine-agnostic by construction
+             (ClientHttpRequestInterceptor, response tee on the engine's stream), and the suites pin
+             that the tee, the timeout classification and the Content-Encoding rule hold against each
+             real engine - including the exception types its connect and read timeouts actually raise
+             and whether it decompresses transparently. The JDK client and HttpURLConnection need
+             nothing; Apache HC5, Jetty and Reactor Netty come explicitly. Versions from the Boot BOM. -->
+        <dependency>
+            <groupId>org.apache.httpcomponents.client5</groupId>
+            <artifactId>httpclient5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.jetty</groupId>
+            <artifactId>jetty-client</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.projectreactor.netty</groupId>
+            <artifactId>reactor-netty-http</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- Real Micrometer Tracing (Brave bridge) for the tracing integration test: pins the whole
              convention chain the trace capture rests on - the client observation opens the span and
              injects the outgoing traceparent BEFORE the interceptors run - so a Boot upgrade that changes
