@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-05
+
 ### Added
 
 - Initial release of Legatium: one structured `adapter_*` log line per outbound
@@ -178,4 +180,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Dokka API references; CI with SBOM/OSV scan, CodeQL, OpenSSF Scorecard,
   nightly Jazzer fuzzing, SLSA-attested releases - the Inqudium project setup.
 
-[Unreleased]: https://github.com/Inqudium/legatium/commits/main
+[Unreleased]: https://github.com/Inqudium/legatium/compare/1.0.0...HEAD
+[1.0.0]: https://github.com/Inqudium/legatium/releases/tag/1.0.0

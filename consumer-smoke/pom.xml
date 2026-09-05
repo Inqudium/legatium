@@ -39,7 +39,7 @@
     <properties>
         <java.version>21</java.version>
         <!-- Kept equal to the reactor's `revision`. -->
-        <legatium.version>1.0.0-SNAPSHOT</legatium.version>
+        <legatium.version>1.0.0</legatium.version>
     </properties>
 
     <dependencies>

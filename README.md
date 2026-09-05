@@ -96,7 +96,7 @@ artifacts run on - the build itself needs JDK 24+.
 
 | Legatium | Spring Boot | Kotlin | Java |
 |---|---|---|---|
-| 1.0.0 (unreleased) | 4.1.x | 2.4.x | 21 |
+| 1.0.0 | 4.1.x | 2.4.x | 21 |
 
 Pick the module for the client the host calls out with and follow the **Usage** section of its README —
 prerequisites, the dependency with the current version, how the interceptor or filter is wired
