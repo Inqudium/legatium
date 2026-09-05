@@ -152,8 +152,16 @@ class HeaderMaskingFuzzTest {
         }
     }
 
+    /**
+     * Blank as the production code means it: Kotlin's {@code isBlank()} treats a char as whitespace when
+     * {@link Character#isWhitespace(int)} OR {@link Character#isSpaceChar(int)} says so, which covers the
+     * space separators Java's {@link String#isBlank()} leaves out (U+00A0, U+2007, U+202F). The nightly
+     * fuzz run of 2026-09-05 found exactly that gap: a name of such spaces was rejected as blank by the
+     * constructor while this oracle, then on {@code String::isBlank}, had not predicted the rejection
+     * (regression input {@code blank-unicode-space-name.bin}).
+     */
     private static boolean hasBlank(List<String> names) {
-        return names.stream().anyMatch(String::isBlank);
+        return names.stream().anyMatch(name -> name.chars().allMatch(c -> Character.isWhitespace(c) || Character.isSpaceChar(c)));
     }
 
     private static List<String> consumeNames(FuzzedDataProvider data) {
