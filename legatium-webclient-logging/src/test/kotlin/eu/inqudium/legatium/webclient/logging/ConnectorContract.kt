@@ -186,6 +186,8 @@ abstract class ConnectorContract {
         // What is tested: the control - a connection the peer actively refuses must stay a failure,
         //   whatever type this engine wraps it in.
         // Success criteria: ERROR, outcome failure, `-> -`, no status.
+        // Why it matters: a refusal misread as a timeout would send an operator looking for a slow
+        //   peer that is in fact down.
         // Given/When
         val thrown =
             catchThrowable {
