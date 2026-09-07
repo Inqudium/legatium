@@ -16,15 +16,15 @@ The RestClient module is the reference implementation; its documentation applies
   `ClientLoggingReferenceConfigTest` in `legatium-common` against the one `ClientLoggingProperties`
   class both twins inline, so the namespace cannot drift from the code, and the twins cannot drift
   from each other by construction. The properties are explained in the guide's
-  [Legatium guide §6](../docs/GUIDE.md#6-configuration).
+  [Common guide §6](../docs/GUIDE.md#6-configuration).
 - **Index mapping:** the one component template for both stacks is the repository-shared
   [`/docs/elk/`](../docs/elk/README.md) — bound by `ClientLogFieldTest` in `legatium-common` against
   the one `ClientLogField` enum both twins inline. The field table is the guide's
-  [Legatium guide §7.1](../docs/GUIDE.md#71-log-fields).
+  [Common guide §7.1](../docs/GUIDE.md#71-log-fields).
 - **Metrics:** the same six meters (`adapter.logging.failopen`, `adapter.logging.events`,
   `adapter.logging.exchanges.open`, `adapter.logging.correlation.id`, `adapter.request/response.body.size`,
   `adapter.response.body.read`), consumed from the host's `MeterRegistry`, never exported. The meter
-  table is the guide's [Legatium guide §7.4](../docs/GUIDE.md#74-meters).
+  table is the guide's [Common guide §7.4](../docs/GUIDE.md#74-meters).
 
 ## Deliberate stack differences
 
@@ -73,7 +73,7 @@ jar a consumer receives is exercised by the standalone `consumer-smoke/` build i
 The host must be a **Spring Boot 4.x** application on Java 21 with an SLF4J 2.x binding, a connector,
 and — for the automatic wiring below — Boot's `spring-boot-webclient` module. The full list with the
 reasons is the guide's [prerequisites table](../docs/GUIDE.md#1-prerequisites); how the `adapter_*`
-fields become visible in the log output is [Legatium guide §4](../docs/GUIDE.md#4-logging-backend-and-structured-output).
+fields become visible in the log output is [Common guide §4](../docs/GUIDE.md#4-logging-backend-and-structured-output).
 
 ```xml
 <dependency>
@@ -151,9 +151,9 @@ class ThingsClientConfiguration {
 
 Reuse the one bean rather than constructing a second filter: the meters are identified by name, so all
 filters on one `MeterRegistry` share one metrics owner and the `adapter.logging.exchanges.open` gauge
-reports the total across them ([§4.9](docs/GUIDE.md#49-one-metrics-instance-per-registry)). Replacing
+reports the total across them ([Common guide §7.4](../docs/GUIDE.md#74-meters)). Replacing
 the filter itself (a host-defined `ClientRequestLoggingFilter` bean) is a different thing: the
-automatic wiring still attaches the replacement ([Legatium guide §3](../docs/GUIDE.md#3-overriding-beans)).
+automatic wiring still attaches the replacement ([Common guide §3](../docs/GUIDE.md#3-overriding-beans)).
 
 ### The exchange line
 
@@ -196,8 +196,8 @@ carries the request id alone and has sent it to the peer as `X-Correlation-Id`. 
 response shows `-> -` and no status field; a cancelled one `adapter_outcome=cancelled`. Optional fields
 (`adapter_url_query`, `adapter_slow`, the header and body sections) are present only when they apply.
 Which encoder produces which shape — and why the default console pattern shows none of the fields —
-is the guide's [Legatium guide §4](../docs/GUIDE.md#4-logging-backend-and-structured-output); the field family itself is
-documented once, in the guide's [Legatium guide §7.1](../docs/GUIDE.md#71-log-fields), and mapped by the component template
+is the guide's [Common guide §4](../docs/GUIDE.md#4-logging-backend-and-structured-output); the field family itself is
+documented once, in the guide's [Common guide §7.1](../docs/GUIDE.md#71-log-fields), and mapped by the component template
 in [`/docs/elk/`](../docs/elk/README.md).
 
 ## Configuration (`adapter-logging.*`)
@@ -208,7 +208,7 @@ key at its default is the repository-shared
 [`/docs/adapter-logging-reference.yml`](../docs/adapter-logging-reference.yml) — copy the block and
 change only what you need; `ClientLoggingReferenceConfigTest` in `legatium-common` fails the build on
 any drift between that file and the class. The properties are explained in the guide's
-[Legatium guide §6](../docs/GUIDE.md#6-configuration): the property reference, header sections, body logging and
+[Common guide §6](../docs/GUIDE.md#6-configuration): the property reference, header sections, body logging and
 measuring, activation by host and path, logger levels, validation at startup, and example
 configurations. `adapter-logging.enabled=false` removes the module without touching the classpath.
 
@@ -223,8 +223,8 @@ identity came from (trace, header, or generated), and — opt-in — how large t
 the application actually read them. Rates, latencies and status distributions are deliberately left to
 Boot's own `http.client.requests` and to the structured log fields.
 
-Every meter with its type, tags and meaning is the guide's [Legatium guide §7.4](../docs/GUIDE.md#74-meters); how to read
-them together, with a suggested alert set, is [Legatium guide §7.5](../docs/GUIDE.md#75-reading-the-meters-together). The
+Every meter with its type, tags and meaning is the guide's [Common guide §7.4](../docs/GUIDE.md#74-meters); how to read
+them together, with a suggested alert set, is [Common guide §7.5](../docs/GUIDE.md#75-reading-the-meters-together). The
 names are one shared contract, pinned once by `SharedContractTest` in `legatium-common` ([ADR-0008](../docs/adr/ADR-0008-six-meters-consumed-not-exported.md)); the `outcome` tag of the events
 counter carries this stack's `cancelled` in addition.
 

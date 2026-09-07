@@ -8,18 +8,18 @@ field family, the `adapter-logging.*` configuration and the meters. The inbound 
 family is the sibling project [Limesium](https://github.com/Inqudium/limesium).
 
 This guide is the long-form companion to the module [README](../README.md). It explains what the module
-does, how it is built, how to drop it into a foreign application, what can be configured, what it
-measures, and which behaviours are specific to the blocking client stack. Everything here is derived from
-the code under `src/main/kotlin/eu/inqudium/legatium/restclient/logging/`; when the two disagree, the
-code wins.
+does, how it is built, how it is wired into a foreign application, and which behaviours are specific to
+the blocking client stack. Everything that is one contract for both twins — prerequisites, the
+dependency, the beans, the exchange line and the logging backend, the configuration, the fields, the
+meters, the fail-open promise and the shared code — is written once, in the
+[Common guide](../../docs/GUIDE.md). Everything here is derived from the code under
+`src/main/kotlin/eu/inqudium/legatium/restclient/logging/`; when the two disagree, the code wins.
 
 ## Table of contents
 
 1. [Introduction](#1-introduction)
    1. [What the module does](#11-what-the-module-does)
-   2. [What the module deliberately does not do](#12-what-the-module-deliberately-does-not-do)
-   3. [The exchange line](#13-the-exchange-line)
-   4. [The WebClient twin](#14-the-webclient-twin)
+   2. [The WebClient twin](#12-the-webclient-twin)
 2. [Architecture](#2-architecture)
    1. [Component overview](#21-component-overview)
    2. [Auto-configuration and registration](#22-auto-configuration-and-registration)
@@ -28,7 +28,6 @@ code wins.
    5. [The body tee](#25-the-body-tee)
    6. [MDC coverage](#26-mdc-coverage)
    7. [Fail-open contract](#27-fail-open-contract)
-   8. [Injectable collaborators](#28-injectable-collaborators)
 3. [Using it in a foreign project](#3-using-it-in-a-foreign-project)
    1. [Automatic wiring](#31-automatic-wiring)
    2. [Manual wiring](#32-manual-wiring)
@@ -38,14 +37,10 @@ code wins.
    1. [Differences to the WebClient twin](#41-differences-to-the-webclient-twin)
    2. [Duration is response occupancy](#42-duration-is-response-occupancy)
    3. [A response that is never closed](#43-a-response-that-is-never-closed)
-   4. [Failures while reading the body](#44-failures-while-reading-the-body)
+   4. [Failures on the response the client was handed](#44-failures-on-the-response-the-client-was-handed)
    5. [Timeouts and how they are recognised](#45-timeouts-and-how-they-are-recognised)
    6. [RestTemplate has no URI template](#46-resttemplate-has-no-uri-template)
    7. [Retries yield one line per attempt](#47-retries-yield-one-line-per-attempt)
-   8. [Tracing makes every call traced](#48-tracing-makes-every-call-traced)
-   9. [One metrics instance per registry](#49-one-metrics-instance-per-registry)
-   10. [Masking is a fingerprint, not a secret](#410-masking-is-a-fingerprint-not-a-secret)
-   11. [Shared code: legatium-common, inlined by Shade](#411-shared-code-legatium-common-inlined-by-shade)
 5. [Appendix](#5-appendix)
    1. [File map](#51-file-map)
    2. [Related documents](#52-related-documents)
@@ -79,88 +74,25 @@ Boot. For every outbound HTTP exchange it:
 - feeds six Micrometer meters that observe the logging itself.
 
 It does all of this **fail-open**: no failure inside the logging — wiring, body tee, MDC adapter,
-emission, metrics — can ever fail, delay or alter the call it describes.
+emission, metrics — can ever fail, delay or alter the call it describes
+([Common guide §8.2](../../docs/GUIDE.md#82-fail-open-contract)).
 
-### 1.2 What the module deliberately does not do
+What the exchange line looks like — the message, the structured document, the arrival line — is
+[Common guide §4](../../docs/GUIDE.md#4-logging-backend-and-structured-output); what the module
+deliberately does not do (no rates or latencies as metrics, no retries, no body masking transformers, no
+replaying body cache, no hand-built clients) is
+[Common guide §8.1](../../docs/GUIDE.md#81-what-the-modules-deliberately-do-not-do). A hand-built
+`RestClient` or `RestTemplate` gets the interceptor bean added by the host ([§3.2](#32-manual-wiring)).
 
-- **No request rates, latencies or status distributions as metrics.** Boot's `http.client.requests` and
-  the structured log fields cover those; the module's meters observe only what those cannot show
-  ([Legatium guide §7.4](../../docs/GUIDE.md#74-meters)).
-- **No retries, no circuit breaking, no request rewriting.** The module observes; the one thing it adds to
-  a request is the correlation header on a traceless call without one ([Legatium guide §7.6](../../docs/GUIDE.md#76-trace-correlation)).
-- **No body masking transformers and no per-key response sampling.** Bodies are logged verbatim up to the
-  capture limit, and the logger level is the only volume control ([Legatium guide §6.5](../../docs/GUIDE.md#65-logger-levels)).
-- **No replaying body cache.** The response tee is passive; an unread response body is logged as absent.
-- **No exporting of a `MeterRegistry`.** The host's registry is consumed if present; otherwise the
-  meters are no-ops (an empty `CompositeMeterRegistry`).
-- **No clients built by hand.** The customizers cover every client built through Boot's builders (and the
-  HTTP service client groups built from them); a hand-built `RestClient` gets the interceptor bean added
-  by the host ([§3.2](#32-manual-wiring)).
+### 1.2 The WebClient twin
 
-### 1.3 The exchange line
-
-On the logger `adapter-http-exchange` (configurable) a completed exchange looks like this in a plain-text
-appender:
-
-```
-Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
-```
-
-The trace suffix appears only when the outgoing request carried a conformant W3C `traceparent` header —
-its trace id then doubles as the request id (ADR-0002). Alongside the message, the event carries SLF4J
-key-values that a structured encoder turns into fields:
-
-```json
-{
-  "message": "Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
-  "level": "INFO",
-  "logger": "adapter-http-exchange",
-  "adapter_outcome": "success",
-  "adapter_duration_ms": 17,
-  "adapter_request_method": "POST",
-  "adapter_response_status_code": 200,
-  "adapter_url_host": "api.example.com",
-  "adapter_url_path": "/things/42",
-  "adapter_url_template": "https://api.example.com/things/{id}",
-  "adapter_request_id": "4bf92f3577b34da6a3ce929d0e0e4736",
-  "adapter_method": "POST",
-  "adapter_route": "https://api.example.com/things/42",
-  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
-  "spanId": "00f067aa0ba902b7",
-  "endpoint_request_id": "4bf92f3577b34da6a3ce929d0e0e4736"
-}
-```
-
-The `adapter_request_id` / `adapter_method` / `adapter_route` / `traceId` / `spanId` entries come from the
-MDC ([Legatium guide §7.2](../../docs/GUIDE.md#72-mdc-keys)); the `adapter_*` key-values are the field family of [Legatium guide §7.1](../../docs/GUIDE.md#71-log-fields). The
-`endpoint_request_id` in the example is not this module's: it is the ambient MDC of the inbound request
-the call was made from (Limesium), which the additive emission scope leaves in place — this is how the
-client line joins the server line without any coupling between the two libraries. How MDC entries land
-in the document (flat, nested, renamed) is the encoder's decision.
-
-With the optional arrival line enabled, a second, earlier line precedes it:
-
-```
-Adapter http exchange started POST https://api.example.com/things/42 [adapter_request_id=4bf92f…]
-```
-
-The arrival line carries no outcome, status or duration, so a dashboard keyed on `adapter_outcome` still
-sees exactly one event per call.
-
-### 1.4 The WebClient twin
-
-The module is the **reference implementation** for the WebClient twin. It owns the cross-stack contract
-files, and the twin's build binds them:
-
-| Contract | Shipped here | Pinned in the twin by |
-|---|---|---|
-| Configuration keys and defaults | [`/docs/adapter-logging-reference.yml`](../../docs/adapter-logging-reference.yml) | `ClientLoggingReferenceConfigTest` in `legatium-common` (one `ClientLoggingProperties` class for both twins, bound against the YAML once) |
-| Field family and index mapping | [`/docs/elk/…component-template.json`](../../docs/elk/README.md) | `ClientLogFieldTest` in `legatium-common` (one enum for both twins, locked against the template once) |
-| Message text, this stack's outcome vocabulary | this module's emitter and `ClientStack` | `TwinContractTest` in both modules; the meter names, MDC keys and shared literals once in `SharedContractTest` (`legatium-common`) |
-
-The consequence for a consumer: a dashboard, alert or index mapping written for one client works
-unchanged for the other — and a host that uses both clients (a servlet application with a `WebClient` for
-streaming calls) may carry both modules, each logging the client it serves.
+The module is the **reference implementation** for the WebClient twin: it owns the message text and the
+blocking stack's outcome vocabulary, and the cross-stack contract files — configuration reference, field
+family and index mapping — live in the repository-shared `/docs`, bound by both builds. The contract and
+the lockstep tests that pin it are
+[Common guide §9.2](../../docs/GUIDE.md#92-the-twin-contract-and-its-lockstep-tests). A host that uses
+both clients (a servlet application with a `WebClient` for streaming calls) may carry both modules, each
+logging the client it serves.
 
 ---
 
@@ -199,20 +131,13 @@ five layers:
 
 | Class | Responsibility |
 |---|---|
-| `ClientLoggingAutoConfiguration` | Registers the interceptor bean, the default `NanoTimeSource` / `CorrelationIdGenerator`, and — when Boot's `spring-boot-restclient` is present — a late `RestClientCustomizer` and `RestTemplateCustomizer` that append the interceptor. |
-| `ClientLoggingProperties` | The `adapter-logging.*` binding, validated in `init` - shared (legatium-common - §6.11), one class for both twins. `HeaderLogProperties` (shared too) is one header section with `includes` / `excludes` / `masked` and the masking fingerprint. |
+| `ClientLoggingAutoConfiguration` | Registers the interceptor bean, the default `NanoTimeSource` / `CorrelationIdGenerator` / `HeaderValueMasker`, and — when Boot's `spring-boot-restclient` is present — a late `RestClientCustomizer` and `RestTemplateCustomizer` that append the interceptor. |
 | `ClientRequestLoggingInterceptor` | Owns the **client side**: activation by host and path, fail-open wiring, identity resolution (`traceparent` first, correlation header on traceless calls) with the traceless header, the request-body capture, the call-wide `MdcScope`, the breadcrumb, the no-response path, the handoff to the response wrapper. |
 | `CapturingClientHttpResponse` | The response the client gets back: delegates, tees the body the application reads, reports a failure of **any** delegate operation (status, headers, body open/read/close, response close), and turns `close()` into the emission point. |
 | `Exchange` | Per-exchange state from entry to emission; the exactly-once guards. |
 | `ExchangeLogEmitter` | Builds and emits the arrival line and the completion event; resolves level, outcome and cause (timeouts via the shared `Timeouts`); records body sizes; opens the emission `MdcScope` with trace ownership. |
-| `ClientLogField` | The wire names and the exact JVM type of each structured field; a wrongly typed value drops the field with a warning, never the event. Shared (legatium-common): one enum for both twins. |
-| `ClientLoggingMetrics` (shared, `legatium-common`) | The six meters, one implementation for both twins parameterised by the `ClientStack` (outcome vocabulary, `client` tag) - the fixed-tag meters pre-registered, the body meters created lazily per tag, per-meter fallback to a private registry on registration conflict. |
-| `ClientActivation` (shared, `legatium-common`) | Which calls are logged at all: host exclusion, include patterns, exclude prefixes - one implementation, so the semantics are identical on both stacks by construction. |
 | `BoundedBodyCapture` | The bounded capture target; count-only mode with limit `0`; the response-side read state (`BodyReadState`); single-writer/late-reader visibility via a volatile total. |
-| `MdcScope` | Puts identity (and, for the emission, trace keys) into the MDC and restores the previous values on close. |
-| `Traceparent` / `Timeouts` | Strict W3C `traceparent` parsing to `(traceId, spanId)`; the cause-chain walk that classifies a failure as a timeout. |
-| `NanoTimeSource` / `CorrelationIdGenerator` / `HeaderValueMasker` | Injectable time, id and header masking; `SYSTEM` and the two `DEFAULT`s are the production defaults. |
-| `reportQuietly` / `failOpen` | Guard the diagnostics channel (counter + internal log) of every catch block. |
+| Shared layer (`legatium-common`, inlined) | `ClientLoggingProperties` / `HeaderLogProperties`, `ClientLogField`, `ClientLoggingMetrics`, `ClientActivation`, `MdcScope`, `Traceparent`, `Timeouts`, the injectable collaborators and the fail-open guards — one implementation for both twins, class by class in [Common guide §9.1](../../docs/GUIDE.md#91-the-shared-classes). |
 
 ### 2.2 Auto-configuration and registration
 
@@ -231,7 +156,7 @@ client too. It registers:
 | `RestTemplateCustomizer` | `@ConditionalOnClass(RestTemplateCustomizer)`, same order | appends the interceptor to every `RestTemplate` built through `RestTemplateBuilder` |
 
 Because the interceptor is its own bean, a host can replace it while keeping the customizers
-([Legatium guide §3](../../docs/GUIDE.md#3-overriding-beans)). Boot's `spring-boot-restclient` module is an **optional** dependency:
+([Common guide §3](../../docs/GUIDE.md#3-overriding-beans)). Boot's `spring-boot-restclient` module is an **optional** dependency:
 without it the interceptor bean still exists and the host attaches it by hand ([§3.2](#32-manual-wiring)).
 
 ### 2.3 Lifecycle of one exchange
@@ -272,7 +197,7 @@ InterceptingClientHttpRequest ──▶ [earlier interceptors] ──▶ ClientR
 
 The emitter computes duration, reads the **final** status and headers off the real response, classifies
 level/outcome/cause, records body sizes, gates on the logger level, opens the emission `MdcScope` (with
-trace ownership, see [Legatium guide §7.6](../../docs/GUIDE.md#76-trace-correlation)), selects the response headers, decodes the captured
+trace ownership, see [Common guide §7.6](../../docs/GUIDE.md#76-trace-correlation)), selects the response headers, decodes the captured
 bodies and writes one event.
 
 ### 2.4 Emission point: response close
@@ -333,7 +258,7 @@ Bodies are never pre-read, buffered or replayed:
   the reading thread to the closing thread (usually the same; not necessarily) is established by the
   capture itself: the volatile `totalBytes` is written last in every mutation.
 
-The captures exist only when a body is logged (in any mode — `on-failure` needs the bytes before the outcome is known, [Legatium guide §6.3](../../docs/GUIDE.md#63-body-logging-and-body-measuring)) **or** measured; without either, the response wrapper still
+The captures exist only when a body is logged (in any mode — `on-failure` needs the bytes before the outcome is known, [Common guide §6.3](../../docs/GUIDE.md#63-body-logging-and-body-measuring)) **or** measured; without either, the response wrapper still
 exists (the close hook is the emission point), but the body stream passes through with the read-failure
 guard only.
 
@@ -344,7 +269,7 @@ body read only partially is captured to exactly that extent, and the `[truncated
 counts what flowed, not `Content-Length`. This is the deliberate trade-off against a replaying buffer —
 the log tells the truth about what the application processed, and streaming stays untouched. Because of
 that, the log cannot tell a body the peer sent but the application dropped from one that was never sent;
-the counter `adapter.response.body.read` ([Legatium guide §7.4](../../docs/GUIDE.md#74-meters)) exists for exactly that distinction.
+the counter `adapter.response.body.read` ([Common guide §7.4](../../docs/GUIDE.md#74-meters)) exists for exactly that distinction.
 
 ### 2.6 MDC coverage
 
@@ -382,49 +307,12 @@ response objects):
 | emission | `logExchange` — everything after the exactly-once CAS, including the status read | the exchange event is **lost**; the close returns normally | `failopen{stage=emission}` |
 | registration | `ClientLoggingMetrics.registerOrFallback` | the conflicting meter lives in a private registry, warned once per name | — |
 
-Every catch block reports through `reportQuietly`, which swallows a failure of the diagnostics channel
-itself (a throwing `Counter`, a throwing appender that also covers the internal logger).
-`InterruptedException` is caught separately and the interrupt flag is restored.
-
-Failures of the logging are reported on the module's **own** loggers
-(`eu.inqudium.legatium.restclient.logging.ClientRequestLoggingInterceptor`, `…ExchangeLogEmitter`,
-`eu.inqudium.legatium.common.ClientLoggingMetrics`), never on the exchange logger, so the exchange stream stays parseable.
-
-**Security note.** Fail-open is the inverse of what an audit log needs: a host-side fault silently
-removes the call from the log instead of failing it. The exchange log is therefore an **observability**
-feature with no completeness guarantee; a regulatory audit trail of outbound calls must come from a
-fail-closed component. The compensating controls are `adapter.logging.failopen` and the
-`exchanges.open` gauge ([Legatium guide §7.5](../../docs/GUIDE.md#75-reading-the-meters-together)) — alert on them.
-
-**The boundary is `Exception`, not `Throwable` — a decision.** Every guard confines an `Exception` and
-lets an `Error` propagate: a `VirtualMachineError`, a `LinkageError` from a broken logging backend or a
-`StackOverflowError` is a JVM-level condition no logging library can meaningfully absorb, and swallowing
-it would hide a process that is already failing. The one thing the module protects against an `Error` is
-its own bookkeeping: a wire call that dies with an `Error` (an inner interceptor's `AssertionError`, a
-`LinkageError` in the engine on first use) still closes the open-exchange gauge (`abandonExchange`, no
-emission attempted, one WARN breadcrumb), so the liveness signal cannot drift over something the module
-never caused. An `Error` thrown by the logging backend *during* the emission at response close is outside
-the promise and reaches the client's `finally`.
-
-### 2.8 Injectable collaborators
-
-Time and randomness are injected, not ambient:
-
-- `NanoTimeSource` — monotonic nanoseconds for `adapter_duration_ms` and the slow threshold; the single
-  production read of `System.nanoTime()` is `NanoTimeSource.SYSTEM`. Log timestamps come from the
-  logging backend, keeping the two time domains separate.
-- `CorrelationIdGenerator` — the id for traceless calls without a correlation header; `DEFAULT` (the
-  counting generator, ADR-0004) by default. Never consulted for a traced call (ADR-0002: the
-  `traceparent` trace id is the request id) — and in a host with tracing configured, never at all
-  ([§4.8](#48-tracing-makes-every-call-traced)).
-
-- `HeaderValueMasker` — how a header listed in a `masked` section renders on the line; `DEFAULT` is the
-  stable `length:hash` fingerprint ([§4.10](#410-masking-is-a-fingerprint-not-a-secret)). The
-  properties decide WHICH values are masked, the bean decides HOW - a keyed HMAC for a compliance regime,
-  a fixed `***` for a host that wants no correlation at all.
-
-All three are `fun interface`s, all three are `@ConditionalOnMissingBean` beans, and all are what the
-module's tests drive from an `AtomicLong` / a fixed string / a lambda without any mocking library.
+What the promise behind the stages is, where the reports go (the module's own loggers, never the
+exchange logger), why the exchange log is an observability feature and not an audit trail, and why the
+boundary is `Exception` and not `Throwable`, is one contract for both twins —
+[Common guide §8.2](../../docs/GUIDE.md#82-fail-open-contract). Specific to this stack: an `Error`
+thrown by the logging backend *during* the emission at response close is outside the promise and reaches
+the client's `finally`.
 
 ---
 
@@ -432,7 +320,7 @@ module's tests drive from an `AtomicLong` / a fixed string / a lambda without an
 
 Everything that is one contract for both twins — prerequisites, the dependency, overriding beans, the
 logging backend and structured output, the index mapping, the configuration and the metrics — is written
-once, in the [Legatium guide](../../docs/GUIDE.md). This chapter holds what is specific to the interceptor:
+once, in the [Common guide](../../docs/GUIDE.md). This chapter holds what is specific to the interceptor:
 how it is wired into a Boot application, how to wire it by hand, where it sits in the chain, and how to verify
 the integration.
 
@@ -552,8 +440,8 @@ Rules for manual wiring:
 - **Reuse the one bean; do not construct a second interceptor in a Boot context.** The meters are
   identified by name, so every interceptor on one `MeterRegistry` shares one metrics owner and the
   `adapter.logging.exchanges.open` gauge reports the total across them
-  ([§4.9](#49-one-metrics-instance-per-registry)). A second instance would not break anything, but it
-  buys nothing.
+  ([Common guide §7.4](../../docs/GUIDE.md#74-meters)). A second instance would not break anything,
+  but it buys nothing.
 - **Honour the switch.** With `adapter-logging.enabled=false` the bean does not exist, and a plain
   injection point fails to start the context. A client configuration that must survive the switch takes
   an `ObjectProvider<ClientRequestLoggingInterceptor>` and attaches the interceptor only if it is
@@ -570,7 +458,7 @@ Rules for manual wiring:
 
 - **Activation is not the host's business.** Host and path activation (`adapter-logging.exclude-hosts`,
   `include-path-patterns`, `exclude-path-prefixes`) is evaluated inside the interceptor
-  ([Legatium guide §6.4](../../docs/GUIDE.md#64-activation-hosts-and-paths)), so a manually attached interceptor applies the same rules as
+  ([Common guide §6.4](../../docs/GUIDE.md#64-activation-hosts-and-paths)), so a manually attached interceptor applies the same rules as
   an automatically attached one. There is no need to attach it selectively.
 - **Ordering is the host's business.** The automatic wiring guarantees "innermost" by its late
   customizers; a manual `requestInterceptor(...)` call is appended wherever it is made. Put it last.
@@ -609,7 +497,7 @@ closest to the wire:
   run inside this one and are outside that guarantee — they see the request after this interceptor did.
 
 The `traceparent` header is not affected by the order at all: the client observation Boot registers
-injects it into the request **before** any interceptor runs ([Legatium guide §7.6](../../docs/GUIDE.md#76-trace-correlation)).
+injects it into the request **before** any interceptor runs ([Common guide §7.6](../../docs/GUIDE.md#76-trace-correlation)).
 
 Activation is evaluated **in the interceptor** (`shouldNotFilter`), so its semantics are byte-identical
 with the WebClient twin. If the host needs a different position, it attaches the bean itself
@@ -730,60 +618,10 @@ first attempt's correlation header only if the retrying layer reuses the mutated
 request gets a new id). Dashboards counting calls per peer count attempts; `http.client.requests` does
 the same.
 
-### 4.8 Tracing makes every call traced
-
-With Micrometer Tracing configured, the client observation roots a trace whenever none is active, so
-**every** outbound call carries a `traceparent` — sampled or not (an unsampled trace still propagates,
-with flags `00`). Consequences: the module never generates a correlation id in such a host,
-`correlation.id{source=generated}` reads zero by construction, and the peer never receives an
-`X-Correlation-Id` from this module. A peer without tracing that needs a quotable id in that setup is a
-matter for the host's propagation configuration (baggage), not for this module — which stays neutral.
-Pinned by the tracing integration test.
-
-### 4.9 One metrics instance per registry
-
-Micrometer deduplicates meters by id. A second `ClientLoggingMetrics` instance against the same registry
-would share the **counters** (increments merge) but not the **gauge**: the second gauge registration is
-silently ignored. Every interceptor therefore obtains its metrics owner through a per-registry cache, so
-several interceptors on one registry (a host wiring extra instances by hand) share one owner and the
-gauge reports the total across them.
-
-### 4.10 Masking is a fingerprint, not a secret
-
-By default `masked` replaces a header value with `length:sha256-prefix64` — stable, so a masked token
-can still be correlated across events, across the two twins, and across the Limesium server line (same
-scheme), and a 64-bit cryptographic prefix makes accidental collisions negligible. It is **unsalted and
-unkeyed**: it prevents plaintext exposure, not offline guessing. A reader with a candidate list
-(usernames, tenant names, short API keys) can confirm a candidate by hashing it. Do not treat the
-default as a security boundary for guessable values; omit such headers from the selection instead — or
-**key** it: `adapter-logging.masking-key` turns the fingerprint into an HMAC-SHA256 under the key, same
-shape and stability, guess-proof without the key (a secret — supply it as one). For any other shape the
-masker is the `HeaderValueMasker` bean ([§2.8](#28-injectable-collaborators)): a host pins its own (a
-fixed `***` for no correlation at all) once, and both twins mask with it. The contract a replacement
-must keep: never return the plaintext.
-
-### 4.11 Shared code: legatium-common, inlined by Shade
-
-The byte-identical part of the twins' shared layer lives in the `legatium-common` module
-([ADR-0003](../../docs/adr/ADR-0003-legatium-common-inlined-by-shade.md)): the `Traceparent` parser (with
-its tests and fuzz target), `HeaderLogProperties` (selection and masking fingerprint, with unit test and
-fuzz target), the `ClientLogField` enum with its builder extensions and the `ClientLoggingProperties`
-binding, `Timeouts`, `NanoTimeSource`, `CorrelationIdGenerator`, `CorrelationHeader`,
-`reportQuietly`/`failOpen`, the MDC keys and scope, `BodyReadState`/`decodeTruncated` - and, since the
-amendment of 2026-09-04, the metrics owner `ClientLoggingMetrics` (parameterised by the `ClientStack`:
-outcome vocabulary and `client` tag) and the activation `ClientActivation`, whose twin copies had
-converged to near-identity. The Maven Shade plugin inlines those classes into THIS jar at package time,
-the dependency-reduced POM drops the dependency, and `legatium-common` is never published — consumers
-keep adding exactly one artifact, and the shared classes stay `internal` (`-Xfriend-paths`; build from
-the reactor root or with `-am`).
-
-Everything whose twin copies genuinely differ stays deliberately duplicated: the emitters and exchanges,
-interceptor vs. filter, and `BoundedBodyCapture` (two different concurrency designs).
-ADR-0003 names the threshold: a twin-paired file that reaches 90 % line similarity after neutralising the
-stack names is byte-identical enough to move, parameterised where it must differ. For the remainder the
-accepted cost is unchanged: a change is a conscious port in both directions, and the lockstep tests catch
-*named* contract drift (keys, field names, meter names, message text), not behavioural drift inside
-near-identical code.
+Tracing making every call traced, the one-metrics-owner-per-registry rule and the masking fingerprint are
+one behaviour for both twins — [Common guide §7.6](../../docs/GUIDE.md#76-trace-correlation),
+[§7.4](../../docs/GUIDE.md#74-meters) and [§6.2](../../docs/GUIDE.md#62-header-sections); the shared
+code they rest on is [Common guide §9](../../docs/GUIDE.md#9-shared-code-legatium-common-inlined-by-shade).
 
 ---
 
@@ -808,7 +646,7 @@ legatium-restclient-logging/
     │   └── BoundedBodyCapture.kt                  bounded capture target, read state
     │   (ClientLoggingProperties, ClientLogFields, Traceparent, Timeouts, Mdc, NanoTimeSource,
     │    CorrelationIdGenerator, HeaderLogProperties, BodyCapture helpers and the fail-open guards
-    │    live in ../legatium-common - inlined, §6.11)
+    │    live in ../legatium-common - inlined, Common guide §9)
     ├── main/resources/META-INF/spring/…AutoConfiguration.imports
     ├── test/java/…/BoundedBodyCaptureFuzzTest.java    Jazzer target (regression mode in every build)
     └── test/kotlin/eu/inqudium/legatium/restclient/logging/  see the suite overview below
@@ -831,6 +669,9 @@ capture's fuzz target lives here.
 
 ### 5.2 Related documents
 
+- [Common guide](../../docs/GUIDE.md) — everything that is one contract for both twins: prerequisites,
+  dependency, beans, logging backend, index mapping, configuration, fields, MDC keys, meters, trace
+  correlation, scope and fail-open guarantees, the shared code.
 - [`README.md`](../README.md) — module summary, field family, property table, meters.
 - [`legatium-webclient-logging/README.md`](../../legatium-webclient-logging/README.md) — the twin's
   documentation; everything not listed in [§4.1](#41-differences-to-the-webclient-twin) applies there

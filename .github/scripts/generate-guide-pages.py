@@ -34,7 +34,7 @@ MODULE_DOCS = {
     "legatium-restclient-logging": ["GUIDE.md"],
     "legatium-webclient-logging": ["GUIDE.md"],
 }
-# The shared Legatium guide lives in the docs_dir itself (docs/GUIDE.md) so it renders on GitHub
+# The Common guide lives in the docs_dir itself (docs/GUIDE.md) so it renders on GitHub
 # with relative links to the module guides and READMEs; those links resolve on the site only in
 # a rewritten copy, so it is excluded from the build (mkdocs.yml exclude_docs) and generated to
 # docs/guides/GUIDE.md like a module guide with src_dir = docs/.

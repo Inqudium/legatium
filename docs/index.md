@@ -78,6 +78,11 @@ copy the block and change only what you need.
 
 ## Documentation
 
+- **[Common guide](https://github.com/Inqudium/legatium/blob/main/docs/GUIDE.md)** —
+  everything that is one contract for both twins, written once: prerequisites,
+  dependency, beans, the exchange line and the logging backend, index mapping,
+  configuration, fields, meters, trace correlation, scope and fail-open
+  guarantees, the shared code.
 - **[RestClient guide](https://github.com/Inqudium/legatium/blob/main/legatium-restclient-logging/docs/GUIDE.md)** —
   the long-form guide of the reference implementation: architecture,
   integration, configuration, metrics.

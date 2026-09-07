@@ -1,4 +1,4 @@
-# Legatium — Guide
+# Legatium — Common guide
 
 One structured `adapter_*` log line per outbound HTTP exchange, for two Spring client stacks that share
 one contract: the blocking twin [`legatium-restclient-logging`](../legatium-restclient-logging/README.md)
@@ -8,11 +8,11 @@ format, the same field family, bind the same `adapter-logging.*` configuration a
 meters. The inbound counterpart of the family is the sibling project
 [Limesium](https://github.com/Inqudium/limesium).
 
-This guide holds everything that is **one contract by construction** — integration, configuration, the
-fields, the MDC keys, the meters and the trace correlation — so that it is written once. Everything
-specific to a stack lives in the twin's own guide: the
-[RestClient guide](../legatium-restclient-logging/docs/GUIDE.md) (architecture of the interceptor, its
-wiring, the blocking stack's special characteristics) and the
+This guide holds everything that is **one contract by construction** — integration, the exchange line,
+configuration, the fields, the MDC keys, the meters, the trace correlation, the fail-open promise and the
+shared code behind all of it — so that it is written once. Everything specific to a stack lives in the
+twin's own guide: the [RestClient guide](../legatium-restclient-logging/docs/GUIDE.md) (architecture of
+the interceptor, its wiring, the blocking stack's special characteristics) and the
 [WebClient guide](../legatium-webclient-logging/docs/GUIDE.md) (architecture of the filter, its wiring,
 the reactive stack's special characteristics). Everything here is derived from the code under
 `legatium-common/src/main/kotlin/eu/inqudium/legatium/common/` and the twins' entry points; when the
@@ -40,6 +40,12 @@ two disagree, the code wins.
    4. [Meters](#74-meters)
    5. [Reading the meters together](#75-reading-the-meters-together)
    6. [Trace correlation](#76-trace-correlation)
+8. [Scope and guarantees](#8-scope-and-guarantees)
+   1. [What the modules deliberately do not do](#81-what-the-modules-deliberately-do-not-do)
+   2. [Fail-open contract](#82-fail-open-contract)
+9. [Shared code: legatium-common, inlined by Shade](#9-shared-code-legatium-common-inlined-by-shade)
+   1. [The shared classes](#91-the-shared-classes)
+   2. [The twin contract and its lockstep tests](#92-the-twin-contract-and-its-lockstep-tests)
 
 ---
 
@@ -95,6 +101,25 @@ adapter-logging:
 
 ## 3. Overriding beans
 
+Time, randomness and masking are injected, not ambient — three `fun interface`s, each a
+`@ConditionalOnMissingBean` bean of both auto-configurations, each driven in the modules' tests from an
+`AtomicLong`, a fixed string or a lambda without any mocking library:
+
+- `NanoTimeSource` — monotonic nanoseconds for `adapter_duration_ms` and the slow threshold; the single
+  production read of `System.nanoTime()` is `NanoTimeSource.SYSTEM`. Log timestamps come from the
+  logging backend, keeping the two time domains separate.
+- `CorrelationIdGenerator` — the id for traceless calls without a correlation header; `DEFAULT` is the
+  counting generator of [ADR-0004](adr/ADR-0004-counting-correlation-id-default.md): a random
+  per-instance base-36 prefix plus one atomic increment per call, 21 characters, no `SecureRandom` on a
+  request thread or an event loop. Never consulted for a traced call (ADR-0002: the `traceparent` trace
+  id is the request id) — and in a host with tracing configured, never at all
+  ([§7.6](#76-trace-correlation)).
+- `HeaderValueMasker` — how a header listed in a `masked` section renders on the line; the default,
+  `HeaderValueMasker.forKey(masking-key)`, is the stable `length:hash` fingerprint, HMAC-keyed when the
+  key is set ([§6.2](#62-header-sections)). The properties decide WHICH values are masked, the bean
+  decides HOW — a keyed HMAC for a compliance regime, a fixed `***` for a host that wants no correlation
+  at all.
+
 Every default is `@ConditionalOnMissingBean`, and one host bean serves **both** twins — the shared types
 live in the package `eu.inqudium.legatium.common`:
 
@@ -143,6 +168,25 @@ is the manual-wiring section of the twin's guide. Keep in mind the one-instance-
 open-exchanges gauge ([§7.4](#74-meters)).
 
 ## 4. Logging backend and structured output
+
+On the logger `adapter-http-exchange` (configurable) a completed exchange reads, in a plain-text
+appender:
+
+```
+Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
+```
+
+The message text is the same on both stacks (`TwinContractTest` pins it in each twin). The trace suffix
+appears only when the outgoing request carried a conformant W3C `traceparent` header — its trace id
+then doubles as the request id (ADR-0002); a call that produced no response reads `-> -`. With
+`log-request-start` on, a second, earlier line precedes it:
+
+```
+Adapter http exchange started POST https://api.example.com/things/42 [adapter_request_id=4bf92f…]
+```
+
+The arrival line carries no outcome, status or duration, so a dashboard keyed on `adapter_outcome` still
+sees exactly one event per call.
 
 The modules emit through SLF4J's fluent API. Every exchange event carries its data in **two places**,
 and an encoder treats them differently:
@@ -213,6 +257,38 @@ Key-value pairs and MDC entries become **flat top-level fields**, and values kee
 declares in `ClientLogField` and the component template maps. This is the shape the template in
 [§5](#5-index-mapping-elk) is written for. `logging.structured.json.include` / `exclude` / `rename`
 control the field selection (e.g. to drop `adapter_route`, which duplicates host and path).
+
+The exchange at the top of this section becomes this document:
+
+```json
+{
+  "message": "Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
+  "level": "INFO",
+  "logger": "adapter-http-exchange",
+  "adapter_outcome": "success",
+  "adapter_duration_ms": 17,
+  "adapter_request_method": "POST",
+  "adapter_response_status_code": 200,
+  "adapter_url_host": "api.example.com",
+  "adapter_url_path": "/things/42",
+  "adapter_url_template": "https://api.example.com/things/{id}",
+  "adapter_request_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "adapter_method": "POST",
+  "adapter_route": "https://api.example.com/things/42",
+  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "spanId": "00f067aa0ba902b7",
+  "endpoint_request_id": "4bf92f3577b34da6a3ce929d0e0e4736"
+}
+```
+
+The `adapter_request_id` / `adapter_method` / `adapter_route` / `traceId` / `spanId` entries come from
+the MDC ([§7.2](#72-mdc-keys)); the `adapter_*` key-values are the field family of
+[§7.1](#71-log-fields). The `endpoint_request_id` is not the modules': it is the ambient MDC of the
+inbound request the call was made from (Limesium), which the additive emission scope leaves in place —
+on the blocking stack as a matter of course, on the reactive stack when the host's context propagation
+restores it around the completing operator — and this is how the client line joins the server line
+without any coupling between the two libraries. How MDC entries land in the document (flat, nested,
+renamed) is the encoder's decision.
 
 | Option | Output | Key-value pairs | MDC | Typed values | Escapes control chars | Use for |
 |---|---|---|---|---|---|---|
@@ -296,6 +372,18 @@ selected header is present.
 Request headers are selected at **wiring time** from the outgoing request, after the correlation header
 was added, so a selected `X-Correlation-Id` shows what actually went out; response headers at
 **emission** (response close, resp. the body's terminal signal), so they reflect the response as received.
+
+**Masking is a fingerprint, not a secret.** By default `masked` replaces a header value with
+`length:sha256-prefix64` — stable, so a masked token can still be correlated across events, across the
+two twins, and across the Limesium server line (same scheme), and a 64-bit cryptographic prefix makes
+accidental collisions negligible. It is **unsalted and unkeyed**: it prevents plaintext exposure, not
+offline guessing. A reader with a candidate list (usernames, tenant names, short API keys) can confirm a
+candidate by hashing it. Do not treat the default as a security boundary for guessable values; omit such
+headers from the selection instead — or **key** it: `masking-key` turns the fingerprint into an
+HMAC-SHA256 under the key, same shape and stability, guess-proof without the key (a secret — supply it as
+one). For any other shape the masker is the `HeaderValueMasker` bean ([§3](#3-overriding-beans)): a host
+pins its own (a fixed `***` for no correlation at all) once, and both twins mask with it. The contract a
+replacement must keep: never return the plaintext.
 
 ### 6.3 Body logging and body measuring
 
@@ -643,6 +731,125 @@ client span and **injects `traceparent`** — into the request headers before th
 (`RestClient`), into the request *builder* before the request is built and the filter chain runs
 (`WebClient`) — so every interceptor or filter, this one included, sees the header. Each twin's tracing
 integration test pins that order beside a real Brave bridge; a Boot upgrade that changes it breaks the
-build rather than silently dropping trace ids. Consequence: in a host with tracing configured, **every
-call is traced** and the module never generates an id there — the `generated` share of
-`adapter.logging.correlation.id` reads zero by construction.
+build rather than silently dropping trace ids. The observation roots a trace whenever none is active (on
+the reactive stack: none on the subscribing context), so this holds for every call, sampled or not — an
+unsampled trace still propagates, with flags `00`. Consequence: in a host with tracing configured,
+**every call is traced**, the module never generates an id there — the `generated` share of
+`adapter.logging.correlation.id` reads zero by construction — and the peer never receives an
+`X-Correlation-Id` from this module. A peer without tracing that needs a quotable id in that setup is a
+matter for the host's propagation configuration (baggage), not for the modules, which stay neutral.
+
+---
+
+## 8. Scope and guarantees
+
+### 8.1 What the modules deliberately do not do
+
+- **No request rates, latencies or status distributions as metrics.** Boot's `http.client.requests` and
+  the structured log fields cover those; the modules' meters observe only what those cannot show
+  ([§7.4](#74-meters), [ADR-0008](adr/ADR-0008-six-meters-consumed-not-exported.md)).
+- **No retries, no circuit breaking, no request rewriting.** The modules observe; the one thing they add
+  to a request is the correlation header on a traceless call without one
+  ([§7.6](#76-trace-correlation)).
+- **No body masking transformers and no per-key response sampling.** Bodies are logged verbatim up to
+  the capture limit, and the logger level is the only volume control ([§6.5](#65-logger-levels)).
+- **No replaying body cache.** The body tees are passive; an unread response body is logged as absent
+  ([§6.3](#63-body-logging-and-body-measuring)).
+- **No exporting of a `MeterRegistry`.** The host's registry is consumed if present; otherwise the
+  meters are no-ops (an empty `CompositeMeterRegistry`).
+- **No call-wide thread-local MDC on the reactive stack.** A reactive call hops event-loop threads;
+  there the identity rides the emission scope and the message ([§7.2](#72-mdc-keys)).
+- **No clients built by hand.** The customizers cover every client built through Boot's builders (and
+  the HTTP service client groups built from them); a hand-built client gets the interceptor or filter
+  bean added by the host — the manual-wiring section of the twin's guide.
+
+### 8.2 Fail-open contract
+
+A logging component must never fail the call it describes. Both modules enforce that at every boundary
+where they call host-provided code (MDC adapter, appenders, `MeterRegistry`, the client's request and
+response objects): no failure inside the logging — wiring, body tee, MDC adapter, emission, metrics —
+can ever fail, delay or alter the call. Which operation degrades how, and under which `stage` tag of
+`adapter.logging.failopen` it is counted, is the stage table of each twin's guide; the promise behind
+the tags is the same:
+
+- **`wiring`** — the entry point degrades to a plain pass-through for this call, or a piece of
+  bookkeeping (a sample, a counter, the gauge) is lost while the event still follows;
+- **`arrival`** — the arrival line is dropped;
+- **`emission`** — the exchange event is **lost**; the call completes normally.
+
+Every catch block reports through `reportQuietly`, which swallows a failure of the diagnostics channel
+itself (a throwing `Counter`, a throwing appender that also covers the internal logger).
+`InterruptedException` is caught separately and the interrupt flag is restored. Failures of the logging
+are reported on the modules' **own** loggers
+(`eu.inqudium.legatium.restclient.logging.ClientRequestLoggingInterceptor` resp.
+`eu.inqudium.legatium.webclient.logging.ClientRequestLoggingFilter`, `…ExchangeLogEmitter`,
+`eu.inqudium.legatium.common.ClientLoggingMetrics`), never on the exchange logger, so the exchange
+stream stays parseable. A meter whose registration conflicts with an existing one falls back to a
+private registry, warned once per name ([§7.4](#74-meters)).
+
+**Security note.** Fail-open is the inverse of what an audit log needs: a host-side fault silently
+removes the call from the log instead of failing it. The exchange log is therefore an **observability**
+feature with no completeness guarantee; a regulatory audit trail of outbound calls must come from a
+fail-closed component. The compensating controls are `adapter.logging.failopen` and the
+`exchanges.open` gauge ([§7.5](#75-reading-the-meters-together)) — alert on them.
+
+**The boundary is `Exception`, not `Throwable` — a decision.** Every guard confines an `Exception` and
+lets an `Error` propagate: a `VirtualMachineError`, a `LinkageError` from a broken logging backend or a
+`StackOverflowError` is a JVM-level condition no logging library can meaningfully absorb, and swallowing
+it would hide a process that is already failing. The one thing the modules protect against an `Error`
+is their own bookkeeping: a wire call that dies with an `Error` (an inner interceptor's or filter's
+`AssertionError`, a `LinkageError` in the engine or connector on first use) still closes the
+open-exchange gauge (`abandonExchange`, no emission attempted, one WARN breadcrumb), so the liveness
+signal cannot drift over something the module never caused. An `Error` thrown by the logging backend
+*during* the emission is outside the promise and reaches the caller — on the blocking stack through the
+client's `finally` around the response close.
+
+## 9. Shared code: legatium-common, inlined by Shade
+
+The byte-identical part of the twins' shared layer lives in the `legatium-common` module
+([ADR-0003](adr/ADR-0003-legatium-common-inlined-by-shade.md)). The Maven Shade plugin inlines those
+classes into each twin's jar at package time, the dependency-reduced POM drops the dependency, and
+`legatium-common` is never published — consumers keep adding exactly one artifact
+([§2](#2-adding-the-dependency)), and the shared classes stay `internal` (`-Xfriend-paths`; build from
+the reactor root or with `-am`).
+
+Everything whose twin copies genuinely differ stays deliberately duplicated: the emitters and exchanges,
+interceptor vs. filter, and `BoundedBodyCapture` (two different concurrency designs). ADR-0003 names the
+threshold: a twin-paired file that reaches 90 % line similarity after neutralising the stack names is
+byte-identical enough to move, parameterised where it must differ. For the remainder the accepted cost
+is unchanged: a change is a conscious port in both directions, and the lockstep tests catch *named*
+contract drift (keys, field names, meter names, message text), not behavioural drift inside
+near-identical code.
+
+### 9.1 The shared classes
+
+| Class | Responsibility |
+|---|---|
+| `ClientLoggingProperties` / `HeaderLogProperties` | The `adapter-logging.*` binding, validated in `init` ([§6.6](#66-validation-at-startup)) — one class for both twins. `HeaderLogProperties` is one header section with `includes` / `excludes` / `masked` / `unmasked` and the masking fingerprint ([§6.2](#62-header-sections)); unit-tested and fuzzed here. |
+| `ClientLogField` | The wire names and the exact JVM type of each structured field ([§7.1](#71-log-fields)), with the builder extensions the emitters write through; a wrongly typed value drops the field with a warning, never the event. One enum for both twins. |
+| `ClientLoggingMetrics` | The six meters ([§7.4](#74-meters)), one implementation parameterised by the `ClientStack` (outcome vocabulary, `client` tag) — the fixed-tag meters pre-registered, the body meters created lazily per tag, per-meter fallback to a private registry on a registration conflict. Shared since the amendment of 2026-09-04 to ADR-0003, when the twin copies had converged to near-identity. |
+| `ClientActivation` | Which calls are logged at all: host exclusion, include patterns, exclude prefixes ([§6.4](#64-activation-hosts-and-paths)) — one implementation, so the semantics are identical on both stacks by construction. Shared since the same amendment. |
+| `MdcKeys` / `TraceMdcKeys` / `MdcScope` | The MDC key names ([§7.2](#72-mdc-keys)) and the scope that installs them and restores the previous values on close — around the emission with trace ownership, on the blocking stack also around the wire call. |
+| `Traceparent` | Strict W3C `traceparent` parsing to `(traceId, spanId)` ([§7.6](#76-trace-correlation)); tests and fuzz target live here. |
+| `Timeouts` | The cause-chain walk that classifies a failure as a `timeout` ([§7.3](#73-levels-and-outcomes)): the JDK's timeout types matched as types, Netty's by fully qualified name, so neither twin needs a Netty dependency. |
+| `CorrelationHeader` | The acceptance rule for a correlation header found on a traceless request (ADR-0002, [§6.1](#61-property-reference)). |
+| `NanoTimeSource` / `CorrelationIdGenerator` / `HeaderValueMasker` | The injectable collaborators ([§3](#3-overriding-beans)); `SYSTEM`, `DEFAULT` and `forKey` are the production defaults. |
+| `BodyReadState` / `decodeTruncated` | The response-side read state behind `adapter.response.body.read`, and the byte-bounded decoding of a captured body in its declared charset ([§6.3](#63-body-logging-and-body-measuring)). |
+| `reportQuietly` / `failOpen` | Guard the diagnostics channel (counter + internal log) of every catch block ([§8.2](#82-fail-open-contract)). |
+
+### 9.2 The twin contract and its lockstep tests
+
+The RestClient module is the **reference implementation**; the WebClient module is its twin. The
+cross-stack contract lives in files both builds bind:
+
+| Contract | Shipped in | Pinned by |
+|---|---|---|
+| Configuration keys and defaults | [`/docs/adapter-logging-reference.yml`](adapter-logging-reference.yml) | `ClientLoggingReferenceConfigTest` in `legatium-common` (one `ClientLoggingProperties` class for both twins, bound against the YAML once) |
+| Field family and index mapping | [`/docs/elk/…component-template.json`](elk/README.md) | `ClientLogFieldTest` in `legatium-common` (one enum for both twins, locked against the template once) |
+| Message text, each stack's outcome vocabulary | each twin's emitter and `ClientStack` | `TwinContractTest` in both modules; the meter names, MDC keys and shared literals once in `SharedContractTest` (`legatium-common`) |
+
+`legatium-common` pulls both files from the repository-shared `/docs` as **test resources** (declared
+in its `pom.xml`), so a missing checkout fails at resource processing with a clear message rather than
+as a silent contract drift. The consequence for a consumer: a dashboard, alert or index mapping written
+for one client works unchanged for the other — and an application may carry both modules
+([§2](#2-adding-the-dependency)).

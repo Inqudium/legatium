@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The shared guide (`docs/GUIDE.md`) is now the **Common guide** (site nav, READMEs, module
+  guides), and it absorbs what the two module guides had each repeated: the exchange line and
+  its structured document, the injectable collaborators, the masking fingerprint, tracing
+  making every call traced, the fail-open promise, what the modules deliberately do not do,
+  and the shared code in `legatium-common` with its class table and the twin contract's
+  lockstep tests. The module guides keep architecture, wiring and stack specifics and point
+  to the Common guide for the rest.
+
 ### Fixed
 
 - The published POMs name the repository itself as homepage and SCM. Maven appends the
