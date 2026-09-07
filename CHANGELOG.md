@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the shared code in `legatium-common` with its class table and the twin contract's
   lockstep tests. The module guides keep architecture, wiring and stack specifics and point
   to the Common guide for the rest.
+- Common guide §3 explains why the `@ConditionalOnMissingBean` back-off of the collaborator
+  beans is reliable (auto-configuration import order) and where it ends (a host bean that
+  itself lives in another auto-configuration); the auto-configuration tests of both twins
+  now pin the back-off for `NanoTimeSource` and `CorrelationIdGenerator` as well.
 
 ### Fixed
 

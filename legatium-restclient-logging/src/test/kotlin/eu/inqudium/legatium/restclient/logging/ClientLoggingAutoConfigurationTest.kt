@@ -169,6 +169,33 @@ class ClientLoggingAutoConfigurationTest {
     }
 
     @Test
+    fun `should let host time source and id generator beans back the defaults off`() {
+        // What is tested: the @ConditionalOnMissingBean back-off for the two remaining
+        //   collaborators, NanoTimeSource and CorrelationIdGenerator, with the host pinning both and
+        //   nothing else - the interceptor and the masker stay the auto-configured defaults.
+        // Success criteria: exactly one bean of each collaborator type, each the host's instance
+        //   (same reference, host behaviour on a call), while the interceptor and the masker still
+        //   exist exactly once.
+        // Why it matters: a deterministic clock and id generator are the documented override for a
+        //   test profile and for a peer that insists on an id format; the back-off is what makes the
+        //   host bean reach the interceptor's constructor injection instead of colliding with a
+        //   second bean of the same type.
+        // Given/When
+        contextRunner.withUserConfiguration(HostCollaboratorsConfig::class.java).run { context ->
+            // Then: the host's collaborators alone
+            assertThat(context).hasSingleBean(NanoTimeSource::class.java)
+            assertThat(context.getBean(NanoTimeSource::class.java)).isSameAs(context.getBean("hostNanoTime"))
+            assertThat(context.getBean(NanoTimeSource::class.java).nanoTime()).isEqualTo(42L)
+            assertThat(context).hasSingleBean(CorrelationIdGenerator::class.java)
+            assertThat(context.getBean(CorrelationIdGenerator::class.java)).isSameAs(context.getBean("hostCorrelationIds"))
+            assertThat(context.getBean(CorrelationIdGenerator::class.java).nextCorrelationId()).isEqualTo("host-id")
+            // And: the defaults the host did not touch are still there, once each
+            assertThat(context).hasSingleBean(ClientRequestLoggingInterceptor::class.java)
+            assertThat(context).hasSingleBean(HeaderValueMasker::class.java)
+        }
+    }
+
+    @Test
     fun `should keep the interceptor bean without the customizers when Boot's restclient module is absent`() {
         // What is tested: the optional-dependency boundary - a host wiring clients by hand still gets
         //   the bean to add.
@@ -225,4 +252,13 @@ private class HostConfig {
         properties: ClientLoggingProperties,
         registry: MeterRegistry,
     ): ClientRequestLoggingInterceptor = ClientRequestLoggingInterceptor(properties, NanoTimeSource.SYSTEM, CorrelationIdGenerator.DEFAULT, registry)
+}
+
+@Configuration(proxyBeanMethods = false)
+private class HostCollaboratorsConfig {
+    @Bean
+    fun hostNanoTime(): NanoTimeSource = NanoTimeSource { 42L }
+
+    @Bean
+    fun hostCorrelationIds(): CorrelationIdGenerator = CorrelationIdGenerator { "host-id" }
 }

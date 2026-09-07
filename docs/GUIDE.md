@@ -144,6 +144,22 @@ class ClientLoggingCustomisation {
 }
 ```
 
+**Why the back-off is reliable — and where it ends.** `@ConditionalOnMissingBean` is only trustworthy on
+an auto-configuration, and that is what both `ClientLoggingAutoConfiguration` classes are: registered
+through `META-INF/spring/…AutoConfiguration.imports`, they are imported *after* every `@Configuration`
+class and component scan of the host has registered its bean definitions, so a host bean of the same
+type is always there when the condition is evaluated. The two twins define the three collaborators
+under identical bean names and types; with both on the classpath the second auto-configuration (the
+WebClient twin, alphabetically) backs off by type, which is what keeps the default
+`spring.main.allow-bean-definition-overriding=false` from failing the context — pinned by the
+`consumer-smoke` build, which starts both shaded jars in one context. The back-off is pinned per twin by
+`ClientLoggingAutoConfigurationTest`. The guarantee ends where the host bean itself lives in **another
+auto-configuration** (a platform starter that ships a `CorrelationIdGenerator`): the order between
+auto-configurations is then undefined, and if that one runs after Legatium's, two beans of the type exist
+and the interceptor's or filter's constructor injection fails with a `NoUniqueBeanDefinitionException`.
+Such a starter orders itself with `@AutoConfigureBefore(ClientLoggingAutoConfiguration::class)` — one
+annotation per twin it wants to precede — or marks its bean `@Primary`.
+
 A host-defined `ClientRequestLoggingInterceptor` (RestClient twin) or `ClientRequestLoggingFilter`
 (WebClient twin) bean replaces the **entry point**, not the wiring: the auto-configured customizers
 still attach it to every Boot-built client. Both constructors take
