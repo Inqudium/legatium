@@ -185,6 +185,15 @@ class ClientRequestLoggingFilter
         ): ClientResponse {
             exchange.response = response
             val capture = exchange.responseCapture
+            // The declared length sizes the capture's buffer; a peer's malformed value is folded to
+            // unknown (Spring parses it with Long.parseLong), never thrown into the delivery.
+            capture?.expectBytes(
+                try {
+                    response.headers().contentLength().orElse(BoundedBodyCapture.UNKNOWN_LENGTH)
+                } catch (e: NumberFormatException) {
+                    BoundedBodyCapture.UNKNOWN_LENGTH
+                },
+            )
             return response
                 .mutate()
                 .body { body -> ObservedBody(body, exchange, capture, ::complete, ::teeFailure) }

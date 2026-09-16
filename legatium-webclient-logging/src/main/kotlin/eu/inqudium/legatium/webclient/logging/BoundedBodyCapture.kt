@@ -1,8 +1,7 @@
 package eu.inqudium.legatium.webclient.logging
 
 import eu.inqudium.legatium.common.BodyReadState
-import eu.inqudium.legatium.common.decodeTruncated
-import java.io.ByteArrayOutputStream
+import eu.inqudium.legatium.common.BoundedByteBuffer
 import java.nio.charset.Charset
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -30,6 +29,10 @@ import kotlin.concurrent.withLock
  * counts every byte - the mode the body-size metrics use when body logging is off; a negative limit is
  * rejected at construction. The tee is fed from mapped `DataBuffer`s ([tee]).
  *
+ * The bytes live in the shared [BoundedByteBuffer], sized once by the length the tee learned from
+ * `Content-Length` through [expectBytes]; this class adds the count, the read state and the reactive
+ * stack's concurrency model.
+ *
  * Besides the bytes, the response capture records HOW FAR the application consumed the body
  * ([readState]): the tee mirrors consumption, not transmission, so a response body the application
  * never subscribed to - or cancelled half-way - is invisible in the byte count alone. The response tee
@@ -38,14 +41,10 @@ import kotlin.concurrent.withLock
  * state is part of the emission snapshot.
  */
 internal class BoundedBodyCapture(
-    private val maxBytes: Int,
+    maxBytes: Int,
 ) {
-    init {
-        require(maxBytes >= 0) { "maxBytes must not be negative, got: $maxBytes" }
-    }
-
     private val lock = ReentrantLock()
-    private val buffer = ByteArrayOutputStream()
+    private val buffer = BoundedByteBuffer(maxBytes)
     private var total: Long = 0
     private var frozen = false
     private var state = BodyReadState.UNREAD
@@ -74,6 +73,22 @@ internal class BoundedBodyCapture(
     val totalBytes: Long
         get() = lock.withLock { total }
 
+    /**
+     * The body length the peer or the caller declared, as the buffer's SIZING hint
+     * ([BoundedByteBuffer.expect]): ignored once a byte is buffered and once frozen. A wrong hint costs
+     * allocation, never bytes - the cap and the count are unaffected.
+     */
+    fun expectBytes(length: Long) =
+        lock.withLock {
+            if (!frozen) {
+                buffer.expect(length)
+            }
+        }
+
+    /** The declared length the buffer is sized by, [UNKNOWN_LENGTH] without one - exposed for the tests. */
+    internal val expectedBytes: Long
+        get() = lock.withLock { buffer.expectedBytes }
+
     fun capture(
         bytes: ByteArray,
         offset: Int,
@@ -83,10 +98,7 @@ internal class BoundedBodyCapture(
             if (frozen) {
                 return
             }
-            val room = maxBytes - buffer.size()
-            if (room > 0) {
-                buffer.write(bytes, offset, minOf(length, room))
-            }
+            buffer.write(bytes, offset, length)
             total += length
         }
     }
@@ -96,7 +108,7 @@ internal class BoundedBodyCapture(
      * or once frozen. The reactive tee sizes its bounded prefix copy from this - the reason the tee's
      * transient allocation is bounded by the configured cap instead of the buffer size.
      */
-    fun remainingCapacity(): Int = lock.withLock { if (frozen) 0 else maxBytes - buffer.size() }
+    fun remainingCapacity(): Int = lock.withLock { if (frozen) 0 else buffer.remaining }
 
     /**
      * Counts [length] bytes that flowed WITHOUT buffering them: the reactive tee's path for everything
@@ -133,13 +145,11 @@ internal class BoundedBodyCapture(
      */
     fun loggedValue(charset: Charset): String? =
         lock.withLock {
-            if (total == 0L) {
-                return null
-            }
-            if (total > buffer.size()) {
-                "${decodeTruncated(buffer.toByteArray(), charset)}... [truncated, $total bytes total]"
-            } else {
-                buffer.toString(charset)
-            }
+            buffer.render(charset, total)
         }
+
+    companion object {
+        /** No trustworthy declared length: the buffer is sized by what flows. */
+        const val UNKNOWN_LENGTH = BoundedByteBuffer.UNKNOWN_LENGTH
+    }
 }

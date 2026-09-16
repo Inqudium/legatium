@@ -50,6 +50,31 @@ class CapturingDecoratorsTest {
     }
 
     @Test
+    fun `should hand the request's Content-Length to the capture at write time and fold a malformed one to unknown`() {
+        // What is tested: the sizing hint the decorator passes on - the Content-Length on the
+        //   connector request when writeWith runs (EncoderHttpMessageWriter sets it for a Mono body
+        //   right before), and a caller-set value Spring cannot parse.
+        // Success criteria: the capture's hint is 5 for a declared 5; UNKNOWN_LENGTH for "many",
+        //   and the write still succeeds with the body captured.
+        // Why it matters: the hint sizes the capture's one block exactly; a peer- or caller-controlled
+        //   header must never throw into the connector's write.
+        // Given
+        val declared = BoundedBodyCapture(64)
+        val connector = connectorRequest().apply { headers.contentLength = 5 }
+        val malformed = BoundedBodyCapture(64)
+        val garbled = connectorRequest().apply { headers.set("Content-Length", "many") }
+
+        // When
+        CapturingClientHttpRequestDecorator(connector, declared).writeWith(Mono.just(buffer("hello"))).block()
+        CapturingClientHttpRequestDecorator(garbled, malformed).writeWith(Mono.just(buffer("hello"))).block()
+
+        // Then
+        assertThat(declared.expectedBytes).isEqualTo(5L)
+        assertThat(malformed.expectedBytes).isEqualTo(BoundedBodyCapture.UNKNOWN_LENGTH)
+        assertThat(malformed.loggedValue(StandardCharsets.UTF_8)).isEqualTo("hello")
+    }
+
+    @Test
     fun `should tee a multi-buffer Flux body across its chunks`() {
         // What is tested: CapturingClientHttpRequestDecorator.writeWith with a Flux body - several
         //   buffers, each teed on its way through.

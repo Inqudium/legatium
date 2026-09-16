@@ -57,6 +57,7 @@ every move is recorded in [History](#history).
 | `CorrelationHeader` (the acceptance rule of ADR-0002)                                                          | 2026-09-04 | `CODE_ANALYSIS-2026-09-04T20-56-15.md`, finding 13                      |
 | `ClientLoggingMetrics` parameterised by `ClientStack`; `ClientActivation`                                      | 2026-09-04 | `ARCHITECTURE_REVIEW-2026-09-04T21-49-30.md`, finding 1                 |
 | `SharedContractTest` (the shared literals, pinned once)                                                        | 2026-09-05 | `ARCHITECTURE_REVIEW-2026-09-05T00-24-58.md`, finding 3                 |
+| `BoundedByteBuffer` (the byte-bounded buffer beneath both `BoundedBodyCapture`s, with unit test and fuzz target) | 2026-09-17 | extraction with the mark/reset and buffer-sizing work                   |
 
 Later residents that arrive with ordinary changes follow the same
 criterion; the module's source tree is the authoritative list.
@@ -69,7 +70,9 @@ Everything whose twin copies differ in design, not in data:
   interceptor and the filter;
 - `BoundedBodyCapture`: two different concurrency designs, volatile
   single-writer on the blocking stack, lock and freeze on the reactive
-  one.
+  one - the shells; the bounded buffer beneath them (the bytes, the
+  cap, the truncated rendering) is one `BoundedByteBuffer` in
+  `legatium-common` since 2026-09-17.
 
 For those the accepted cost is a conscious port in both directions.
 Each twin's `TwinContractTest` pins the two facts the twin owns (its
@@ -258,3 +261,12 @@ of both jars.
   `ClientLoggingMetrics` is tested once in `ClientLoggingMetricsTest`
   (ADR-0008); and the packaging is verified by `consumer-smoke/` as
   described above.
+- **2026-09-17:** the two `BoundedBodyCapture`s stay duplicated as
+  concurrency shells, but the buffer beneath them had become the same
+  thing twice: the blocking twin needed an array that a `reset` can cut
+  back (the tee stream forwards `mark`/`reset` since the second defect
+  round of 2026-09-16), and both twins wanted the array sized once by
+  the declared `Content-Length`. `BoundedByteBuffer` moved to
+  `legatium-common` with its unit test and fuzz target; each twin keeps
+  its count, read state and locking, and the truncation-boundary tests
+  stay in the twins as tests of the twin API.
