@@ -320,7 +320,7 @@ call (blocking stack) and the modules' own failure reports.
 
 ## 5. Index mapping (ELK)
 
-The fourteen `adapter_*` fields have a ready-made Elasticsearch component template in
+The `adapter_*` fields have a ready-made Elasticsearch component template in
 [`/docs/elk/`](elk/README.md):
 
 ```bash

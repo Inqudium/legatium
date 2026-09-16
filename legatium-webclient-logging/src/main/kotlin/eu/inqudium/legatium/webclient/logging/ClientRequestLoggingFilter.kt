@@ -27,7 +27,7 @@ import reactor.util.context.ContextView
  * The WebClient twin of `legatium-restclient-logging`'s `ClientRequestLoggingInterceptor`: ONE
  * structured `adapter_*` line per outbound HTTP exchange, identical message and field format, identical
  * `adapter-logging.*` configuration (see [ClientLoggingProperties]). Stack-inherent differences to the
- * RestClient twin, all deliberate:
+ * RestClient twin - this list is the canonical one, the module README's table mirrors it:
  *
  * - **Disposition vocabulary:** `cancelled` in addition to `success`/`failure`/`timeout` - a subscription
  *   the CALLER abandoned (a downstream `timeout()` operator, a disposed caller, a client that
@@ -43,8 +43,19 @@ import reactor.util.context.ContextView
  * - **The caller's context comes from the Reactor Context, not from a thread:** the `ContextView` the
  *   caller subscribed with is captured at subscription and restored into thread-locals around the
  *   exchange line ([AmbientContextRestorer], ADR-0010), so the client line joins the server line on
- *   the event-loop thread that completes the body - where the blocking twin simply logs on the
- *   caller's thread.
+ *   the event-loop thread that completes the body. The blocking twin logs on the caller's thread and,
+ *   for a response closed on another thread, restores a snapshot of the caller's MDC taken at wiring
+ *   (ADR-0011): the same layering, a different source.
+ * - **No WARN breadcrumb for a thrown call:** a failed call is reported through the exchange event
+ *   alone, where the blocking twin additionally writes a WARN breadcrumb on its own logger the moment
+ *   the call throws. Here the error is a signal that reaches the event's terminal callback anyway;
+ *   only an [Error] escaping the assembly leaves a breadcrumb, as in the twin.
+ * - **Retry identity on a traceless call:** the identity is resolved per subscription from the
+ *   caller's immutable `ClientRequest`, which never carries the correlation header this filter adds
+ *   to its rebuilt copy - so every attempt of a resubscribed traceless call generates and sends a
+ *   FRESH id, where the blocking twin's mutable request keeps the header of attempt 1 and every
+ *   re-entry sends the same id. A traced call carries the same trace id on every attempt on both
+ *   stacks.
  * - **Emission point:** the response BODY's terminal signal instead of a `close()` - the next section.
  *
  * ## Emission point: the body's terminal signal
@@ -92,7 +103,10 @@ class ClientRequestLoggingFilter
         private val nanoTime: NanoTimeSource,
         /** Supplies the id a TRACELESS call sends (ADR-0002); production passes [CorrelationIdGenerator.DEFAULT]. */
         private val correlationIds: CorrelationIdGenerator,
-        /** The host's registry the meters are consumed from; filters on one registry share one metrics owner (see below). */
+        /**
+         * The host's registry the meters are consumed from; filters on one registry share one
+         * metrics owner (section "Manual wiring" of the class KDoc).
+         */
         meterRegistry: MeterRegistry,
         /**
          * How masked header values render. Defaults to the masker the properties' `masking-key` selects
@@ -101,7 +115,7 @@ class ClientRequestLoggingFilter
          */
         private val masker: HeaderValueMasker = HeaderValueMasker.forKey(properties.maskingKey),
     ) : ExchangeFilterFunction {
-        /** Shared with the emitter; one owner per registry (see the class KDoc). */
+        /** Shared with the emitter; one owner per registry (section "Manual wiring" of the class KDoc). */
         private val metrics = ClientLoggingMetrics.forRegistry(meterRegistry, ClientStack.WEBCLIENT)
 
         /** Exposed for the tests, which swap the emitter's ambient restorer to drive its fail-open path. */
@@ -131,7 +145,7 @@ class ClientRequestLoggingFilter
                 val call =
                     try {
                         // The optional arrival line INSIDE the try: an Exception in it is confined in
-                        // [ExchangeLogEmitter.logRequestStart] and can never become this pipeline's error
+                        // `ExchangeLogEmitter.logRequestStart` and can never become this pipeline's error
                         // signal - only an Error can escape, and it then takes the same way as one from
                         // the assembly below.
                         if (properties.logRequestStart) {
@@ -143,14 +157,14 @@ class ClientRequestLoggingFilter
                         // error signal, so the response operator completes the exchange.
                         Mono.error(e)
                     } catch (t: Throwable) {
-                        // An Error is outside the fail-open promise ([failOpen]). Whether Reactor treats
+                        // An Error is outside the fail-open promise (`failOpen`). Whether Reactor treats
                         // it as fatal (rethrown through subscribe) or turns it into the caller's error
                         // signal (a plain Error, which deferContextual routes like an exception), no
                         // operator of this filter exists yet to see it - so the gauge is closed here.
                         abandonExchange(exchange, t)
                         throw t
                     }
-                // The response Mono's own operator ([ObservedResponse]): records and wraps the response,
+                // The response Mono's own operator (`ObservedResponse`): records and wraps the response,
                 // moves the state through DELIVERING to RESPONDED only once the downstream has TAKEN the
                 // response, and completes the exchange itself for an error, an empty completion or a
                 // cancel by the caller before the body owns it.
@@ -316,16 +330,15 @@ class ClientRequestLoggingFilter
                 )
             // The origin count LAST, right before the gauge: a wiring that fails above leaves the
             // correlation sum equal to the sum of exchanges that were actually opened. Guarded in
-            // [ClientLoggingMetrics.requestId]: a throwing host counter never fails the call.
+            // `ClientLoggingMetrics.requestId`: a throwing host counter never fails the call.
             metrics.requestId(identity.source)
             metrics.exchangeOpened()
             return Wiring(exchange, outgoing)
         }
 
         /**
-         * A capture exists when the body is logged in ANY mode OR measured - `on-failure` needs the bytes
-         * before the outcome is known and the emitter drops them on success; measure-only runs the capture
-         * in count-only mode (limit 0: nothing buffered, every byte counted).
+         * A capture exists when the body is logged in ANY mode ([BodyLogMode.captures]) OR measured
+         * ([ClientLoggingProperties.measureRequestBodySize]; then count-only, limit 0).
          */
         private fun newCaptures(): Captures =
             Captures(
@@ -333,7 +346,10 @@ class ClientRequestLoggingFilter
                 response = captureFor(properties.logResponseBody, properties.measureResponseBodySize),
             )
 
-        /** One direction's capture by the rule of [newCaptures], or null when the body is neither logged nor measured. */
+        /**
+         * One direction's capture by the rule of [newCaptures], or null when the body is neither
+         * logged nor measured.
+         */
         private fun captureFor(
             mode: BodyLogMode,
             measured: Boolean,
@@ -379,7 +395,10 @@ class ClientRequestLoggingFilter
              */
             const val ADAPTER_NAME_ATTRIBUTE = AdapterName.ATTRIBUTE
 
-            /** The cause attached to an exchange whose connector completed empty - WebClient's own message for the caller. */
+            /**
+             * The cause attached to an exchange whose connector completed empty - WebClient's own
+             * message for the caller.
+             */
             const val NO_RESPONSE_MESSAGE = "The underlying HTTP client completed without emitting a response"
 
             // The module's own logger, never the exchange logger: the exchange log stream stays parseable.

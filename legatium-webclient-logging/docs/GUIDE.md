@@ -934,8 +934,11 @@ connector gets the caller's very request object.
 
 The filter sits innermost ([§3.3](#33-filter-order-and-other-filters)), so a retrying filter — or a
 `retryWhen` around the call, which re-subscribes the whole exchange — invokes it once per attempt. Each
-attempt is a crossing and gets its own line, with the same `adapter_request_id` under a trace (or, on a
-traceless call, the correlation header the first attempt added to the request the retry re-sends).
+attempt is a crossing and gets its own line, with the same `adapter_request_id` under a trace. On a
+**traceless** call each attempt generates and sends a fresh id: the retry re-subscribes with the caller's
+immutable `ClientRequest`, which never carries the correlation header the filter adds to its rebuilt
+copy — a documented difference from the blocking twin, whose mutable request keeps the header of attempt
+1 (the filter's class documentation lists it).
 
 Tracing making every call traced, the one-metrics-owner-per-registry rule and the masking fingerprint are
 one behaviour for both twins — [Common guide §7.6](../../docs/GUIDE.md#76-trace-correlation),

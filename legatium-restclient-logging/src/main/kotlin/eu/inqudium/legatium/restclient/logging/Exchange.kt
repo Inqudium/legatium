@@ -15,32 +15,37 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 internal class Exchange(
     val method: String,
-    /** The request TARGET, `scheme://host[:port]/path` without the query - the message and MDC coordinate. */
+    /** [eu.inqudium.legatium.common.RequestTarget.target] - the message and MDC coordinate. */
     val target: String,
-    /** The peer host with an explicit port when the URI names one; null for a URI without an authority. */
+    /** [eu.inqudium.legatium.common.RequestTarget.host]. */
     val host: String?,
-    /** The raw request path as sent (`/` for an empty path). */
+    /** [eu.inqudium.legatium.common.RequestTarget.path]. */
     val path: String,
     val query: String?,
-    /**
-     * The exchange identity (`adapter_request_id`, ADR-0002): the `traceparent` trace id when the outgoing
-     * request carried a conformant one, otherwise the accepted or generated-and-sent correlation id.
-     */
+    /** The exchange identity, [eu.inqudium.legatium.common.ClientIdentity.requestId] (ADR-0002). */
     val requestId: String,
     val requestHeaders: List<Pair<String, String>>,
-    /** The URI template the client recorded for the request (`RestClient.uri(String, ...)`); null for an expanded URI. */
+    /**
+     * The URI template the client recorded for the request
+     * ([ClientRequestLoggingInterceptor.URI_TEMPLATE_ATTRIBUTE]); null for an expanded URI.
+     */
     val uriTemplate: String?,
-    /** The client's logical name from the `AdapterName.ATTRIBUTE` request attribute (ADR-0009); null for a client the host did not name. */
+    /**
+     * [eu.inqudium.legatium.common.AdapterName.of] the request attribute (ADR-0009); null for a
+     * client the host did not name.
+     */
     val name: String?,
     val requestCapture: BoundedBodyCapture?,
     val responseCapture: BoundedBodyCapture?,
-    /** Charset of the request body for the logged value, resolved from the Content-Type at wiring time. */
+    /**
+     * [eu.inqudium.legatium.common.declaredCharsetOrUtf8] of the request headers at wiring time,
+     * for the logged value.
+     */
     val requestCharset: Charset,
     val startNanos: Long,
     /**
-     * Trace context parsed from the outgoing W3C `traceparent` header: the trace id is the client span's
-     * trace id; the parent-id is the local client span the peer will see as its parent (see
-     * [TraceMdcKeys]). Null without the header.
+     * The outgoing `traceparent`'s trace id and parent-id, published as [TraceMdcKeys] explains;
+     * null without the header.
      */
     val traceId: String? = null,
     val spanId: String? = null,

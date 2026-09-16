@@ -94,7 +94,9 @@ the UI with a written reason.
 - KDoc `[Symbol]` links are checked: Dokka runs with `failOnWarning` in CI (job `build`) and in
   the Docs workflow, so an unresolvable link fails the pull request. Link production symbols
   with `[Symbol]` rather than naming them in prose or backticks; a type that is not imported
-  needs its fully qualified name in the link.
+  needs its fully qualified name in the link. Dokka reads KDoc only: a `[Symbol]` in a `//` line
+  comment only LOOKS checked, so the CI job rejects it - name the symbol in backticks there, or
+  move the sentence into the enclosing declaration's KDoc.
 - Every behavior change needs a test in the module it touches.
 - Changes to the shared field/configuration contract need the reference file and the
   contract tests in **both** modules updated.

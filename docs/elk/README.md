@@ -2,7 +2,7 @@
 
 Companion text to
 [`legatium-restclient-logging-fields.component-template.json`](legatium-restclient-logging-fields.component-template.json) —
-the mapping of the fourteen structured fields the Legatium modules write per outbound HTTP exchange.
+the mapping of the structured fields the Legatium modules write per outbound HTTP exchange.
 
 > **Status note.** This is **the definition, not an
 > extract**: the `adapter_*` family is not yet part of any upstream data-stream mapping. Whoever wires

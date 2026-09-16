@@ -34,4 +34,19 @@ class CorrelationHeaderTest {
         assertThat(CorrelationHeader.accept("id-\u00e4")).isNull()
         assertThat(CorrelationHeader.accept("a".repeat(CorrelationHeader.MAX_LENGTH + 1))).isNull()
     }
+
+    @Test
+    fun `should bound the id at 200 characters, as a literal`() {
+        // What is tested: the length bound as a LITERAL, independent of the constant - the value a peer
+        //   that propagates ids has to stay under.
+        // Success criteria: 200 characters accepted, 201 treated as absent.
+        // Why it matters: the bound is a cross-repository contract (ADR-0002) that no build can check
+        //   against the peer's constant; the sibling project limesium currently bounds inbound ids at
+        //   128, so an id of 129 to 200 characters is sent by this twin and replaced by that peer. A
+        //   change to either side must be a visible decision, not a silent drift.
+        // Given/When/Then
+        assertThat(CorrelationHeader.MAX_LENGTH).isEqualTo(200)
+        assertThat(CorrelationHeader.accept("a".repeat(200))).hasSize(200)
+        assertThat(CorrelationHeader.accept("a".repeat(201))).isNull()
+    }
 }

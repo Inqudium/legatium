@@ -12,10 +12,12 @@ package eu.inqudium.legatium.common
  *
  * A value outside the rule is treated as ABSENT: the twin generates its own id and SENDS it, replacing
  * the unacceptable value on the wire, and the `adapter.logging.correlation.id` counter records the call as
- * `generated`. Shared by both twins (ADR-0003); the sibling project limesium mirrors the rule on the
- * inbound side so the pair stays consistent.
+ * `generated`. Shared by both twins (ADR-0003). The sibling project limesium applies the same SHAPE of
+ * rule on the inbound side, with its own length bound - the two bounds are recorded in ADR-0002, and
+ * only that ADR says whether they agree; nothing here can check the peer's constant.
  */
 internal object CorrelationHeader {
+    /** Pinned as a literal by `CorrelationHeaderTest`: a change is a contract change against every peer (ADR-0002). */
     const val MAX_LENGTH = 200
 
     /** [value] when it satisfies the rule, null when absent or unacceptable. */

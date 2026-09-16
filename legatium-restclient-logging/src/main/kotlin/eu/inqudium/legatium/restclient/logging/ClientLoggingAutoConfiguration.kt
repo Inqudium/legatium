@@ -75,9 +75,8 @@ class ClientLoggingAutoConfiguration {
      * Attaches the interceptor to every `RestClient.Builder` Boot hands out (and to every HTTP service
      * client group built from one). Ordered LATE among the customizers, so the interceptor is appended
      * behind the interceptors of customizers ordered before [CUSTOMIZER_ORDER] and runs INSIDE them -
-     * closest to the wire, once per attempt of an outer retry ([ClientRequestLoggingInterceptor]). A
-     * host customizer WITHOUT an `@Order` has `Ordered.LOWEST_PRECEDENCE`, is applied after this one,
-     * and its interceptor therefore runs inside the logging - see the constant.
+     * closest to the wire, once per attempt of an outer retry ([ClientRequestLoggingInterceptor]). An
+     * unordered host customizer runs inside the logging ([CUSTOMIZER_ORDER]).
      */
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(RestClientCustomizer::class)

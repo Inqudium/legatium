@@ -16,15 +16,16 @@ import reactor.util.context.ContextView
  * `ThreadLocalAccessor`s the host registered with Micrometer's context propagation - the module
  * interprets nothing itself.
  *
- * The RestClient twin has no counterpart: there the wire call blocks the caller's thread, and the
- * caller's MDC is simply present. This is a deliberate stack difference, like `cancelled`.
+ * The RestClient twin restores from a thread snapshot instead (its `CallerMdcSnapshot`, ADR-0011): the
+ * same layering - the caller's context outside, the module's own scope inside - with a different
+ * source, because on the blocking stack the thread IS the caller's context and a Reactor Context does
+ * not exist. A deliberate stack difference, like `cancelled` (ADR-0010).
  *
  * Purely ADDITIVE, like the `MdcScope` that follows it: only values the context holds are installed,
  * a thread-local the context does not mention stays as the emitting thread has it, and the returned
- * scope restores every touched value on close. Micrometer's `clearMissing` stays off on purpose - the
- * module never resets thread-locals it does not own (a caller's observation scope on a synchronously
- * completing call, for one). The trace keys are owned by the [eu.inqudium.legatium.common.MdcScope]
- * opened inside this scope, so a bridge's ids the accessors restore never outrank the header's.
+ * scope restores every touched value on close. The trace keys are owned by the
+ * [eu.inqudium.legatium.common.MdcScope] opened inside this scope, so a bridge's ids the accessors
+ * restore never outrank the header's.
  */
 internal fun interface AmbientContextRestorer {
     /** Installs the thread-locals [ambient] holds; the returned scope restores the previous values. */
@@ -59,6 +60,8 @@ internal class ContextPropagationRestorer(
         ContextSnapshotFactory
             .builder()
             .contextRegistry(registry)
+            // Off on purpose: the module never resets a thread-local the context does not mention (a
+            // caller's observation scope on a synchronously completing call, for one) - ADR-0010 "Additive".
             .clearMissing(false)
             .build()
 

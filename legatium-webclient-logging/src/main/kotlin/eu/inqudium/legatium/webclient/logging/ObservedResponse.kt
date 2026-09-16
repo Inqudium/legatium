@@ -38,9 +38,15 @@ internal class ObservedResponse(
     private val exchange: Exchange,
     /** Records the response on the exchange and returns it with the body wrapped; pure assembly. */
     private val onResponse: (Exchange, ClientResponse) -> ClientResponse,
-    /** A cancel by the caller before the body owns the exchange: completes it as `cancelled` unless the body already owns it. */
+    /**
+     * A cancel by the caller before the body owns the exchange: completes it as `cancelled` unless
+     * the body already owns it.
+     */
     private val onCancelled: (Exchange) -> Unit,
-    /** The Mono's own terminal end of an exchange without a delivered response: the filter's exactly-once `complete`. */
+    /**
+     * The Mono's own terminal end of an exchange without a delivered response: the filter's
+     * exactly-once [ClientRequestLoggingFilter.complete].
+     */
     private val onTerminal: (Exchange) -> Unit,
 ) : MonoOperator<ClientResponse, ClientResponse>(source) {
     override fun subscribe(actual: CoreSubscriber<in ClientResponse>) {

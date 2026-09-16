@@ -7,13 +7,22 @@ import org.slf4j.MDC
  * so an encoder that emits MDC entries as fields lands them in the same namespace as the
  * [ClientLogField] family both twins share - and beside, never instead of, whatever identity the
  * AMBIENT MDC already carries (an inbound request's `endpoint_request_id` from the sibling project
- * limesium, a tracing bridge's keys): the scope is an additive overlay. [ROUTE] carries the request
- * TARGET (`scheme://host[:port]/path`, query excluded): for an outbound call the host is as much part
- * of the route as the path.
+ * limesium, a tracing bridge's keys): the scope is an additive overlay.
  */
 object MdcKeys {
+    /** The exchange identity (ADR-0002) - the same value as the `adapter_request_id` field of the exchange event. */
     const val REQUEST_ID = "adapter_request_id"
+
+    /**
+     * The HTTP method - under this key, NOT the field name `adapter_request_method`: a pattern
+     * layout or an MDC-keyed filter uses this spelling.
+     */
     const val REQUEST_METHOD = "adapter_method"
+
+    /**
+     * The request TARGET, `scheme://host[:port]/path` without the query - for an outbound call the
+     * host is as much part of the route as the path.
+     */
     const val ROUTE = "adapter_route"
 }
 

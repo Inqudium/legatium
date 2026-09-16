@@ -4,6 +4,7 @@ import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import java.lang.reflect.Modifier
 import java.time.Duration
 
 /** Construction-time invariants of [ClientLoggingProperties]. */
@@ -79,6 +80,26 @@ class ClientLoggingPropertiesTest {
             // Given/When/Then
             assertThat(ClientLoggingProperties(maskingKey = "pepper").toString()).contains("maskingKey=<redacted>").doesNotContain("pepper")
             assertThat(ClientLoggingProperties().toString()).contains("maskingKey=)")
+        }
+
+        @Test
+        fun `should render every property in toString`() {
+            // What is tested: the hand-written renderer mirrors the constructor parameter list - checked
+            //   against the class's own instance fields (Java reflection: every constructor property has a
+            //   backing field), so the list cannot silently fall behind.
+            // Success criteria: every instance field's name appears as `name=` in toString().
+            // Why it matters: the generated data-class toString cannot be reused once overridden; a
+            //   property added to the class and forgotten here would vanish from every properties dump.
+            // Given/When
+            val rendered = ClientLoggingProperties().toString()
+            val fields =
+                ClientLoggingProperties::class.java.declaredFields
+                    .filter { !it.isSynthetic && !Modifier.isStatic(it.modifiers) }
+                    .map { it.name }
+
+            // Then
+            assertThat(fields).isNotEmpty()
+            fields.forEach { name -> assertThat(rendered).describedAs(name).contains("$name=") }
         }
     }
 

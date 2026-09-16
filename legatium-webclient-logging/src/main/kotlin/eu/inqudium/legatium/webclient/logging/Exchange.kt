@@ -15,32 +15,37 @@ import java.util.concurrent.atomic.AtomicReference
  */
 internal class Exchange(
     val method: String,
-    /** The request TARGET, `scheme://host[:port]/path` without the query - the message and MDC coordinate. */
+    /** [eu.inqudium.legatium.common.RequestTarget.target] - the message and MDC coordinate. */
     val target: String,
-    /** The peer host with an explicit port when the URI names one; null for a URI without an authority. */
+    /** [eu.inqudium.legatium.common.RequestTarget.host]. */
     val host: String?,
-    /** The raw request path as sent (`/` for an empty path). */
+    /** [eu.inqudium.legatium.common.RequestTarget.path]. */
     val path: String,
     val query: String?,
-    /**
-     * The exchange identity (`adapter_request_id`, ADR-0002): the `traceparent` trace id when the outgoing
-     * request carried a conformant one, otherwise the accepted or generated-and-sent correlation id.
-     */
+    /** The exchange identity, [eu.inqudium.legatium.common.ClientIdentity.requestId] (ADR-0002). */
     val requestId: String,
     val requestHeaders: List<Pair<String, String>>,
-    /** The URI template the client recorded for the request (`WebClient.uri(String, ...)`); null for an expanded URI. */
+    /**
+     * The URI template the client recorded for the request
+     * ([ClientRequestLoggingFilter.URI_TEMPLATE_ATTRIBUTE]); absent for an expanded URI.
+     */
     val uriTemplate: String?,
-    /** The client's logical name from the `AdapterName.ATTRIBUTE` request attribute (ADR-0009); null for a client the host did not name. */
+    /**
+     * [eu.inqudium.legatium.common.AdapterName.of] the request attribute (ADR-0009); null for a
+     * client the host did not name.
+     */
     val name: String?,
     val requestCapture: BoundedBodyCapture?,
     val responseCapture: BoundedBodyCapture?,
-    /** Charset of the request body for the logged value, resolved from the Content-Type at wiring time. */
+    /**
+     * [eu.inqudium.legatium.common.declaredCharsetOrUtf8] of the request headers at wiring time,
+     * for the logged value.
+     */
     val requestCharset: Charset,
     val startNanos: Long,
     /**
-     * Trace context parsed from the outgoing W3C `traceparent` header: the trace id is the client span's
-     * trace id; the parent-id is the local client span the peer will see as its parent (see
-     * [TraceMdcKeys]). Null without the header.
+     * The outgoing `traceparent`'s trace id and parent-id, published as [TraceMdcKeys] explains;
+     * null without the header.
      */
     val traceId: String? = null,
     val spanId: String? = null,
@@ -53,13 +58,9 @@ internal class Exchange(
     val ambient: ContextView = Context.empty(),
 ) {
     /**
-     * The lifecycle state - ONE atomic value instead of independent flags, so the legal transitions are
-     * enumerable: `OPEN` from wiring (request sent, no response yet); `DELIVERING` while the response is
-     * being handed to the downstream subscriber; `RESPONDED` once the downstream has taken it and the
-     * emission waits for the body's terminal signal; `COMPLETED` exactly once, by whichever terminal
-     * callback wins the transition - gauge-close and emission ride that single transition. The
-     * `DELIVERING` step exists because a cancel racing the handover from another thread must still find
-     * an owner (see [ObservedResponse]).
+     * The lifecycle state ([ExchangeState]) - ONE atomic value instead of independent flags, so the
+     * legal transitions are enumerable and the transition to [ExchangeState.COMPLETED] is won exactly
+     * once; gauge-close and emission ride that single transition.
      */
     val state = AtomicReference(ExchangeState.OPEN)
 
@@ -87,16 +88,19 @@ internal class Exchange(
 }
 
 /**
- * See [Exchange.state]. An exchange in [RESPONDED] whose body the application never subscribes to (and
- * never releases) stays open on the gauge - the module's liveness signal - rather than logging a body
- * that was never read as complete. [DELIVERING] is the window between the response's arrival and the
- * downstream's return from `onNext`, in which a concurrent cancel still completes the exchange itself.
+ * The states of [Exchange.state], in order. An exchange in [RESPONDED] whose body the application
+ * never subscribes to (and never releases) stays open on the gauge - the module's liveness signal -
+ * rather than logging a body that was never read as complete; [DELIVERING] exists because a cancel
+ * racing the handover from another thread must still find an owner ([ObservedResponse]).
  */
 internal enum class ExchangeState {
     /** From wiring: the request is sent, no response yet. */
     OPEN,
 
-    /** The response is being handed to the downstream subscriber - a concurrent cancel still completes the exchange itself. */
+    /**
+     * The response is being handed to the downstream subscriber (its `onNext` has not returned) - a
+     * concurrent cancel still completes the exchange itself.
+     */
     DELIVERING,
 
     /** The downstream has taken the response; the emission waits for the body's terminal signal. */

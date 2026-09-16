@@ -69,9 +69,8 @@ class ClientLoggingAutoConfiguration {
      * Attaches the filter to every `WebClient.Builder` Boot hands out (and to every HTTP service client
      * group built from one). Ordered LATE among the customizers, so the filter is appended behind the
      * filters of customizers ordered before [CUSTOMIZER_ORDER] and runs INSIDE them - closest to the
-     * connector, once per attempt of an outer retry ([ClientRequestLoggingFilter]). A host customizer
-     * WITHOUT an `@Order` has `Ordered.LOWEST_PRECEDENCE`, is applied after this one, and its filter
-     * therefore runs inside the logging - see the constant.
+     * connector, once per attempt of an outer retry ([ClientRequestLoggingFilter]). An unordered host
+     * customizer runs inside the logging ([CUSTOMIZER_ORDER]).
      */
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(WebClientCustomizer::class)

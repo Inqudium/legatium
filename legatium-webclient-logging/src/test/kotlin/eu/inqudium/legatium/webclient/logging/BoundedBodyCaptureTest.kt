@@ -2,6 +2,7 @@ package eu.inqudium.legatium.webclient.logging
 
 import eu.inqudium.legatium.common.BodyReadState
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.reactivestreams.Publisher
@@ -19,6 +20,22 @@ import java.nio.charset.StandardCharsets
  */
 class BoundedBodyCaptureTest {
     private fun bytes(text: String) = text.toByteArray(StandardCharsets.UTF_8)
+
+    @Nested
+    inner class `Limit` {
+        @Test
+        fun `should reject a negative limit at construction`() {
+            // What is tested: the limit's lower bound as an executable precondition - 0 is count-only
+            //   mode, below that is no mode at all.
+            // Success criteria: construction fails naming the argument; 0 constructs with no capacity.
+            // Why it matters: a negative limit behaved silently like count-only (room never positive);
+            //   production never passes one (maxBodyBytes must be positive), so a silent acceptance
+            //   could only hide a bug.
+            // Given/When/Then
+            assertThat(catchThrowable { BoundedBodyCapture(-1) }).isInstanceOf(IllegalArgumentException::class.java).hasMessageContaining("maxBytes")
+            assertThat(BoundedBodyCapture(0).remainingCapacity()).isZero()
+        }
+    }
 
     @Nested
     inner class `Freeze semantics` {
