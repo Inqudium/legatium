@@ -47,6 +47,11 @@ internal class ExchangeLogEmitter(
     private val nanoTime: NanoTimeSource,
     private val metrics: ClientLoggingMetrics,
     private val masker: HeaderValueMasker,
+    /**
+     * Restores the caller's thread-locals from the exchange's Reactor Context around each emission
+     * (ADR-0010). Mutable for the tests only, which swap in a throwing restorer to drive the fail-open path.
+     */
+    internal var ambientRestorer: AmbientContextRestorer = AmbientContextRestorer.detect(),
 ) {
     private val exchangeLog = LoggerFactory.getLogger(properties.loggerName)
 
@@ -76,19 +81,24 @@ internal class ExchangeLogEmitter(
             if (!exchangeLog.isInfoEnabled) {
                 return
             }
-            MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true).use {
-                exchangeLog
-                    .atInfo()
-                    .setMessage(
-                        "Adapter http exchange started ${exchange.method} ${exchange.target} " +
-                            "[${MdcKeys.REQUEST_ID}=${exchange.requestId}]",
-                    ).addKeyValue(ClientLogField.REQUEST_METHOD, exchange.method)
-                    .addKeyValueIfPresent(ClientLogField.URL_HOST, exchange.host)
-                    .addKeyValue(ClientLogField.URL_PATH, exchange.path)
-                    .addKeyValueIfPresent(ClientLogField.URL_TEMPLATE, exchange.uriTemplate)
-                    .addKeyValueIfPresent(ClientLogField.URL_QUERY, exchange.query)
-                    .addKeyValueIfPresent(ClientLogField.REQUEST_HEADERS, renderHeaders(exchange.requestHeaders))
-                    .log()
+            // The caller's context first, the module's own scope inside it - same layering as the
+            // completion event, so both lines of one exchange carry the same ambient keys.
+            restoreAmbientQuietly(exchange).use {
+                MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true).use {
+                    exchangeLog
+                        .atInfo()
+                        .setMessage(
+                            "Adapter http exchange started ${exchange.method} ${exchange.target} " +
+                                "[${MdcKeys.REQUEST_ID}=${exchange.requestId}]",
+                        ).addKeyValue(ClientLogField.REQUEST_METHOD, exchange.method)
+                        .addKeyValueIfPresent(ClientLogField.NAME, exchange.name)
+                        .addKeyValueIfPresent(ClientLogField.URL_HOST, exchange.host)
+                        .addKeyValue(ClientLogField.URL_PATH, exchange.path)
+                        .addKeyValueIfPresent(ClientLogField.URL_TEMPLATE, exchange.uriTemplate)
+                        .addKeyValueIfPresent(ClientLogField.URL_QUERY, exchange.query)
+                        .addKeyValueIfPresent(ClientLogField.REQUEST_HEADERS, renderHeaders(exchange.requestHeaders))
+                        .log()
+                }
             }
         }
     }
@@ -140,12 +150,38 @@ internal class ExchangeLogEmitter(
         if (!exchangeLog.isEnabledForLevel(level)) {
             return
         }
-        // The emission scope OWNS the trace keys ([MdcScope]) - identical to the RestClient twin; `use`
-        // records a close-time failure as suppressed instead of masking an emission failure.
-        MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true).use {
-            logEvent(exchange, classification, level, status, elapsedNanos / NANOS_PER_MS, slow, response?.headers()?.asHttpHeaders())
+        // The caller's thread-locals from the Reactor Context FIRST (ADR-0010) - the join to the server
+        // line on an event-loop thread that carries none of them - and the emission scope inside, which
+        // OWNS the trace keys ([MdcScope]) exactly like the RestClient twin, so a bridge id the accessors
+        // restored never outranks the header's. `use` records a close-time failure as suppressed instead
+        // of masking an emission failure.
+        restoreAmbientQuietly(exchange).use {
+            MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true).use {
+                logEvent(exchange, classification, level, status, elapsedNanos / NANOS_PER_MS, slow, response?.headers()?.asHttpHeaders())
+            }
         }
     }
+
+    /**
+     * The caller's context restored, or nothing: a restorer that throws (a host accessor failing on this
+     * thread) costs the ambient keys, counted as stage=wiring, never the event - which then carries the
+     * module's own identity alone, exactly as before ADR-0010.
+     */
+    private fun restoreAmbientQuietly(exchange: Exchange): AutoCloseable =
+        try {
+            ambientRestorer.restore(exchange.ambient)
+        } catch (e: Exception) {
+            reportQuietly {
+                metrics.wiringFailure()
+                internalLog.warn(
+                    "The caller's context could not be restored for {} {} - the event follows without it: {}",
+                    exchange.method,
+                    exchange.target,
+                    e.toString(),
+                )
+            }
+            AutoCloseable {}
+        }
 
     /**
      * Severity and semantic decoupled, exactly like the RestClient twin - with `cancelled` on top: a

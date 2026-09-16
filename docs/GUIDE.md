@@ -303,9 +303,9 @@ The `adapter_request_id` / `adapter_method` / `adapter_route` / `traceId` / `spa
 the MDC ([§7.2](#72-mdc-keys)); the `adapter_*` key-values are the field family of
 [§7.1](#71-log-fields). The `endpoint_request_id` is not the modules': it is the ambient MDC of the
 inbound request the call was made from (Limesium), which the additive emission scope leaves in place —
-on the blocking stack as a matter of course, on the reactive stack when the host's context propagation
-restores it around the completing operator — and this is how the client line joins the server line
-without any coupling between the two libraries. How MDC entries land in the document (flat, nested,
+on the blocking stack as a matter of course, on the reactive stack restored from the Reactor Context the
+caller subscribed with (ADR-0010, with `io.micrometer:context-propagation` on the classpath) — and this
+is how the client line joins the server line without any coupling between the two libraries. How MDC entries land in the document (flat, nested,
 renamed) is the encoder's decision.
 
 | Option | Output | Key-value pairs | MDC | Typed values | Escapes control chars | Use for |
@@ -633,7 +633,14 @@ Set by `MdcScope` around each emission — and, on the blocking stack, around th
 adapter throws mid-put, and restores best-effort on close with the first failure rethrown and later ones
 suppressed. It never removes keys it does not own: an inbound request's identity stays. The reactive
 stack has no call-wide thread-local scope — the call hops event-loop threads; propagating the identity
-into reactive operators is the host's context-propagation business.
+into reactive operators is the host's context-propagation business. The caller's context, though, is
+restored there: the WebClient twin captures the Reactor Context the caller subscribed with and turns it
+back into thread-locals around each emission through the host's `ThreadLocalAccessor`s, opt-in by
+`io.micrometer:context-propagation` on the classpath
+([WebClient guide §2.6](../legatium-webclient-logging/docs/GUIDE.md#26-mdc-and-the-reactive-call);
+what the host provides per key is
+[§3.6](../legatium-webclient-logging/docs/GUIDE.md#36-joining-the-server-line-what-the-host-provides);
+[ADR-0010](adr/ADR-0010-reactive-twin-restores-the-callers-context.md)).
 
 ### 7.3 Levels and outcomes
 

@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `name` (`UNNAMED` for a client nobody named). The component template maps the field, the
   lockstep test pins it; why an attribute and not a header, a property or a path rule is
   [ADR-0009](docs/adr/ADR-0009-adapter-name-is-a-request-attribute.md).
+- WebClient twin: the caller's context is restored around the exchange line. The filter captures
+  the Reactor Context the caller subscribed with and the emitter turns it back into thread-locals
+  for the single log statement, through the `ThreadLocalAccessor`s the host registered with
+  Micrometer's context propagation - so a client line completed on an event-loop thread carries
+  the inbound request's `endpoint_*` identity (Limesium) under Boot's default
+  `spring.reactor.context-propagation=limited`, and identically across retry attempts. Additive
+  like the emission scope (`clearMissing` off), trace keys still owned by the module. Opt-in by
+  `io.micrometer:context-propagation` on the classpath (a new optional dependency), no
+  configuration key; a host without it behaves as before. The RestClient twin needs no counterpart,
+  its wire call blocks the caller's thread; why the Reactor Context and not a thread-local snapshot
+  is [ADR-0010](docs/adr/ADR-0010-reactive-twin-restores-the-callers-context.md).
 
 ### Changed
 

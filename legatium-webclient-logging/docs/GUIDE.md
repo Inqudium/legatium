@@ -33,6 +33,7 @@ meters, the fail-open promise and the shared code — is written once, in the
    3. [Filter order and other filters](#33-filter-order-and-other-filters)
    4. [Verifying the integration](#34-verifying-the-integration)
    5. [Naming a client](#35-naming-a-client)
+   6. [Joining the server line: what the host provides](#36-joining-the-server-line-what-the-host-provides)
 4. [Special characteristics](#4-special-characteristics)
    1. [Differences to the RestClient twin](#41-differences-to-the-restclient-twin)
    2. [Cancellation and the missing status](#42-cancellation-and-the-missing-status)
@@ -139,7 +140,8 @@ five layers:
 | `ClientRequestLoggingFilter` | Everything that decides **what** is logged and counted: activation by host and path, fail-open wiring (identity, the rebuilt request with correlation header and body tee), the arrival line, the response mutation with the body hooks, the exactly-once `complete` and the cancel decision. |
 | `ObservedResponse` | The response `Mono` operator: records and wraps the response, moves the state `OPEN → DELIVERING → RESPONDED` around the downstream's `onNext`, and completes the exchange itself for an error, an empty completion, or a cancel by the caller before the body owns it — including a cancel from another thread *during* the handover, which a `doFinally` would have ignored. |
 | `Exchange` / `ExchangeState` | Per-exchange state between entry and emission; one atomic `OPEN → DELIVERING → RESPONDED → COMPLETED` state instead of loose flags. |
-| `ExchangeLogEmitter` | Builds and emits the arrival line and the completion event; freezes the captures first; resolves level and outcome (timeouts via the shared `Timeouts`, `cancelled` on top); records body sizes; opens the emission `MdcScope` with trace ownership. |
+| `ExchangeLogEmitter` | Builds and emits the arrival line and the completion event; freezes the captures first; resolves level and outcome (timeouts via the shared `Timeouts`, `cancelled` on top); records body sizes; restores the caller's context, then opens the emission `MdcScope` with trace ownership. |
+| `AmbientContextRestorer` / `ContextPropagationRestorer` | Turns the exchange's captured `ContextView` back into thread-locals around an emission through Micrometer's context propagation (ADR-0010); detected by classpath presence, a no-op without the optional library. |
 | `CapturingClientHttpRequestDecorator` / `tee` | The `DataBuffer` tee: wraps the connector's request while the inserter writes (a zero-copy-preserving variant when the connector offers `sendfile`); the same `tee` copies each response buffer. |
 | `ObservedBody` | The response body operator: tees each buffer, marks the read state, turns the body's terminal signal into the exchange's completion, and tells a consumer's own stop (a cancel from within its delivery - Spring's body skip, a `take`) from an abandonment (`cancelled`). |
 | `BoundedBodyCapture` | The lock-guarded, freezable capture target; count-only mode with limit `0`; the response-side read state (`BodyReadState`). |
@@ -281,13 +283,36 @@ thread that receives the response, and neither is the one that reads the body. T
 | Emission scope | `MdcScope` around the single `log()` call, trace keys owned | structured encoders emitting MDC fields on the exchange line and the arrival line |
 | Message | inline `[adapter_request_id=…]` | plain-text appenders |
 
-The emission scope is an **additive overlay**: whatever MDC the completing thread carries — with
-context propagation configured, the inbound request's `endpoint_*` keys (Limesium) restored around the
-operator — stays visible beside the client identity; only the trace keys are owned (a parsed id is
-installed, an unparsed one removed for the scope, so a stale bridge id on an event-loop thread never
-joins the event to a foreign trace). Propagating the client identity *into* the caller's reactive
-operators is deliberately not attempted: the caller's own context (its inbound request, its trace) is the
-identity that matters there, and the host's context-propagation setup owns it.
+The emission scope is an **additive overlay**: whatever MDC the completing thread carries stays visible
+beside the client identity; only the trace keys are owned (a parsed id is installed, an unparsed one
+removed for the scope, so a stale bridge id on an event-loop thread never joins the event to a foreign
+trace). Propagating the client identity *into* the caller's reactive operators is deliberately not
+attempted: the caller's own context (its inbound request, its trace) is the identity that matters there,
+and the host's context-propagation setup owns it.
+
+**The caller's context comes from the Reactor Context.** The completing thread never ran the inbound
+request, so on its own it carries none of the caller's MDC — and the join of the client line to the
+server line (`endpoint_request_id`, Limesium) would depend on `spring.reactor.context-propagation=auto`,
+which restores thread-locals around every operator; Boot's default `limited` does not. The filter
+therefore captures the `ContextView` the caller subscribed with (`Mono.deferContextual`, one immutable
+reference, the same for every thread and every retry attempt) and the emitter restores the caller's
+thread-locals from it around each emission
+([ADR-0010](../../docs/adr/ADR-0010-reactive-twin-restores-the-callers-context.md)):
+
+| Layer around the `log()` call | Mechanism | Owns |
+|---|---|---|
+| outer: the caller's context | `AmbientContextRestorer` — Micrometer's `ContextSnapshotFactory.setThreadLocalsFrom(ctx)` through the `ThreadLocalAccessor`s the host registered, previous values restored on close | nothing: additive, `clearMissing` off — a thread-local the context does not mention stays as the thread has it |
+| inner: the module's identity | `MdcScope` | the trace keys — a bridge id an accessor restored never outranks the `traceparent` header's |
+
+Two things are the host's part: the identity in the Reactor Context and an accessor for it. Limesium's
+reactive twin does both for its `endpoint_*` keys; a host's own key needs the same two steps, spelled out
+with code in [§3.6](#36-joining-the-server-line-what-the-host-provides). The restoration is
+opt-in by classpath presence — `io.micrometer:context-propagation` is an optional dependency of this
+module; without it the emitter restores nothing and behaves as before ADR-0010. No `adapter-logging.*`
+key exists for it, so the configuration stays identical to the RestClient twin's. A restorer that throws
+(a host accessor failing on this thread) costs the ambient keys, counted as `stage=wiring`, never the
+event. The RestClient twin needs none of this: the blocking call carries the caller's MDC through the
+wire call on the thread itself ([§4.1](#41-differences-to-the-restclient-twin)).
 
 ### 2.7 Fail-open contract
 
@@ -653,6 +678,7 @@ Everything not listed here behaves exactly as in `legatium-restclient-logging`.
 | Never-completing exchange | a response never closed | a body never subscribed nor released |
 | Request body | the byte array the client hands over | teed at the connector's `writeWith` through a wrapped inserter |
 | Call-wide MDC | thread-local `MdcScope` around the wire call | none |
+| The caller's context on the exchange line | present on the thread — the wire call blocks the caller's thread | restored from the **Reactor Context** around the emission through the host's `ThreadLocalAccessor`s ([§2.6](#26-mdc-and-the-reactive-call), ADR-0010); opt-in by `io.micrometer:context-propagation` on the classpath |
 | Read failure mid-body | `IOException` from the tee stream | the body `Flux`'s error signal |
 | Body tee concurrency | volatile single-writer | lock-guarded, frozen at emission |
 | Attachment | `RestClientCustomizer` + `RestTemplateCustomizer` | `WebClientCustomizer` |

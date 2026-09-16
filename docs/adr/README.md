@@ -24,6 +24,7 @@ each exchange line carries, and finally the cluster you are touching.
 | [0002](ADR-0002-trace-id-is-the-request-id.md) | The trace id is the request id; the correlation header is sent only on traceless calls | Accepted; last updated 2026-09-04 |
 | [0004](ADR-0004-counting-correlation-id-default.md) | The default correlation id is a counting id, not a UUID | Accepted |
 | [0009](ADR-0009-adapter-name-is-a-request-attribute.md) | A client's name is a request attribute, logged as `adapter_name` | Accepted |
+| [0010](ADR-0010-reactive-twin-restores-the-callers-context.md) | The reactive twin restores the caller's context from the Reactor Context around its emission | Accepted |
 
 ### Module structure & build
 
