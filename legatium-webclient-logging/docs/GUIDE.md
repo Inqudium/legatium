@@ -339,6 +339,15 @@ Whether the host's *own* log statements inside operators see those keys is Boot'
 `spring.reactor.context-propagation`: `auto` restores thread-locals around every operator, the default
 `limited` only around `tap` and `handle`. That is the host's concern for the host's lines.
 
+**Should the host set `spring.reactor.context-propagation=auto` here?** Not for this module: the
+exchange line joins the server line under `limited` as under `auto`, because the module restores the
+context around its own emission (ADR-0010). For the host's *own* lines inside ordinary operators —
+a `map`, a `flatMap` — yes: only `auto` gives them the inbound identity, and Limesium's reactive twin
+warns at startup when it is missing. A WebFlux host that joins its own handler lines has therefore set
+it already, and this module adds no second reason. As in the servlet case, the module does not set the
+property itself: it belongs to the host and changes the behaviour of every Reactor operator in the
+application.
+
 The `WebClient` call is part of the handler chain, so the context the filter captures at subscription
 **is** the handler's context — including the inbound identity, if the host or Limesium put it there.
 The module restores it on the completing event-loop thread around the exchange line, regardless of the
