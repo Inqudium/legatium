@@ -7,7 +7,7 @@
 [![Coverage](https://inqudium.github.io/legatium/coverage/badge.svg)](https://inqudium.github.io/legatium/coverage/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-21-orange)](https://openjdk.org/projects/jdk/21/)
-[![Kotlin](https://img.shields.io/badge/Kotlin-2.4.10-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org/)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.4.20-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org/)
 [![Last commit](https://img.shields.io/github/last-commit/Inqudium/legatium)](https://github.com/Inqudium/legatium/commits/main)
 [![Issues](https://img.shields.io/github/issues/Inqudium/legatium)](https://github.com/Inqudium/legatium/issues)
 [![Docs](https://img.shields.io/badge/docs-inqudium.github.io-8E2C21)](https://inqudium.github.io/legatium/)
