@@ -42,6 +42,7 @@ code it inlines:
 | Request body | the byte array the client hands the interceptor — complete, captured at wiring | teed at the connector's `writeWith` as the caller's `BodyInserter` writes it |
 | Call-wide MDC | thread-local `MdcScope` around the wire call: `adapter_request_id`, `adapter_method`, `adapter_route` as an **additive overlay** — an inbound request's `endpoint_*` keys (Limesium) or a bridge's trace keys stay in place | **none** — the call hops event-loop threads; the identity rides the emission's `MdcScope` and the message inline |
 | Read failure mid-body | `IOException` from the tee stream, reported and rethrown unchanged | the body `Flux`'s error signal |
+| Body stream contract | transparent: the tee stream forwards the engine stream's `mark`/`reset` capability, and a reset rewinds the capture with the stream, so replayed bytes count once | n/a — the body is a `Flux<DataBuffer>`, there is no stream to rewind |
 | URI template | recorded by `RestClient.uri(String, ...)`; **never** by `RestTemplate` | recorded by `WebClient` |
 | Attachment | `RestClientCustomizer` + `RestTemplateCustomizer` (`builder.requestInterceptor(...)`, late, so the interceptor runs inside the interceptors of earlier customizers — closest to the wire) | `WebClientCustomizer` |
 | Body tee concurrency | volatile single-writer capture — one thread reads the response stream | lock-guarded, frozen at emission |

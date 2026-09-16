@@ -302,6 +302,26 @@ class ClientRequestLoggingMetricsTest {
         }
 
         @Test
+        fun `should count the bodiless answer to a HEAD as complete whatever Content-Length it declares`() {
+            // What is tested: the read state of a HEAD answer - the response carries the
+            //   representation's Content-Length but no body (RFC 9110 §9.3.2), and RestTemplate's
+            //   headForHeaders / RestClient's toBodilessEntity close it without opening the body.
+            // Success criteria: adapter.response.body.read counts 1 under state=complete and nothing
+            //   under state=unread for a 200 to a HEAD with Content-Length: 1234, closed unopened.
+            // Why it matters: before the method entered the rule, every HEAD counted as unread - a
+            //   route of existence checks read as discarded payload where no payload was allowed.
+            // Given
+            val measuring = interceptorWith(properties.copy(measureResponseBodySize = true), ticker, registry)
+
+            // When
+            measuring.intercept(request(HttpMethod.HEAD), ByteArray(0), answering { it.headers.contentLength = 1234 }).close()
+
+            // Then
+            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(1.0)
+            assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "unread").counter()).isNull()
+        }
+
+        @Test
         fun `should not record a request body size sample when the call produced no response`() {
             // What is tested: the exchange.response != null guard on the REQUEST sample in
             //   recordBodySizes - the interceptor copies the serialized body before the wire call,

@@ -57,6 +57,31 @@ class BoundedBodyCaptureTest {
         }
 
         @Test
+        fun `should grow the buffer with the writes and clip it at the limit`() {
+            // What is tested: the lazily allocated, doubling buffer behind the capture - a run of
+            //   3-byte chunks crosses every growth step of a 16-byte cap and the last one is clipped.
+            // Success criteria: the logged text is the first 16 bytes in order followed by the note
+            //   for 18 bytes total; a body below the cap renders whole, without a note.
+            // Why it matters: the buffer replaced a ByteArrayOutputStream so a reset can cut it back;
+            //   the growth path must keep every byte in order and never hold more than the cap.
+            // Given: a 16-byte cap
+            val capture = BoundedBodyCapture(16)
+
+            // When: 18 bytes flow in 3-byte chunks
+            "abcdefghijklmnopqr".chunked(3).forEach { capture.capture(bytes(it), 0, 3) }
+
+            // Then
+            assertThat(capture.loggedValue(StandardCharsets.UTF_8)).isEqualTo("abcdefghijklmnop... [truncated, 18 bytes total]")
+
+            // And: a body within the cap, written in growing chunks, renders whole
+            val small = BoundedBodyCapture(16)
+            small.capture(bytes("a"), 0, 1)
+            small.capture(bytes("bcd"), 0, 3)
+            small.capture(bytes("efghijk"), 0, 7)
+            assertThat(small.loggedValue(StandardCharsets.UTF_8)).isEqualTo("abcdefghijk")
+        }
+
+        @Test
         fun `should reject a negative limit at construction`() {
             // What is tested: the limit's lower bound as an executable precondition - 0 is count-only
             //   mode, below that is no mode at all.
@@ -154,6 +179,90 @@ class BoundedBodyCaptureTest {
 
             // When/Then
             assertThat(capture.loggedValue(StandardCharsets.UTF_8)).isEqualTo("a�b... [truncated, 4 bytes total]")
+        }
+    }
+
+    @Nested
+    inner class `Mark and reset` {
+        @Test
+        fun `should rewind the count and the buffer to the mark so replayed bytes count once`() {
+            // What is tested: mark/reset against a 6-byte cap - the mark is taken after 3 bytes, 5 more
+            //   flow (crossing the cap), the reset rewinds, and the same 5 bytes are read again.
+            // Success criteria: right after the reset the total is 3 and the logged text is "abc";
+            //   after the replay the total is 8 and the text is the first 6 bytes with the note for 8 -
+            //   exactly what a single read of the 8 bytes yields.
+            // Why it matters: the tee stream forwards the engine stream's reset, so a converter that
+            //   peeks and rewinds (Spring's IntrospectingClientHttpResponse on a buffered response)
+            //   must not double the size sample or duplicate the logged prefix.
+            // Given: 3 bytes, then a mark
+            val capture = BoundedBodyCapture(6)
+            capture.capture(bytes("abc"), 0, 3)
+            capture.mark()
+
+            // When: 5 bytes flow, the stream is reset, the same 5 bytes flow again
+            capture.capture(bytes("defgh"), 0, 5)
+            assertThat(capture.totalBytes).isEqualTo(8L)
+            capture.reset()
+
+            // Then: back at the mark
+            assertThat(capture.totalBytes).isEqualTo(3L)
+            assertThat(capture.loggedValue(StandardCharsets.UTF_8)).isEqualTo("abc")
+
+            // And: the replay counts once
+            capture.capture(bytes("de"), 0, 2)
+            capture.capture('f'.code)
+            capture.capture(bytes("gh"), 0, 2)
+            assertThat(capture.totalBytes).isEqualTo(8L)
+            assertThat(capture.loggedValue(StandardCharsets.UTF_8)).isEqualTo("abcdef... [truncated, 8 bytes total]")
+        }
+
+        @Test
+        fun `should rewind to the start of an opened stream when no mark was taken`() {
+            // What is tested: reset without a mark - a ByteArrayInputStream rewinds to its beginning,
+            //   and the capture must follow: nothing counted, nothing buffered, the state the open
+            //   left behind.
+            // Success criteria: after markStarted, 4 bytes and a reset, the total is 0, loggedValue is
+            //   null and the state is PARTIAL - opened, nothing read.
+            // Why it matters: the InputStream contract makes reset legal without a mark on a
+            //   mark-capable stream; the capture must not keep bytes the application will read again.
+            // Given: an opened stream with 4 bytes read
+            val capture = BoundedBodyCapture(8)
+            capture.markStarted()
+            capture.capture(bytes("abcd"), 0, 4)
+
+            // When
+            capture.reset()
+
+            // Then
+            assertThat(capture.totalBytes).isZero()
+            assertThat(capture.loggedValue(StandardCharsets.UTF_8)).isNull()
+            assertThat(capture.readState).isEqualTo(BodyReadState.PARTIAL)
+        }
+
+        @Test
+        fun `should rewind the read state with the bytes and complete again on the replay`() {
+            // What is tested: the read state is part of the mark - a body read to its declared end,
+            //   then reset, is no longer complete until the replay reaches the end again.
+            // Success criteria: COMPLETE after 4 of 4 declared bytes, PARTIAL after the reset to the
+            //   mark at 1 byte, COMPLETE again after 3 replayed bytes.
+            // Why it matters: a peek-and-rewind that left COMPLETE in place would count a body the
+            //   application then abandoned as consumed.
+            // Given: 4 declared bytes, a mark after the first
+            val capture = BoundedBodyCapture(8)
+            capture.expectBytes(4)
+            capture.markStarted()
+            capture.capture('a'.code)
+            capture.mark()
+
+            // When/Then
+            capture.capture(bytes("bcd"), 0, 3)
+            assertThat(capture.readState).isEqualTo(BodyReadState.COMPLETE)
+            capture.reset()
+            assertThat(capture.readState).isEqualTo(BodyReadState.PARTIAL)
+            assertThat(capture.totalBytes).isEqualTo(1L)
+            capture.capture(bytes("bcd"), 0, 3)
+            assertThat(capture.readState).isEqualTo(BodyReadState.COMPLETE)
+            assertThat(capture.loggedValue(StandardCharsets.UTF_8)).isEqualTo("abcd")
         }
     }
 

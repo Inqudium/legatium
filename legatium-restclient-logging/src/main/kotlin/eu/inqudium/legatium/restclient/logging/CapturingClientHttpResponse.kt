@@ -40,6 +40,15 @@ import java.io.InputStream
  * was already received - and rethrown unchanged. The caller and the event thus never disagree: a
  * response that fails the caller is never logged as `success`.
  *
+ * The tee stream is TRANSPARENT to the application: it forwards the delegate's `mark`/`reset`
+ * capability unchanged - a buffered response (Spring's `BufferingClientHttpRequestFactory`, a
+ * `ByteArrayInputStream` body) stays rewindable, an engine stream stays what it was - because Spring's
+ * own `IntrospectingClientHttpResponse` probes `markSupported()` before deciding how to peek at the
+ * body, and a custom extractor may too. A reset rewinds the capture with the stream
+ * ([BoundedBodyCapture.reset]), so replayed bytes are neither counted nor logged twice. `skip` and the
+ * bulk reads keep their `InputStream` defaults, which go through `read`: an engine's own skip would
+ * move bytes past the tee uncounted.
+ *
  * Single reader: the body is opened and read by one thread at a time, as every client does; the memo of
  * the tee stream is volatile for the documented handoff to a closing thread, not for concurrent readers.
  *
@@ -100,6 +109,20 @@ internal class CapturingClientHttpResponse(
             }
 
             override fun available(): Int = guarded { real.available() }
+
+            override fun markSupported(): Boolean = real.markSupported()
+
+            override fun mark(readlimit: Int) {
+                real.mark(readlimit)
+                capture?.mark()
+            }
+
+            // Guarded like a read: a reset the engine refuses (no mark support, the read limit passed)
+            // is an IOException the caller is about to see. The capture rewinds only when the stream did.
+            override fun reset() {
+                guarded { real.reset() }
+                capture?.reset()
+            }
 
             override fun close() = guarded { real.close() }
         }.also { teeBody = it }

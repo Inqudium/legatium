@@ -2,7 +2,6 @@ package eu.inqudium.legatium.restclient.logging
 
 import eu.inqudium.legatium.common.BodyReadState
 import eu.inqudium.legatium.common.decodeTruncated
-import java.io.ByteArrayOutputStream
 import java.nio.charset.Charset
 
 /**
@@ -25,6 +24,12 @@ import java.nio.charset.Charset
  * counts every byte - the mode the body-size metrics use when body logging is off; a negative limit is
  * rejected at construction.
  *
+ * The capture mirrors the application's READ POSITION, so it follows a `mark`/`reset` of the tee
+ * stream: [mark] remembers the count, the buffered length and the read state, [reset] restores them,
+ * and the bytes the application then reads again are neither counted nor buffered twice. The buffer is
+ * a bare array (allocated on the first write, grown at most to [maxBytes]) rather than a
+ * `ByteArrayOutputStream` because a reset must be able to cut it back.
+ *
  * Besides the bytes, the response capture records HOW FAR the application consumed the body
  * ([readState], the `adapter.response.body.read` counter's source): the tee mirrors consumption, not
  * transmission, so a body the application never read - or stopped reading half-way - is invisible in
@@ -40,7 +45,11 @@ internal class BoundedBodyCapture(
         require(maxBytes >= 0) { "maxBytes must not be negative, got: $maxBytes" }
     }
 
-    private val buffer = ByteArrayOutputStream()
+    /** The buffered prefix - null until the first buffered byte, never longer than [maxBytes]. */
+    private var buffer: ByteArray? = null
+
+    /** The buffered length; the array beyond it is stale after a [reset]. */
+    private var buffered = 0
 
     /**
      * How far the application consumed the body - see [BodyReadState]. Volatile for the same
@@ -64,9 +73,14 @@ internal class BoundedBodyCapture(
     @Volatile
     private var expectedBytes: Long = UNKNOWN_LENGTH
 
+    // The read position [reset] rewinds to - the start of the stream until [mark] moves it.
+    private var markedTotal: Long = 0
+    private var markedBuffered = 0
+    private var markedState: BodyReadState = BodyReadState.UNREAD
+
     fun capture(b: Int) {
-        if (buffer.size() < maxBytes) {
-            buffer.write(b)
+        if (buffered < maxBytes) {
+            ensureRoom(1)[buffered++] = b.toByte()
         }
         advance(1)
     }
@@ -76,11 +90,31 @@ internal class BoundedBodyCapture(
         offset: Int,
         length: Int,
     ) {
-        val room = maxBytes - buffer.size()
-        if (room > 0) {
-            buffer.write(bytes, offset, minOf(length, room))
+        val room = maxBytes - buffered
+        if (room > 0 && length > 0) {
+            val n = minOf(length, room)
+            System.arraycopy(bytes, offset, ensureRoom(n), buffered, n)
+            buffered += n
         }
         advance(length)
+    }
+
+    /**
+     * The buffer with room for [n] more bytes: allocated at the size of the first write, then doubled up
+     * to [maxBytes] - so a small body never pays for the whole cap, and a large one never grows past it.
+     */
+    private fun ensureRoom(n: Int): ByteArray {
+        val needed = buffered + n
+        val current = buffer
+        if (current != null && current.size >= needed) {
+            return current
+        }
+        val grown = ByteArray(minOf(maxBytes, maxOf(needed, (current?.size ?: 0) * 2)))
+        if (current != null) {
+            System.arraycopy(current, 0, grown, 0, buffered)
+        }
+        buffer = grown
+        return grown
     }
 
     /**
@@ -114,6 +148,27 @@ internal class BoundedBodyCapture(
         if (readState == BodyReadState.UNREAD) {
             readState = BodyReadState.PARTIAL
         }
+        // The default mark is the start of the stream in the state the open left behind: a reset without
+        // a mark rewinds a mark-capable engine stream to its beginning.
+        markedState = readState
+    }
+
+    /** Remembers the read position for [reset] - the tee's `mark`, taken when the engine stream took its own. */
+    fun mark() {
+        markedTotal = totalBytes
+        markedBuffered = buffered
+        markedState = readState
+    }
+
+    /**
+     * Rewinds the count, the buffer and the read state to the last [mark] (or to the start of the
+     * stream): the engine stream rewound, so the bytes the application reads next are a REPLAY and must
+     * not count twice. [totalBytes] is written LAST, like every mutation.
+     */
+    fun reset() {
+        buffered = markedBuffered
+        readState = markedState
+        totalBytes = markedTotal
     }
 
     /** The application observed the end of the stream: the body was consumed completely. */
@@ -130,10 +185,11 @@ internal class BoundedBodyCapture(
         if (totalBytes == 0L) {
             return null
         }
-        return if (totalBytes > buffer.size()) {
-            "${decodeTruncated(buffer.toByteArray(), charset)}... [truncated, $totalBytes bytes total]"
+        val bytes = buffer ?: ByteArray(0)
+        return if (totalBytes > buffered) {
+            "${decodeTruncated(bytes, charset, buffered)}... [truncated, $totalBytes bytes total]"
         } else {
-            buffer.toString(charset)
+            String(bytes, 0, buffered, charset)
         }
     }
 

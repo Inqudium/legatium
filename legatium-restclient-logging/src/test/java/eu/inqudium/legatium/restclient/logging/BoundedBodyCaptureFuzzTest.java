@@ -9,8 +9,8 @@ import java.util.List;
 /**
  * Fuzzes the bounded tee target both twins rest on (the blocking variant; the
  * reactive one adds a lock and a freeze): arbitrary interleavings of
- * single-byte and array captures and read-state marks, decoded with
- * different charsets.
+ * single-byte and array captures, read-state marks and mark/reset rewinds,
+ * decoded with different charsets.
  *
  * Invariants under test: no capture sequence may throw; the total byte count
  * is exact; loggedValue() is null exactly for a zero-byte body, never throws
@@ -36,10 +36,11 @@ class BoundedBodyCaptureFuzzTest {
         int maxBytes = data.consumeInt(0, 1 << 16);
         BoundedBodyCapture capture = new BoundedBodyCapture(maxBytes);
         long expectedTotal = 0;
+        long markedTotal = 0;
 
         int ops = data.consumeInt(0, 64);
         for (int i = 0; i < ops && data.remainingBytes() > 0; i++) {
-            switch (data.consumeInt(0, 3)) {
+            switch (data.consumeInt(0, 5)) {
                 case 0 -> {
                     capture.capture(data.consumeByte());
                     expectedTotal += 1;
@@ -54,6 +55,14 @@ class BoundedBodyCaptureFuzzTest {
                 }
                 case 2 -> capture.markStarted();
                 case 3 -> capture.markCompleted();
+                case 4 -> {
+                    capture.mark();
+                    markedTotal = expectedTotal;
+                }
+                case 5 -> {
+                    capture.reset();
+                    expectedTotal = markedTotal;
+                }
             }
         }
 
