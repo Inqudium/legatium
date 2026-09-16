@@ -401,6 +401,45 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
         }
 
         @Test
+        fun `should deliver the buffer untouched and count stage wiring when the tee itself throws`() {
+            // What is tested: the fail-open path around the tee in ObservedBody.onNext - a DataBuffer
+            //   whose non-advancing read throws while the capture copies its prefix.
+            // Success criteria: the application still receives the full body, the exchange logs as a
+            //   success without a response-body field (nothing was captured), and the fail-open
+            //   counter shows stage=wiring at 1.
+            // Why it matters: the tee is a passive copy; a failure in it may cost the log field, never
+            //   the buffer the application is about to read - and it must be counted, not swallowed.
+            // Given: a measuring, body-logging filter and a buffer that breaks under the tee's copy
+            val registry = SimpleMeterRegistry()
+            val filter = ClientRequestLoggingFilter(base.copy(logResponseBody = BodyLogMode.ALWAYS), { ticker.get() }, { "generated-42" }, registry)
+            val broken =
+                object : org.springframework.core.io.buffer.DataBufferWrapper(buffer("payload")) {
+                    override fun toByteBuffer(
+                        srcPos: Int,
+                        dest: java.nio.ByteBuffer,
+                        destPos: Int,
+                        length: Int,
+                    ): Unit = throw IllegalStateException("tee broke")
+                }
+            val response = ClientResponse.create(HttpStatus.OK).body(Flux.just<DataBuffer>(broken)).build()
+
+            // When
+            val body = filter.call(request(), ExchangeFunction { Mono.just(response) })
+
+            // Then
+            assertThat(body).isEqualTo("payload")
+            val event = log.events.single()
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "success").doesNotContainKey("adapter_response_body")
+            assertThat(
+                registry
+                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
+                    .tags("stage", "wiring")
+                    .counter()
+                    .count(),
+            ).isEqualTo(1.0)
+        }
+
+        @Test
         fun `should record the read state as partial for a cancelled body and complete for a consumed one`() {
             // What is tested: the observation points of the read state on the reactive tee - the
             //   subscription marks PARTIAL, the completion signal marks COMPLETE, a cancellation leaves

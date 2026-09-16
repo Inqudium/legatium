@@ -42,12 +42,17 @@ internal fun answering(
         )
     }
 
-/** A list appender attached to [loggerName] at INFO, detached by [detach]. */
+/** A list appender attached to [loggerName] at INFO, detached - and the previous level restored - by [detach]. */
 internal class CapturedLogger(
     loggerName: String,
 ) {
     val logger: Logger = LoggerFactory.getLogger(loggerName) as Logger
     val appender: ListAppender<ILoggingEvent> = ListAppender<ILoggingEvent>().apply { start() }
+
+    // The level the logger had before - null when it inherited one - restored by [detach], so a test
+    // that raises or silences a logger (Level.OFF in the metrics tests) leaves the JVM-global logger
+    // tree as it found it and the suite stays order-independent.
+    private val previousLevel: Level? = logger.level
 
     init {
         logger.addAppender(appender)
@@ -60,6 +65,7 @@ internal class CapturedLogger(
     fun detach() {
         logger.detachAppender(appender)
         appender.stop()
+        logger.level = previousLevel
     }
 }
 

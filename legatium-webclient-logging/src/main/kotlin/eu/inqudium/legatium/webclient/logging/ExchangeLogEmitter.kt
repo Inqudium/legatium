@@ -82,9 +82,12 @@ internal class ExchangeLogEmitter(
                 return
             }
             // The caller's context first, the module's own scope inside it - same layering as the
-            // completion event, so both lines of one exchange carry the same ambient keys.
-            restoreAmbientQuietly(exchange).use {
-                MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true).use {
+            // completion event, so both lines of one exchange carry the same ambient keys; torn down
+            // through [restoreQuietly] like the completion event's scopes.
+            val ambientScope = restoreAmbientQuietly(exchange)
+            try {
+                val mdcScope = MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true)
+                try {
                     exchangeLog
                         .atInfo()
                         .setMessage(
@@ -98,7 +101,11 @@ internal class ExchangeLogEmitter(
                         .addKeyValueIfPresent(ClientLogField.URL_QUERY, exchange.query)
                         .addKeyValueIfPresent(ClientLogField.REQUEST_HEADERS, renderHeaders(exchange.requestHeaders))
                         .log()
+                } finally {
+                    restoreQuietly(mdcScope, exchange)
                 }
+            } finally {
+                restoreQuietly(ambientScope, exchange)
             }
         }
     }
@@ -153,11 +160,44 @@ internal class ExchangeLogEmitter(
         // The caller's thread-locals from the Reactor Context FIRST (ADR-0010) - the join to the server
         // line on an event-loop thread that carries none of them - and the emission scope inside, which
         // OWNS the trace keys ([MdcScope]) exactly like the RestClient twin, so a bridge id the accessors
-        // restored never outranks the header's. `use` records a close-time failure as suppressed instead
-        // of masking an emission failure.
-        restoreAmbientQuietly(exchange).use {
-            MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true).use {
+        // restored never outranks the header's. Both scopes are torn down through [restoreQuietly]: a
+        // teardown that fails AFTER the event is on the logger (and counted) is bookkeeping, never a
+        // lost emission, and never masks an emission failure propagating out of the try.
+        val ambientScope = restoreAmbientQuietly(exchange)
+        try {
+            val mdcScope = MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true)
+            try {
                 logEvent(exchange, classification, level, status, elapsedNanos / NANOS_PER_MS, slow, response?.headers()?.asHttpHeaders())
+            } finally {
+                restoreQuietly(mdcScope, exchange)
+            }
+        } finally {
+            restoreQuietly(ambientScope, exchange)
+        }
+    }
+
+    /**
+     * Scope teardown guarded on its own, the RestClient twin's rule: a throwing MDC adapter or a host
+     * accessor failing on the way OUT must neither be reported as a LOST line (the line is already on
+     * the logger) nor mask an emission failure propagating out of the try - it costs the restoration,
+     * counted as stage=wiring.
+     */
+    private fun restoreQuietly(
+        scope: AutoCloseable,
+        exchange: Exchange,
+    ) {
+        try {
+            scope.close()
+        } catch (e: Exception) {
+            reportQuietly {
+                metrics.wiringFailure()
+                internalLog.warn(
+                    "Context restoration failed after emitting {} {} - the emitting thread may carry stale keys: {}",
+                    exchange.method,
+                    exchange.target,
+                    e.toString(),
+                    e,
+                )
             }
         }
     }

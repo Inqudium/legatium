@@ -70,9 +70,9 @@ import reactor.util.context.ContextView
  * ## Fail-open, including the wiring and every callback
  *
  * Identical contract to the RestClient twin: a wiring failure degrades the filter to a plain
- * pass-through (`stage=wiring`); the terminal callbacks confine their own failures (`stage=wiring`) and
- * still complete the exchange; emission failures are confined in the emitter (`stage=emission`). Calls
- * are never affected.
+ * pass-through (`stage=wiring`); a tee that throws costs one buffer's capture (`stage=wiring`); the
+ * terminal callbacks complete the exchange through the emitter, which confines emission failures
+ * (`stage=emission`) and its host-meter updates (`stage=wiring`). Calls are never affected.
  *
  * ## Manual wiring: filters on one `MeterRegistry` share one metrics owner
  *
@@ -126,19 +126,25 @@ class ClientRequestLoggingFilter
             return Mono.deferContextual { ambient ->
                 val wiring = wireOrNull(request, ambient) ?: return@deferContextual next.exchange(request)
                 val exchange = wiring.exchange
-                if (properties.logRequestStart) {
-                    emitter.logRequestStart(exchange)
-                }
                 val call =
                     try {
+                        // The optional arrival line INSIDE the try: an Exception in it is confined in
+                        // [ExchangeLogEmitter.logRequestStart] and can never become this pipeline's error
+                        // signal - only an Error can escape, and it then takes the same way as one from
+                        // the assembly below.
+                        if (properties.logRequestStart) {
+                            emitter.logRequestStart(exchange)
+                        }
                         next.exchange(wiring.request)
                     } catch (e: Exception) {
                         // Thrown while assembling, inside this defer: routed into the chain below as the
-                        // error signal, so doOnError/doFinally complete the exchange.
+                        // error signal, so the response operator completes the exchange.
                         Mono.error(e)
                     } catch (t: Throwable) {
-                        // An Error is outside the fail-open promise ([failOpen]) and, being fatal to
-                        // Reactor, bypasses every signal hook - the gauge still closes.
+                        // An Error is outside the fail-open promise ([failOpen]). Whether Reactor treats
+                        // it as fatal (rethrown through subscribe) or turns it into the caller's error
+                        // signal (a plain Error, which deferContextual routes like an exception), no
+                        // operator of this filter exists yet to see it - so the gauge is closed here.
                         abandonExchange(exchange, t)
                         throw t
                     }
@@ -219,10 +225,11 @@ class ClientRequestLoggingFilter
             }
 
         /**
-         * Exactly-once: closes the gauge and emits, whichever terminal callback wins the transition. Guarded:
-         * the callbacks run inside Reactor's signal propagation, where an escaping exception would be
-         * rethrown into the caller's pipeline - a broken emission is confined in the emitter, and a broken
-         * gauge is counted here.
+         * Exactly-once: closes the gauge and emits, whichever terminal callback wins the transition. The
+         * callbacks run inside Reactor's signal propagation, where an escaping exception would be rethrown
+         * into the caller's pipeline: the emission is confined in the emitter (`stage=emission`, its
+         * host-meter updates as `stage=wiring`), and the gauge close is a private counter that cannot
+         * throw.
          */
         internal fun complete(exchange: Exchange) {
             if (exchange.state.getAndSet(ExchangeState.COMPLETED) == ExchangeState.COMPLETED) {
@@ -235,8 +242,10 @@ class ClientRequestLoggingFilter
          * The caller cancelled the response Mono. Before a response (`OPEN`) or while the response is being
          * handed to a downstream that may drop it (`DELIVERING`) this ends the exchange as `cancelled`; once
          * the downstream has taken the response (`RESPONDED`) the body owns the completion and the cancel
-         * is ignored - a host operator such as `next()` cancels the Mono right after taking the value. The
-         * CAS loop makes the decision atomic against the delivering thread's own transitions.
+         * is ignored - a host operator such as `next()` cancels the Mono from within the delivery, before
+         * it hands the value on, and reaches [ObservedResponse] on the delivering thread, which does not
+         * call this at all. The CAS loop makes the decision atomic against the delivering thread's own
+         * transitions.
          */
         private fun cancelUnlessResponded(exchange: Exchange) {
             while (true) {
@@ -254,14 +263,7 @@ class ClientRequestLoggingFilter
 
         /** Gauge close and emission, after the exactly-once transition was won. */
         private fun finish(exchange: Exchange) {
-            try {
-                metrics.exchangeCompleted()
-            } catch (e: Exception) {
-                reportQuietly {
-                    metrics.wiringFailure()
-                    internalLog.warn("Open-exchange bookkeeping failed for {} {}: {}", exchange.method, exchange.target, e.toString())
-                }
-            }
+            metrics.exchangeCompleted()
             emitter.logExchange(exchange)
         }
 

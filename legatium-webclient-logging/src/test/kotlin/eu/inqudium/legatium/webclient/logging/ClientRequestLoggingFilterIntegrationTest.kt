@@ -56,10 +56,14 @@ class ClientRequestLoggingFilterIntegrationTest {
     private val logger = LoggerFactory.getLogger("adapter-http-exchange") as Logger
     private lateinit var appender: AwaitingAppender
 
+    /** The production logger's level before the test raised it to INFO; restored so the raise does not outlive the test. */
+    private var previousLevel: Level? = null
+
     @BeforeEach
     fun setUp() {
         appender = AwaitingAppender().apply { start() }
         logger.addAppender(appender)
+        previousLevel = logger.level
         logger.level = Level.INFO
         peer.received.clear()
     }
@@ -68,6 +72,7 @@ class ClientRequestLoggingFilterIntegrationTest {
     fun tearDown() {
         logger.detachAppender(appender)
         appender.stop()
+        logger.level = previousLevel
     }
 
     @Test

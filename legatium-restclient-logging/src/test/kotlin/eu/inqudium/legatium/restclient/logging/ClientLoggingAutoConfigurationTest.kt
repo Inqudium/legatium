@@ -82,6 +82,31 @@ class ClientLoggingAutoConfigurationTest {
     }
 
     @Test
+    fun `should run inside the interceptors of customizers ordered before it and outside those of unordered ones`() {
+        // What is tested: the customizer order LOWEST_PRECEDENCE - 10 against competing host
+        //   customizers on both builders - one ordered earlier (@Order(0)) and one WITHOUT an order,
+        //   which Spring treats as LOWEST_PRECEDENCE and therefore applies AFTER the module's.
+        // Success criteria: on the RestClient builder and on a built RestTemplate the interceptor
+        //   list reads [earlier host interceptor, module interceptor, unordered host interceptor].
+        // Why it matters: "inside the interceptors of earlier customizers" is exactly this - an
+        //   unordered host customizer is NOT earlier, its interceptor runs inside the logging and its
+        //   header or retry is invisible to the line; the guide documents the rule, this pins it, and a
+        //   dropped @Order on the module's customizers would fail here instead of staying green on an
+        //   interceptor list of one.
+        // Given/When
+        contextRunner.withUserConfiguration(CompetingCustomizersConfig::class.java).run { context ->
+            val interceptor = context.getBean(ClientRequestLoggingInterceptor::class.java)
+            var interceptors: List<ClientHttpRequestInterceptor> = emptyList()
+            context.getBean(RestClient.Builder::class.java).requestInterceptors { interceptors = it.toList() }
+            val restTemplate = context.getBean(RestTemplateBuilder::class.java).build()
+
+            // Then
+            assertThat(interceptors).containsExactly(CompetingCustomizersConfig.EARLIER, interceptor, CompetingCustomizersConfig.UNORDERED)
+            assertThat(restTemplate.interceptors).containsExactly(CompetingCustomizersConfig.EARLIER, interceptor, CompetingCustomizersConfig.UNORDERED)
+        }
+    }
+
+    @Test
     fun `should key the default masker from the masking-key property`() {
         // What is tested: the property path to a guess-proof fingerprint - no host bean needed.
         // Success criteria: with masking-key set, the masker bean renders the keyed fingerprint, not the
@@ -252,6 +277,29 @@ private class HostConfig {
         properties: ClientLoggingProperties,
         registry: MeterRegistry,
     ): ClientRequestLoggingInterceptor = ClientRequestLoggingInterceptor(properties, NanoTimeSource.SYSTEM, CorrelationIdGenerator.DEFAULT, registry)
+}
+
+/** Two host customizers per builder kind: one ordered before the module's, one without an order (= LOWEST_PRECEDENCE). */
+@Configuration(proxyBeanMethods = false)
+private class CompetingCustomizersConfig {
+    @Bean
+    @org.springframework.core.annotation.Order(0)
+    fun earlierRestClientCustomizer(): RestClientCustomizer = RestClientCustomizer { it.requestInterceptor(EARLIER) }
+
+    @Bean
+    fun unorderedRestClientCustomizer(): RestClientCustomizer = RestClientCustomizer { it.requestInterceptor(UNORDERED) }
+
+    @Bean
+    @org.springframework.core.annotation.Order(0)
+    fun earlierRestTemplateCustomizer(): RestTemplateCustomizer = RestTemplateCustomizer { it.interceptors = it.interceptors + EARLIER }
+
+    @Bean
+    fun unorderedRestTemplateCustomizer(): RestTemplateCustomizer = RestTemplateCustomizer { it.interceptors = it.interceptors + UNORDERED }
+
+    companion object {
+        val EARLIER = ClientHttpRequestInterceptor { request, body, execution -> execution.execute(request, body) }
+        val UNORDERED = ClientHttpRequestInterceptor { request, body, execution -> execution.execute(request, body) }
+    }
 }
 
 @Configuration(proxyBeanMethods = false)

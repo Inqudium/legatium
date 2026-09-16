@@ -215,6 +215,46 @@ class ClientLoggingMetricsTest {
     }
 
     @Test
+    fun `should warn once per meter for a permanently throwing host counter and keep counting every failure`() {
+        // What is tested: the warning throttle in updateQuietly - a host counter that throws on EVERY
+        //   increment is hit twice per exchange (request-id origin and events).
+        // Success criteria: after three exchanges' worth of updates the fail-open counter shows
+        //   stage=wiring at 6, but the module logger carries exactly ONE warning for the meter.
+        // Why it matters: a warning per hit would flood the internal logger proportionally to the
+        //   traffic and drown the curated one-time warnings; the counter is the measure of the loss.
+        // Given: a registry whose correlation counter always throws, and the module logger captured
+        val hostile: MeterRegistry =
+            object : SimpleMeterRegistry() {
+                override fun newCounter(id: Meter.Id): Counter {
+                    val real = super.newCounter(id)
+                    if (id.name != ClientLoggingMetrics.CORRELATION_METER) return real
+                    return object : Counter by real {
+                        override fun increment(amount: Double) = throw IllegalStateException("counter broke")
+                    }
+                }
+            }
+        val moduleLog = CapturedLogger(ClientLoggingMetrics::class.java.name)
+        try {
+            val metrics = ClientLoggingMetrics.forRegistry(hostile, ClientStack.WEBCLIENT)
+
+            // When
+            repeat(6) { metrics.requestId(RequestIdSource.TRACE) }
+
+            // Then
+            assertThat(
+                hostile
+                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
+                    .tags("stage", "wiring")
+                    .counter()
+                    .count(),
+            ).isEqualTo(6.0)
+            assertThat(moduleLog.events.filter { it.level == Level.WARN && it.formattedMessage.contains("could not be updated") }).hasSize(1)
+        } finally {
+            moduleLog.detach()
+        }
+    }
+
+    @Test
     fun `should fold a recorded template without a placeholder into the untemplated tag value`() {
         // What is tested: the cardinality guard of the body meters' `uri` tag - the client records
         //   whatever string was passed to uri(String, ...), so `uri("/things/" + id)` would put one tag

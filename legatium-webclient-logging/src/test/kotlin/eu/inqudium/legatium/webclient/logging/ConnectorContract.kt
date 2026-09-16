@@ -56,6 +56,9 @@ abstract class ConnectorContract {
 
     private val logger = LoggerFactory.getLogger("adapter-http-exchange") as Logger
     private lateinit var appender: AwaitingAppender
+
+    /** The production logger's level before the test raised it to INFO; restored so the raise does not outlive the test. */
+    private var previousLevel: Level? = null
     private val closeables = mutableListOf<AutoCloseable>()
 
     /** Registers an engine resource to be released after the test. */
@@ -65,6 +68,7 @@ abstract class ConnectorContract {
     fun setUp() {
         appender = AwaitingAppender().apply { start() }
         logger.addAppender(appender)
+        previousLevel = logger.level
         logger.level = Level.INFO
         peer.received.clear()
     }
@@ -73,6 +77,7 @@ abstract class ConnectorContract {
     fun tearDown() {
         logger.detachAppender(appender)
         appender.stop()
+        logger.level = previousLevel
         closeables.reversed().forEach { runCatching { it.close() } }
         closeables.clear()
     }

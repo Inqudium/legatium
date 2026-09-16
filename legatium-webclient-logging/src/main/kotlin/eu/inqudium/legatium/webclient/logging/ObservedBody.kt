@@ -35,6 +35,28 @@ import java.util.concurrent.atomic.AtomicBoolean
  * `actual.onNext`: a cancel from within the delivery is the consumer's own decision, a cancel from any
  * other thread - or from this thread outside a delivery - is an abandonment. Pinned by the filter's
  * unit tests with Spring's skip, a `take`, and an out-of-band cancel.
+ *
+ * ## The limit of the heuristic: a scheduler hop between the tee and the consumer
+ *
+ * The rule reads WHERE a cancel comes from, not WHY. A `publishOn` (or any queueing operator) between
+ * this body and an early-exiting consumer moves the consumer's decision to another thread: `onNext`
+ * returns here after enqueueing, `take(1)` cancels from the worker outside a delivery, and the call
+ * logs `cancelled` at WARN although the consumer merely had enough. Conversely a cancel that a limit
+ * raises from WITHIN the delivery - `DataBufferUtils.join` exceeding `maxInMemorySize` - reads as the
+ * consumer's decision and logs `success` with the read state `partial`, while the caller sees the
+ * limit's error. Both are the price of a heuristic with no false positives on the direct paths
+ * `WebClient` itself builds (`retrieve`, `exchangeToMono`, the codecs), which never hop; a consumer
+ * that hops and then stops early is documented in the guide as a call site to expect `cancelled` from.
+ *
+ * ## Order of the terminal signal and the emission
+ *
+ * The terminal signal is handed on BEFORE the exchange completes ([onTerminal] runs after
+ * `actual.onComplete`/`onError` returned). The consumer's synchronous terminal work - Spring's decoder
+ * joining and decoding the body, an `onErrorResume` - therefore runs first, and the duration the
+ * emitter samples afterwards includes it: the reactive counterpart of the blocking twin's response
+ * occupancy, whose close comes after the converter's read. A `retry` that resubscribes synchronously
+ * from `onError` runs the next attempt's wiring (and, with a connector that answers synchronously,
+ * the whole attempt) before this attempt's line is written - the lines then appear in reverse order.
  */
 internal class ObservedBody(
     source: Flux<DataBuffer>,

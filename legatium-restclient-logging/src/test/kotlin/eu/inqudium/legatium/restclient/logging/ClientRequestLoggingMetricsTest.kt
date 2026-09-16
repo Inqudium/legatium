@@ -261,6 +261,30 @@ class ClientRequestLoggingMetricsTest {
         }
 
         @Test
+        fun `should count a bodiless 204 the client never opens as complete`() {
+            // What is tested: the read state of an answer that has no body by the protocol - the
+            //   interceptor hands the capture a length of zero at handover (the rule of Spring's own
+            //   hasMessageBody(): 1xx, 204, 304), and the response is closed without the body ever
+            //   being opened, exactly as RestClient and RestTemplate do for such answers.
+            // Success criteria: adapter.response.body.read counts 1 under state=complete for the 204
+            //   and nothing under state=unread; the same for a 200 with Content-Length: 0.
+            // Why it matters: before this rule every 204 counted as unread, so a route of deletes and
+            //   updates showed 100 % "discarded payload" on the counter that exists to flag exactly
+            //   that - and the same answer counted complete on the reactive twin, breaking the twin
+            //   contract of the state tag.
+            // Given
+            val measuring = ClientRequestLoggingInterceptor(properties.copy(measureResponseBodySize = true), { ticker.get() }, { "generated-42" }, registry)
+
+            // When: a 204 and a declared-empty 200, both closed unopened
+            measuring.intercept(request(), ByteArray(0), answering(status = HttpStatus.NO_CONTENT)).close()
+            measuring.intercept(request(), ByteArray(0), answering { it.headers.contentLength = 0 }).close()
+
+            // Then
+            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(2.0)
+            assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "unread").counter()).isNull()
+        }
+
+        @Test
         fun `should not record a request body size sample when the call produced no response`() {
             // What is tested: the exchange.response != null guard on the REQUEST sample in
             //   recordBodySizes - the interceptor copies the serialized body before the wire call,
@@ -430,6 +454,61 @@ class ClientRequestLoggingMetricsTest {
             assertThat(log.events).isEmpty()
             assertThat(counter(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "emission")).isEqualTo(1.0)
             assertThat(gauge()).isZero()
+        }
+
+        @Test
+        fun `should close the gauge and restore the call scope when the arrival line dies with an Error`() {
+            // What is tested: the Throwable boundary around the arrival line - a logging backend that
+            //   dies with an Error (a LinkageError, the likeliest source) while the start line is being
+            //   written, before the wire call.
+            // Success criteria: the Error reaches the caller unchanged, the wire call never ran, the
+            //   open-exchanges gauge is back at zero, the calling thread carries no adapter_* MDC keys,
+            //   and neither an event nor an arrival-stage count exists (the Error is outside the
+            //   fail-open promise; only the bookkeeping is protected).
+            // Why it matters: before the arrival line moved inside the try, such an Error left the
+            //   exchange open on the gauge forever and the call scope on a pooled thread - every later
+            //   line of that thread carried this call's request id.
+            // Given: a backend whose level check dies for the exchange logger at INFO
+            val context = LoggerFactory.getILoggerFactory() as LoggerContext
+            val exchangeLogger = properties.loggerName
+            val dying =
+                object : TurboFilter() {
+                    override fun decide(
+                        marker: Marker?,
+                        logger: Logger,
+                        level: Level,
+                        format: String?,
+                        params: Array<Any>?,
+                        t: Throwable?,
+                    ): FilterReply {
+                        if (logger.name == exchangeLogger && level == Level.INFO) throw LinkageError("backend died")
+                        return FilterReply.NEUTRAL
+                    }
+                }
+            context.addTurboFilter(dying)
+            try {
+                val announcing = ClientRequestLoggingInterceptor(properties.copy(logRequestStart = true), { ticker.get() }, { "generated-42" }, registry)
+                var wireCalled = false
+
+                // When
+                val thrown =
+                    catchThrowable {
+                        announcing.intercept(request(), ByteArray(0)) { _, _ ->
+                            wireCalled = true
+                            MockClientHttpResponse(ByteArray(0), HttpStatus.OK)
+                        }
+                    }
+
+                // Then
+                assertThat(thrown).isInstanceOf(LinkageError::class.java).hasMessage("backend died")
+                assertThat(wireCalled).isFalse()
+                assertThat(gauge()).isZero()
+                assertThat(org.slf4j.MDC.get(eu.inqudium.legatium.common.MdcKeys.REQUEST_ID)).isNull()
+                assertThat(log.events).isEmpty()
+                assertThat(counter(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "arrival")).isZero()
+            } finally {
+                context.turboFilterList.remove(dying)
+            }
         }
 
         @Test

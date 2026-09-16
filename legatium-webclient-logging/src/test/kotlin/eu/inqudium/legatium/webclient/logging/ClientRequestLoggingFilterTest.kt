@@ -959,7 +959,9 @@ class ClientRequestLoggingFilterTest {
             // Why it matters: with the state set to RESPONDED before the handover, this cancel was
             //   ignored as "the body owns it" and the exchange stayed open forever: no event, the gauge
             //   one too high for the life of the process.
-            // Given: a subscriber that holds the delivery until the caller has cancelled
+            // Given: a subscriber that holds the delivery until the caller has cancelled; the worker is a
+            //   daemon whose uncaught failure is collected, so a hang or a check() that fires inside
+            //   Reactor's onNext neither keeps the forked JVM alive nor hides behind the event assertion
             val delivering = CountDownLatch(1)
             val cancelled = CountDownLatch(1)
             val subscriber =
@@ -969,7 +971,14 @@ class ClientRequestLoggingFilterTest {
                         check(cancelled.await(5, TimeUnit.SECONDS)) { "the cancel never arrived" }
                     }
                 }
-            val worker = Thread { filter.filter(request(), answering(body = "payload")).subscribe(subscriber) }
+            val workerFailure =
+                java.util.concurrent.atomic
+                    .AtomicReference<Throwable>()
+            val worker =
+                Thread { filter.filter(request(), answering(body = "payload")).subscribe(subscriber) }.apply {
+                    isDaemon = true
+                    setUncaughtExceptionHandler { _, t -> workerFailure.set(t) }
+                }
             worker.start()
             check(delivering.await(5, TimeUnit.SECONDS)) { "the response was never delivered" }
 
@@ -978,7 +987,9 @@ class ClientRequestLoggingFilterTest {
             cancelled.countDown()
             worker.join(5_000)
 
-            // Then
+            // Then: the worker finished cleanly, and the exchange ended as cancelled
+            assertThat(worker.isAlive).describedAs("the delivering worker never returned").isFalse()
+            assertThat(workerFailure.get()).describedAs("uncaught failure on the delivering worker").isNull()
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.WARN)
             assertThat(keyValues(event)).containsEntry("adapter_outcome", "cancelled").containsEntry("adapter_response_status_code", 200)

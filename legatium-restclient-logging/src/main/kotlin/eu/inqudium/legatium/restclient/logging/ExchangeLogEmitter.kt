@@ -90,8 +90,12 @@ internal class ExchangeLogEmitter(
             }
             // The caller's context first, the module's own scope inside it - the same layering as the
             // completion event; on the caller's thread, where the arrival line always runs, a no-op.
-            restoreCallerMdcQuietly(exchange).use {
-                MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true).use {
+            // The scopes are torn down through [restoreQuietly], exactly as at emission: a restoration
+            // that fails AFTER the line is on the logger is bookkeeping (stage=wiring), not a lost line.
+            val callerScope = restoreCallerMdcQuietly(exchange)
+            try {
+                val mdcScope = MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true)
+                try {
                     exchangeLog
                         .atInfo()
                         .setMessage(
@@ -105,7 +109,11 @@ internal class ExchangeLogEmitter(
                         .addKeyValueIfPresent(ClientLogField.URL_QUERY, exchange.query)
                         .addKeyValueIfPresent(ClientLogField.REQUEST_HEADERS, renderHeaders(exchange.requestHeaders))
                         .log()
+                } finally {
+                    restoreQuietly(mdcScope, exchange)
                 }
+            } finally {
+                restoreQuietly(callerScope, exchange)
             }
         }
     }
@@ -153,8 +161,8 @@ internal class ExchangeLogEmitter(
         val slow = Duration.ofNanos(elapsedNanos) >= properties.slowRequestThreshold
         // Metrics BEFORE the level gate: a metric must not depend on how loud the logger is configured.
         recordBodySizesQuietly(exchange)
-        // Status and headers were snapshotted at handover (the interceptor counted and warned if the
-        // engine refused): the emission runs after the client's close and never asks the response again.
+        // Status and headers were read at handover (the interceptor counted and warned if the engine
+        // refused): the emission runs after the client's close and never asks the response again.
         val status = exchange.responseStatus
         val classification = classify(exchange.failure, status)
         // Slow escalates INFO -> WARN without changing the outcome.
@@ -307,8 +315,9 @@ internal class ExchangeLogEmitter(
 
     /**
      * Restoration guarded on its own, like the interceptor's call scope: a throwing MDC adapter here must
-     * neither be reported as a LOST emission (the event is already on the logger) nor mask an emission
-     * failure propagating out of the try - it costs the restoration, counted as stage=wiring.
+     * neither be reported as a LOST line (the arrival line or the event is already on the logger) nor
+     * mask an emission failure propagating out of the try - it costs the restoration, counted as
+     * stage=wiring. One rule for both emissions: the line counts as emitted, the teardown as bookkeeping.
      */
     private fun restoreQuietly(
         scope: AutoCloseable,

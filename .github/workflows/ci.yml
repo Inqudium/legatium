@@ -84,8 +84,14 @@ jobs:
       - name: Remove the unpublished module from the local repository
         run: rm -rf ~/.m2/repository/eu/inqudium/legatium-common
 
+      # The consumer's POM pins the twins' version by hand for a local run; here it is derived from
+      # the reactor's root POM so the pin cannot drift from `revision` without anyone noticing.
+      - name: Resolve the reactor's version
+        id: reactor
+        run: echo "version=$(mvn --batch-mode --no-transfer-progress -q org.apache.maven.plugins:maven-help-plugin:3.5.1:evaluate -Dexpression=project.version -DforceStdout)" >> "$GITHUB_OUTPUT"
+
       - name: Build and test the consumer against the installed jars
-        run: mvn --batch-mode --no-transfer-progress -f consumer-smoke/pom.xml verify
+        run: mvn --batch-mode --no-transfer-progress -f consumer-smoke/pom.xml -Dlegatium.version="${{ steps.reactor.outputs.version }}" verify
 
       - name: Publish test summary
         if: always()

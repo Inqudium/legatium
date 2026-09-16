@@ -67,6 +67,28 @@ class ClientLoggingAutoConfigurationTest {
     }
 
     @Test
+    fun `should run inside the filters of customizers ordered before it and outside those of unordered ones`() {
+        // What is tested: the customizer order LOWEST_PRECEDENCE - 10 against competing host
+        //   customizers - one ordered earlier (@Order(0)) and one WITHOUT an order, which Spring
+        //   treats as LOWEST_PRECEDENCE and therefore applies AFTER the module's.
+        // Success criteria: the builder's filter list reads [earlier host filter, module filter,
+        //   unordered host filter].
+        // Why it matters: "inside the filters of earlier customizers" is exactly this - an unordered
+        //   host customizer is NOT earlier, its filter runs inside the logging and its header or retry
+        //   is invisible to the line; the guide documents the rule, this pins it, and a dropped @Order
+        //   on the module's customizer would fail here instead of staying green on a filter list of one.
+        // Given/When
+        contextRunner.withUserConfiguration(CompetingCustomizersConfig::class.java).run { context ->
+            val filter = context.getBean(ClientRequestLoggingFilter::class.java)
+            var filters: List<ExchangeFilterFunction> = emptyList()
+            context.getBean(WebClient.Builder::class.java).filters { filters = it.toList() }
+
+            // Then
+            assertThat(filters).containsExactly(CompetingCustomizersConfig.EARLIER, filter, CompetingCustomizersConfig.UNORDERED)
+        }
+    }
+
+    @Test
     fun `should key the default masker from the masking-key property`() {
         // What is tested: the property path to a guess-proof fingerprint - no host bean needed.
         // Success criteria: with masking-key set, the masker bean renders the keyed fingerprint, not the
@@ -233,6 +255,22 @@ private class HostConfig {
         properties: ClientLoggingProperties,
         registry: MeterRegistry,
     ): ClientRequestLoggingFilter = ClientRequestLoggingFilter(properties, NanoTimeSource.SYSTEM, CorrelationIdGenerator.DEFAULT, registry)
+}
+
+/** Two host customizers: one ordered before the module's, one without an order (= LOWEST_PRECEDENCE). */
+@Configuration(proxyBeanMethods = false)
+private class CompetingCustomizersConfig {
+    @Bean
+    @org.springframework.core.annotation.Order(0)
+    fun earlierWebClientCustomizer(): WebClientCustomizer = WebClientCustomizer { it.filter(EARLIER) }
+
+    @Bean
+    fun unorderedWebClientCustomizer(): WebClientCustomizer = WebClientCustomizer { it.filter(UNORDERED) }
+
+    companion object {
+        val EARLIER = ExchangeFilterFunction { request, next -> next.exchange(request) }
+        val UNORDERED = ExchangeFilterFunction { request, next -> next.exchange(request) }
+    }
 }
 
 @Configuration(proxyBeanMethods = false)

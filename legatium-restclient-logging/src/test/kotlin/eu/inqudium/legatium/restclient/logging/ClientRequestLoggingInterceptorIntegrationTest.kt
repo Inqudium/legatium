@@ -28,10 +28,13 @@ import java.time.Duration
 
 /**
  * End to end through Boot's auto-configured `RestClient.Builder` and `RestTemplateBuilder` against a
- * real HTTP peer: registration by the customizers, the JDK HTTP engine, the URI template attribute, the
- * body tee on real streams, the correlation header on the wire, the body meters against what the peer
- * really received and what Spring's converters really read, and the no-response dispositions
- * (connection refused, read timeout) as the engine really raises them.
+ * real HTTP peer: registration by the customizers, the engine Boot auto-detects on this test classpath
+ * (Apache HttpComponents 5 - `ClientHttpRequestFactoryBuilder.detect()` prefers it over Jetty, Reactor
+ * and the JDK client, all of which are here for the per-engine contract suites), the URI template
+ * attribute, the body tee on real streams, the correlation header on the wire, the body meters against
+ * what the peer really received and what Spring's converters really read, and the no-response
+ * dispositions (connection refused, read timeout) on the explicitly pinned JDK engine, as it really
+ * raises them.
  */
 @SpringBootTest(
     classes = [IntegrationApp::class],
@@ -78,9 +81,10 @@ class ClientRequestLoggingInterceptorIntegrationTest {
 
     @Test
     fun `should log one complete event for a real call including template, headers and bodies`() {
-        // What is tested: the full happy path through Boot's builder and the JDK engine - the
-        //   customizer attached the interceptor, the template attribute is recorded, the response body
-        //   is teed on a real stream, and the generated correlation header went out on the wire.
+        // What is tested: the full happy path through Boot's builder and the engine Boot auto-detects
+        //   (Apache HttpComponents 5 on this classpath) - the customizer attached the interceptor, the
+        //   template attribute is recorded, the response body is teed on a real stream, and the
+        //   generated correlation header went out on the wire.
         // Success criteria: the peer saw the request with the correlation header; one INFO event with
         //   the client field family, format-identical to the WebClient twin.
         // Why it matters: only a real client and a real engine prove the registration and the stream
@@ -345,14 +349,16 @@ class ClientRequestLoggingInterceptorIntegrationTest {
     }
 
     @Test
-    fun `should log a bodiless 204 without body fields`() {
+    fun `should log a bodiless 204 without body fields and count its read state as complete`() {
         // What is tested: a bodiless consumption on a real stream - toBodilessEntity closes the 204
         //   without opening the body, so both captures stay at zero bytes although body logging is
-        //   always on.
+        //   always on - and the read-state counter for it.
         // Success criteria: status 204 on the entity and the event; neither adapter_request_body
-        //   nor adapter_response_body is present.
+        //   nor adapter_response_body is present; adapter.response.body.read counts the call under
+        //   state=complete and nothing under state=unread.
         // Why it matters: a 204 is the routine answer of every delete and update; an empty body
-        //   field on each of them would be noise that looks like a payload.
+        //   field on each of them would be noise that looks like a payload, and an `unread` count
+        //   for each of them would make the discarded-payload share of the route meaningless.
         // Given
         val client = restClientBuilder.baseUrl(peer.baseUrl).build()
 
@@ -370,6 +376,16 @@ class ClientRequestLoggingInterceptorIntegrationTest {
         assertThat(keyValues(event))
             .containsEntry("adapter_response_status_code", 204)
             .doesNotContainKeys("adapter_request_body", "adapter_response_body")
+        // The template without a placeholder folds to the untemplated tag value ([ClientLoggingMetrics.uriTag]).
+        val tags = arrayOf("uri", ClientLoggingMetrics.UNTEMPLATED_URI, "host", peer.host)
+        assertThat(
+            registry
+                .get(ClientLoggingMetrics.RESPONSE_BODY_READ_METER)
+                .tags(*tags, "state", "complete")
+                .counter()
+                .count(),
+        ).isEqualTo(1.0)
+        assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tags(*tags, "state", "unread").counter()).isNull()
     }
 
     companion object {

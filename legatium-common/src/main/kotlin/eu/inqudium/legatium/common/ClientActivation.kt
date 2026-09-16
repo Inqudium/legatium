@@ -10,7 +10,9 @@ import java.net.URI
  * the activation semantics are identical on both stacks by construction.
  *
  * A call is active when its host is not excluded, its path matches ANY include pattern (empty includes
- * = every call) and NO exclude prefix - an exclude always wins. Path matching runs on the raw request
+ * = every call) and NO exclude prefix - an exclude always wins. The host compared is the peer's name as
+ * [RequestTarget.hostName] derives it: without port, an IPv6 literal without brackets, a registry-based
+ * authority (`billing_api`) as written. Path matching runs on the raw request
  * path parsed into segments that DECODE for matching; the exclude prefixes compare against the decoded
  * path rebuilt from those segments (path parameters dropped), so a percent-encoded variant cannot slip
  * past an exclude. The include patterns are parsed ONCE at construction: an invalid pattern is a
@@ -22,11 +24,14 @@ internal class ClientActivation(
 ) {
     private val includePathPatterns: List<PathPattern> =
         properties.includePathPatterns.map { PathPatternParser.defaultInstance.parse(it) }
-    private val excludedHosts: Set<String> = properties.excludeHosts.map { it.lowercase() }.toSet()
+
+    // Lower-cased and, for an IPv6 literal, unbracketed - the same normalisation [RequestTarget.hostName]
+    // applies to the request, so `::1` and `[::1]` in the configuration both match a call to `[::1]`.
+    private val excludedHosts: Set<String> = properties.excludeHosts.map { it.lowercase().removeSurrounding("[", "]") }.toSet()
 
     /** True when the call to [uri] is NOT logged. */
     fun shouldNotFilter(uri: URI): Boolean {
-        if (excludedHosts.isNotEmpty() && uri.host?.lowercase() in excludedHosts) {
+        if (excludedHosts.isNotEmpty() && RequestTarget.hostName(uri)?.lowercase() in excludedHosts) {
             return true
         }
         // Nothing configured to match (the shipped default): active for every call, so the answer

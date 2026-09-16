@@ -121,6 +121,7 @@ internal class ClientLoggingMetrics private constructor(
 ) {
     private val fallbackRegistry = SimpleMeterRegistry()
     private val reportedConflicts: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val reportedUpdateFailures: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /**
      * Registers through [register] against the host registry; on rejection - Micrometer refusing the id,
@@ -260,9 +261,12 @@ internal class ClientLoggingMetrics private constructor(
 
     /**
      * Isolates an OPERATIONAL counter update from the exchange it observes: registration succeeded, but
-     * a host `Counter` may still throw on increment. The failure is counted `stage=wiring` (bookkeeping
-     * lost, event unaffected) and warned; the fail-open counter itself is reported through [reportQuietly],
-     * so a registry broken as a whole is silently dropped rather than escaping.
+     * a host `Counter` may still throw on increment. The failure is counted `stage=wiring` on EVERY call
+     * (bookkeeping lost, event unaffected - the count is the measure of the loss) but warned ONCE per
+     * meter name, like a registration conflict: a permanently broken host counter is hit twice per
+     * exchange, and a warning per hit would drown the module's curated one-time warnings under load.
+     * The fail-open counter itself is reported through [reportQuietly], so a registry broken as a whole
+     * is silently dropped rather than escaping.
      */
     private inline fun updateQuietly(
         meterName: String,
@@ -273,7 +277,13 @@ internal class ClientLoggingMetrics private constructor(
         } catch (e: Exception) {
             reportQuietly {
                 wiringFailure()
-                internalLog.warn("Meter {} could not be updated - the exchange is logged without it: {}", meterName, e.toString())
+                if (reportedUpdateFailures.add(meterName)) {
+                    internalLog.warn(
+                        "Meter {} could not be updated - the exchange is logged without it; further failures of this meter are counted, not logged: {}",
+                        meterName,
+                        e.toString(),
+                    )
+                }
             }
         }
     }

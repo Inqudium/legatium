@@ -268,9 +268,15 @@ read — no more. A response body the application never subscribes to is logged 
 partially (`take`, a cancelled subscription) is captured to exactly that extent, and the `[truncated, N
 bytes total]` note counts what flowed, not `Content-Length`. Because of that, the log cannot tell a body
 the peer sent but the application dropped from one that was never sent; the counter
-`adapter.response.body.read` ([Common guide §7.4](../../docs/GUIDE.md#74-meters)) exists for exactly that distinction — where a
-`releaseBody()` (which subscribes and drains) counts as `complete`, and only a body nobody ever
-subscribed to would be `unread` (and, never completing, is not counted at all — the gauge shows it).
+`adapter.response.body.read` ([Common guide §7.4](../../docs/GUIDE.md#74-meters)) exists for exactly that distinction — with the
+reactive observation points: a `releaseBody()` (`toBodilessEntity()`, the release of what an
+`exchangeToMono` handler left over — it subscribes and drains) counts as `complete` with its bytes on the
+size sample, Spring's body skip for `bodyToMono(Void.class)` cancels after the first buffer and counts as
+`partial`, an answer without a body (a 204, an empty body flux) completes at once and counts as
+`complete`, and only a body nobody ever subscribed to would be `unread` (and, never completing, is not
+counted at all — the gauge shows it). The blocking twin's `toBodilessEntity()` never opens the stream and
+counts `unread` there; the counter's question is answered per route, against how that route's client is
+written.
 
 ### 2.6 MDC and the reactive call
 
@@ -603,8 +609,8 @@ the filter does not know how it got onto the chain.
 ### 3.3 Filter order and other filters
 
 The customizer is ordered at `Ordered.LOWEST_PRECEDENCE - 10`, so the filter is appended **behind** the
-filters of earlier customizers and of the builder's own configuration, and runs **inside** them —
-closest to the connector:
+filters of customizers ordered before that value and of the builder's own configuration, and runs
+**inside** them — closest to the connector:
 
 - an authentication filter outside it has already added its header, so the logged (and masked) request
   headers are what the peer receives;
@@ -612,6 +618,14 @@ closest to the connector:
   per attempt ([§4.7](#47-retries-yield-one-line-per-attempt));
 - filters a host adds **after** the customizers ran (directly on a builder it obtained from Boot) run
   inside this one and are outside that guarantee.
+
+**"Earlier" means ordered earlier.** A `WebClientCustomizer` bean **without** an `@Order` sits at
+`Ordered.LOWEST_PRECEDENCE` — *after* the module's `LOWEST_PRECEDENCE - 10` — and is applied later: its
+filter is appended behind the logging filter and runs inside it. An authentication header added there is
+not on the logged line, and a retry performed there is one line spanning all attempts. To have the module
+observe a host filter, order its customizer before the module's, `@Order(0)` being the usual choice; the
+auto-configuration test pins both positions. The room below the module's order is deliberate: a
+customizer that must see the fully configured filter list (a diagnostics wrapper) has it.
 
 The `traceparent` header is not affected by the order at all: the client observation Boot registers
 injects it into the request builder **before** the request is built and the filter chain runs
@@ -824,6 +838,20 @@ Two very different things reach the body publisher as a CANCEL signal, and the f
   is emitted immediately at WARN with **`adapter_outcome=cancelled`** — with the received status when
   the response had arrived (a body cancelled mid-stream), with `-> -` and no status field when it had
   not (a cancel of the response `Mono` before the connector answered).
+
+**The limit of the thread-identity rule.** It reads *where* a cancel comes from, not *why*. A
+`publishOn` (or any queueing operator) between the response body and an early-exiting consumer moves the
+consumer's decision to another thread: `bodyToFlux(DataBuffer.class).publishOn(scheduler).take(1)`
+cancels from the worker outside a delivery and logs **`cancelled`** although the consumer merely had
+enough. Conversely a cancel that a limit raises from *within* the delivery — `DataBufferUtils.join`
+exceeding `maxInMemorySize` — reads as the consumer's decision and logs `success` with the read state
+`partial`, while the caller sees the limit's error. The paths `WebClient` itself builds (`retrieve()`,
+`exchangeToMono()`, the codecs) never hop, so they are read correctly; a consumer that hops and then
+stops early is a call site to expect `cancelled` from. The duration of a line is sampled *after* the
+body's terminal signal was handed on, so it includes the consumer's synchronous terminal work (Spring's
+decoder joining and decoding the body) — the counterpart of the blocking twin's response occupancy —
+and a `retry` that resubscribes synchronously from `onError` writes the next attempt's lines before this
+attempt's.
 
 A cancel of the response `Mono` *after* the response was delivered (a host operator such as `next()`
 between this filter and the client) is ignored: from then on the body owns the exchange. The handover

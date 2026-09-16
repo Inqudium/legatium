@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- RestClient twin: an answer that carries no body by the protocol (a 1xx, 204 or 304, a
+  `Content-Length: 0`) is counted `complete` on `adapter.response.body.read` at handover. Spring's
+  clients never open such a body, so every 204 counted `unread` before - a route of deletes and
+  updates read as 100 % discarded payload on the counter that exists to show exactly that, and the
+  same answer counted `complete` on the reactive twin. The state tag's observation points are now
+  documented per stack in the common guide's §7.4 and on `BodyReadState`, including the reactive
+  `releaseBody()` drain (`toBodilessEntity()` counts `complete` there).
+- Both twins: the optional arrival line (`log-request-start`) runs inside the `Throwable` boundary
+  of the entry point. A logging backend that died with an `Error` while the line was written left
+  the exchange open on `adapter.logging.exchanges.open` for the life of the process and, on the
+  RestClient twin, the call scope's `adapter_*` keys on the calling thread.
+- Both twins: a scope teardown that fails after the line is on the logger (a throwing MDC adapter or
+  host accessor on the way out) is counted `stage=wiring`, no longer as a lost line under
+  `stage=arrival` resp. `stage=emission` - the reconciliation of `adapter.logging.events` against
+  the fail-open counter holds again.
+- Both twins: a peer whose authority `java.net.URI` refuses to parse as a host - a service name with
+  an underscore such as `billing_api`, common in Compose and Kubernetes - is named as written in
+  `adapter_url_host`, the route and the message (they rendered `http:///path` and no host before),
+  and `exclude-hosts` matches it; an IPv6 literal in `exclude-hosts` matches with or without its
+  brackets.
+- `adapter.logging.failopen{stage=wiring}` for a host meter that throws on every update is still
+  counted per failure, but warned once per meter name instead of twice per exchange.
+- RestClient twin: the wiring runs its side-effect-free steps (coordinates, captures, time source,
+  caller MDC) before the correlation header is stamped and the origin counted, so a host time source
+  or MDC adapter that throws degrades to an unlogged pass-through with nothing on the wire and
+  nothing counted.
+- Consumer smoke test: the WebClient line is awaited instead of read right after `block()` - the
+  reactive twin emits after it handed the body's completion on, so the read raced the emission on a
+  slow runner. CI derives the consumer's `legatium.version` from the root POM instead of trusting
+  the hand-pinned copy.
+
+### Changed
+
+- Documented that "inside the filters/interceptors of earlier customizers" means customizers
+  ordered before `Ordered.LOWEST_PRECEDENCE - 10`: a host customizer without an `@Order` is applied
+  after the module's, and its filter or interceptor runs inside the logging. Pinned by a test in
+  both auto-configurations. The WebClient guide also names the limit of the cancel heuristic (a
+  `publishOn` between the body and an early-exiting consumer logs `cancelled`) and that the duration
+  includes the consumer's synchronous terminal work.
+
 ### Added
 
 - `adapter_name`: the logical name of the client that made the call, for the hosts whose

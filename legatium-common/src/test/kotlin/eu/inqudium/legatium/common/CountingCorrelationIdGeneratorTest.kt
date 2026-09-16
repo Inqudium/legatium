@@ -314,14 +314,17 @@ class CountingCorrelationIdGeneratorTest {
     @Nested
     inner class `Thread safety` {
         @Test
-        fun `should hand out distinct ids under concurrent access`() {
-            // What is tested: that concurrent calls never hand out the same id twice.
-            // Success criteria: the number of distinct ids equals the number of calls. Since uniqueness
-            //   within an instance is a guarantee rather than a probability, any duplicate is a hard
-            //   failure, not a flake.
+        fun `should hand out distinct, well-formed ids under concurrent access`() {
+            // What is tested: that concurrent calls never hand out the same id twice, and that every id
+            //   handed out under contention still matches the 21-character base-36 contract.
+            // Success criteria: the number of distinct ids equals the number of calls, and each id
+            //   matches the format. Since uniqueness within an instance is a guarantee rather than a
+            //   probability, any duplicate is a hard failure, not a flake.
             // Why it matters: the counter is the one piece of mutable shared state in the class. Replacing
             //   the AtomicLong with a plain Long - or, more plausibly, with a ThreadLocal in an attempt to
-            //   avoid contention - would produce duplicates here.
+            //   avoid contention - would produce duplicates here; a non-atomic read-modify-write could
+            //   additionally render a value outside the width. The pool is released in a finally so a
+            //   failed assertion cannot strand its non-daemon threads and hang the forked JVM.
             // Given
             val threads = 16
             val idsPerThread = 2_000
@@ -331,50 +334,25 @@ class CountingCorrelationIdGeneratorTest {
             val done = CountDownLatch(threads)
             val pool = Executors.newFixedThreadPool(threads)
 
-            // When
-            repeat(threads) {
-                pool.submit {
-                    startSignal.await()
-                    repeat(idsPerThread) { ids.add(generator.nextCorrelationId()) }
-                    done.countDown()
+            try {
+                // When
+                repeat(threads) {
+                    pool.submit {
+                        startSignal.await()
+                        repeat(idsPerThread) { ids.add(generator.nextCorrelationId()) }
+                        done.countDown()
+                    }
                 }
+                startSignal.countDown()
+                val finished = done.await(30, TimeUnit.SECONDS)
+
+                // Then
+                assertThat(finished).isTrue()
+                assertThat(ids).hasSize(threads * idsPerThread)
+                assertThat(ids).allSatisfy { assertThat(it).matches("[0-9a-z]{21}") }
+            } finally {
+                pool.shutdownNow()
             }
-            startSignal.countDown()
-            val finished = done.await(30, TimeUnit.SECONDS)
-            pool.shutdownNow()
-
-            // Then
-            assertThat(finished).isTrue()
-            assertThat(ids).hasSize(threads * idsPerThread)
-        }
-
-        @Test
-        fun `should keep the id format intact under concurrent access`() {
-            // What is tested: the rendering under contention - eight threads sharing one AtomicLong.
-            // Success criteria: the pool finishes within the timeout and every id matches the 21-character
-            //   base-36 contract.
-            // Why it matters: the distinctness test would not catch a torn or malformed id; a non-atomic
-            //   read-modify-write could produce a value that renders outside the width.
-            // Given
-            val threads = 8
-            val generator = CountingCorrelationIdGenerator(prefixSeed = 0L)
-            val ids = ConcurrentHashMap.newKeySet<String>()
-            val done = CountDownLatch(threads)
-            val pool = Executors.newFixedThreadPool(threads)
-
-            // When
-            repeat(threads) {
-                pool.submit {
-                    repeat(500) { ids.add(generator.nextCorrelationId()) }
-                    done.countDown()
-                }
-            }
-            val finished = done.await(30, TimeUnit.SECONDS)
-            pool.shutdownNow()
-
-            // Then
-            assertThat(finished).isTrue()
-            assertThat(ids).allSatisfy { assertThat(it).matches("[0-9a-z]{21}") }
         }
     }
 }

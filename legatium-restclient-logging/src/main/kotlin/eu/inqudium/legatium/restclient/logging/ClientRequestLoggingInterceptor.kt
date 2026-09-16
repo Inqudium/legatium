@@ -115,13 +115,14 @@ class ClientRequestLoggingInterceptor
             }
             val exchange = wireOrNull(request, body) ?: return execution.execute(request, body)
             val callScope = openCallScope(exchange)
-            // The optional arrival line, before the call and OUTSIDE the try below: a failure in it is
-            // confined in [ExchangeLogEmitter.logRequestStart] (level gate included), never misattributed
-            // as a call failure.
-            if (properties.logRequestStart) {
-                emitter.logRequestStart(exchange)
-            }
             try {
+                // The optional arrival line, before the call but INSIDE the try: an Exception in it is
+                // confined in [ExchangeLogEmitter.logRequestStart] (level gate included) and can never
+                // reach the catch below as a call failure - only an Error can escape, and it then takes
+                // the same way as one from the wire call: gauge closed, call scope restored.
+                if (properties.logRequestStart) {
+                    emitter.logRequestStart(exchange)
+                }
                 val response = execution.execute(request, body)
                 snapshotResponse(exchange, response)
                 // Pure object construction, no host call - nothing here can fail and strand the response.
@@ -139,9 +140,10 @@ class ClientRequestLoggingInterceptor
                 completeExchange(exchange)
                 throw e
             } catch (t: Throwable) {
-                // An Error (LinkageError, VirtualMachineError, AssertionError from an inner interceptor) is
-                // outside the fail-open promise ([failOpen]) - but not outside the gauge: the
-                // exchange is abandoned, the liveness signal stays truthful, no emission is attempted.
+                // An Error (LinkageError, VirtualMachineError, AssertionError from an inner interceptor,
+                // a logging backend dying under the arrival line) is outside the fail-open promise
+                // ([failOpen]) - but not outside the gauge: the exchange is abandoned, the liveness
+                // signal stays truthful, no emission is attempted.
                 abandonExchange(exchange, t)
                 throw t
             } finally {
@@ -223,16 +225,17 @@ class ClientRequestLoggingInterceptor
         }
 
         /**
-         * Status and headers are final at handover and the engine can still answer; snapshot them now,
-         * so the emission after the client's close never asks a closed response. A refusing engine costs
-         * the status (`-> -`), counted as wiring, never the event - and the CLIENT's own later access
-         * to the status propagates through the wrapper, which then records the failure on the exchange.
+         * Status and headers are final at handover and the engine can still answer; read them now - the
+         * status as a value, the headers as the response's own header object - so the emission after the
+         * client's close never asks a closed response for them. A refusing engine costs the status
+         * (`-> -`), counted as wiring, never the event - and the CLIENT's own later access to the status
+         * propagates through the wrapper, which then records the failure on the exchange.
          *
-         * The headers also tell the response capture the declared body length, so a converter that reads
-         * exactly `Content-Length` bytes without asking for the EOF (`ByteArrayHttpMessageConverter`)
-         * still counts as a complete read. Only a trustworthy length is passed: a `Content-Encoding` means
-         * an engine that decodes transparently may hand the application another number of bytes than the
-         * header names, so the capture then falls back to the EOF observation alone.
+         * Status and headers also tell the response capture the body length the response carries
+         * ([declaredBodyLength]): zero for an answer that has no body by the protocol - which the clients
+         * never open, and which counts as completely consumed rather than as unread - and the declared
+         * `Content-Length` otherwise, so a converter that reads exactly that many bytes without asking
+         * for the EOF (`ByteArrayHttpMessageConverter`) still counts as a complete read.
          */
         private fun snapshotResponse(
             exchange: Exchange,
@@ -240,10 +243,11 @@ class ClientRequestLoggingInterceptor
         ) {
             exchange.response = response
             try {
-                exchange.responseStatus = response.statusCode.value()
+                val status = response.statusCode.value()
+                exchange.responseStatus = status
                 val headers = response.headers
                 exchange.responseHeaders = headers
-                exchange.responseCapture?.expectBytes(declaredBodyLength(headers))
+                exchange.responseCapture?.expectBytes(declaredBodyLength(status, headers))
             } catch (e: Exception) {
                 reportQuietly {
                     metrics.wiringFailure()
@@ -258,14 +262,24 @@ class ClientRequestLoggingInterceptor
         }
 
         /**
-         * The body length the response declares and the engine will deliver unchanged: `Content-Length`
-         * when present and no `Content-Encoding` other than `identity` is on the response;
-         * [BoundedBodyCapture.UNKNOWN_LENGTH] otherwise (chunked, possibly decoded by the engine, or a
-         * value that is not a number). The header is PEER-CONTROLLED input: it only ever feeds the
-         * completeness comparison - never an allocation or a read - and a malformed value (Spring parses
-         * it with `Long.parseLong`) is folded to unknown here rather than counted as a wiring failure.
+         * The body length the response carries and the engine will deliver unchanged: ZERO for a 1xx,
+         * 204 or 304 answer, which has no body by the protocol - the same rule as Spring's own
+         * `IntrospectingClientHttpResponse.hasMessageBody()`, by which `RestClient` and `RestTemplate`
+         * never open such a body, so the capture must not wait for an open that never comes;
+         * `Content-Length` otherwise, when present and no `Content-Encoding` other than `identity` is on
+         * the response; [BoundedBodyCapture.UNKNOWN_LENGTH] for the rest (chunked, possibly decoded by
+         * the engine, or a value that is not a number). The header is PEER-CONTROLLED input: it only
+         * ever feeds the completeness comparison - never an allocation or a read - and a malformed value
+         * (Spring parses it with `Long.parseLong`) is folded to unknown here rather than counted as a
+         * wiring failure.
          */
-        private fun declaredBodyLength(headers: HttpHeaders): Long {
+        private fun declaredBodyLength(
+            status: Int,
+            headers: HttpHeaders,
+        ): Long {
+            if (status in 100..199 || status == 204 || status == 304) {
+                return 0
+            }
             val encoding = headers.getFirst(HttpHeaders.CONTENT_ENCODING)
             if (encoding != null && !encoding.equals("identity", ignoreCase = true)) {
                 return BoundedBodyCapture.UNKNOWN_LENGTH
@@ -300,6 +314,14 @@ class ClientRequestLoggingInterceptor
          * Everything that must exist before the wire call runs: identity resolution and the traceless
          * correlation header, the captures, the eagerly captured request-side coordinates and the gauge.
          * Called exclusively from [wireOrNull] - anything thrown here is confined there.
+         *
+         * Ordered so that the steps WITHOUT side effects on the request or the meters - the coordinates,
+         * the captures, the time source, the caller's MDC - run first: a host bean that throws there
+         * (a time source, an MDC adapter) degrades the call to an unlogged pass-through with nothing
+         * stamped on the wire and nothing counted. What remains after the header mutation is the header
+         * selection, which must see the correlation header the peer will see; a host MASKER that throws
+         * there still leaves the header on the request - the call proceeds, unlogged, with a correlation
+         * id no line mentions - and is counted as wiring like every other wiring failure.
          */
         private fun wireExchange(
             request: HttpRequest,
@@ -309,19 +331,20 @@ class ClientRequestLoggingInterceptor
             // The header stamped on attempt 1 comes back on a re-entry by a retrying OUTER interceptor:
             // remembered on the request, so the origin counter keeps calling it `generated`.
             val identity = ClientIdentity.resolve(headers, properties, correlationIds, generatedEarlier = request.attributes[GENERATED_ID_ATTRIBUTE] as? String)
-            // Guarded in [ClientLoggingMetrics.requestId]: a throwing host counter never fails the call.
-            metrics.requestId(identity.source)
-            if (identity.sendCorrelationHeader) {
-                headers.set(properties.correlationIdHeader, identity.requestId)
-                request.attributes[GENERATED_ID_ATTRIBUTE] = identity.requestId
-            }
+            val target = RequestTarget.of(request.uri)
+            val requestCharset = headers.declaredCharsetOrUtf8()
+            val startNanos = nanoTime.nanoTime()
+            val callerMdc = captureCallerMdcQuietly(request)
             val captures = newCaptures()
             // The request body is what the client hands the interceptor: the complete serialized body,
             // in memory, BEFORE the wire call - what the client is about to send, not what reached the
             // peer. The field documents it as exactly that; the size meter records it only once a response
             // proves the request went out ([ExchangeLogEmitter]).
             captures.request?.capture(body, 0, body.size)
-            val target = RequestTarget.of(request.uri)
+            if (identity.sendCorrelationHeader) {
+                headers.set(properties.correlationIdHeader, identity.requestId)
+                request.attributes[GENERATED_ID_ATTRIBUTE] = identity.requestId
+            }
             val exchange =
                 Exchange(
                     method = request.method.name(),
@@ -340,12 +363,16 @@ class ClientRequestLoggingInterceptor
                     name = AdapterName.of(request.attributes[ADAPTER_NAME_ATTRIBUTE]),
                     requestCapture = captures.request,
                     responseCapture = captures.response,
-                    requestCharset = headers.declaredCharsetOrUtf8(),
-                    startNanos = nanoTime.nanoTime(),
+                    requestCharset = requestCharset,
+                    startNanos = startNanos,
                     traceId = identity.traceId,
                     spanId = identity.spanId,
-                    callerMdc = captureCallerMdcQuietly(request),
+                    callerMdc = callerMdc,
                 )
+            // The origin count LAST, right before the gauge: a wiring that fails above leaves the
+            // correlation sum equal to the sum of exchanges that were actually opened. Guarded in
+            // [ClientLoggingMetrics.requestId]: a throwing host counter never fails the call.
+            metrics.requestId(identity.source)
             metrics.exchangeOpened()
             return exchange
         }
