@@ -153,6 +153,36 @@ class ClientRequestLoggingInterceptorTest {
         }
 
         @Test
+        fun `should log the client's name from the request attribute and leave the field off otherwise`() {
+            // What is tested: adapter_name, read from the ADAPTER_NAME_ATTRIBUTE the host sets once per
+            //   client (ADR-0009) - present with the attribute, absent without it, absent for a blank one.
+            // Success criteria: "billing" lands in adapter_name and the URL host stays the sidecar's; a
+            //   request without the attribute and one with a blank name carry no adapter_name at all.
+            // Why it matters: behind an egress sidecar every dependency shares one adapter_url_host; the
+            //   name is the field that tells the clients apart, and an empty bucket would only look
+            //   like a client.
+            // Given: two clients calling through one sidecar host, one named, one not, one blank
+            val named = request(uri = "http://localhost:15001/billing/invoices/7")
+            named.attributes[ClientRequestLoggingInterceptor.ADAPTER_NAME_ATTRIBUTE] = "billing"
+            val unnamed = request(uri = "http://localhost:15001/geo/lookup")
+            val blank = request(uri = "http://localhost:15001/geo/lookup")
+            blank.attributes[ClientRequestLoggingInterceptor.ADAPTER_NAME_ATTRIBUTE] = "  "
+
+            // When
+            interceptor.intercept(named, ByteArray(0), answering()).consumeAndClose()
+            interceptor.intercept(unnamed, ByteArray(0), answering()).consumeAndClose()
+            interceptor.intercept(blank, ByteArray(0), answering()).consumeAndClose()
+
+            // Then: the name beside the shared host; no field without a usable name
+            assertThat(log.events).hasSize(3)
+            assertThat(keyValues(log.events[0]))
+                .containsEntry("adapter_name", "billing")
+                .containsEntry("adapter_url_host", "localhost:15001")
+            assertThat(keyValues(log.events[1])).doesNotContainKey("adapter_name")
+            assertThat(keyValues(log.events[2])).doesNotContainKey("adapter_name")
+        }
+
+        @Test
         fun `should log the raw request target so percent-encoded control characters cannot forge log lines`() {
             // What is tested: the log-injection guard for the raw request target - java.net.URI decodes
             //   getPath()/getQuery(), so `%0A` in the target would become a real line break in the
@@ -230,6 +260,115 @@ class ClientRequestLoggingInterceptorTest {
             } finally {
                 MDC.clear()
             }
+        }
+    }
+
+    @Nested
+    inner class `The caller's context on another thread` {
+        private val key = "endpoint_request_id"
+        private val executor =
+            java.util.concurrent.Executors
+                .newSingleThreadExecutor()
+        private val pinned = PinnedMdcAppender().apply { start() }
+
+        @BeforeEach
+        fun attach() {
+            MDC.clear()
+            log.logger.addAppender(pinned)
+        }
+
+        @AfterEach
+        fun detach() {
+            log.logger.detachAppender(pinned)
+            pinned.stop()
+            executor.shutdownNow()
+            MDC.clear()
+        }
+
+        private fun <T> onAnotherThread(block: () -> T): T = executor.submit(block).get()
+
+        @Test
+        fun `should restore the caller's MDC around the exchange line when the response is closed on another thread`() {
+            // What is tested: ADR-0011 - the call on one thread with an inbound identity in its MDC,
+            //   the response handed to and closed on another thread that carries a foreign value and a
+            //   key of its own.
+            // Success criteria: the event is logged on the other thread and carries the caller's value
+            //   beside the module's identity and the other thread's own key; that thread is left as it
+            //   was.
+            // Why it matters: a streamed body closed by a reader thread would otherwise log a client
+            //   line that cannot be joined to the server line it was made from - or, worse, joins a
+            //   foreign one.
+            // Given
+            MDC.put(key, "inbound-7")
+            val response = interceptor.intercept(request(), ByteArray(0), answering(body = "payload"))
+
+            // When
+            val afterOnWorker =
+                onAnotherThread {
+                    MDC.put(key, "foreign")
+                    MDC.put("worker_only", "w")
+                    response.consumeAndClose()
+                    MDC.get(key) to MDC.get("worker_only")
+                }
+
+            // Then
+            val event = pinned.events.single()
+            assertThat(event.threadName).isNotEqualTo(Thread.currentThread().name)
+            assertThat(event.mdcPropertyMap)
+                .containsEntry(key, "inbound-7")
+                .containsEntry("worker_only", "w")
+                .containsEntry(MdcKeys.REQUEST_ID, "generated-42")
+            assertThat(afterOnWorker).isEqualTo("foreign" to "w")
+        }
+
+        @Test
+        fun `should not override a value the caller updated when the response is closed on the caller's thread`() {
+            // What is tested: the snapshot is not applied on the capturing thread.
+            // Success criteria: the event carries the value set AFTER the call, before the close.
+            // Why it matters: on the caller's thread the live MDC is the truth; the snapshot exists for
+            //   another thread only.
+            // Given
+            MDC.put(key, "v1")
+            val response = interceptor.intercept(request(), ByteArray(0), answering())
+            MDC.put(key, "v2")
+
+            // When
+            response.consumeAndClose()
+
+            // Then
+            assertThat(pinned.events.single().mdcPropertyMap).containsEntry(key, "v2")
+        }
+
+        @Test
+        fun `should log the module's own identity alone when the restorer throws`() {
+            // What is tested: restoreCallerMdcQuietly - the fail-open path around the snapshot.
+            // Success criteria: the event is still logged with outcome and identity, without the
+            //   caller's key, and the fail-open meter counts one stage=wiring occurrence.
+            // Why it matters: the restoration is an extra; a failing extra must cost the caller's keys,
+            //   never the event.
+            // Given
+            MDC.put(key, "inbound-7")
+            val response = interceptor.intercept(request(), ByteArray(0), answering())
+            interceptor.emitter.callerMdcRestorer = CallerMdcRestorer { throw IllegalStateException("adapter refused") }
+
+            // When
+            try {
+                onAnotherThread { response.consumeAndClose() }
+            } finally {
+                interceptor.emitter.callerMdcRestorer = CallerMdcRestorer.DEFAULT
+            }
+
+            // Then
+            val event = pinned.events.single()
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "success")
+            assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42").doesNotContainKey(key)
+            assertThat(
+                meterRegistry
+                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
+                    .tag("stage", "wiring")
+                    .counter()
+                    .count(),
+            ).isEqualTo(1.0)
         }
     }
 

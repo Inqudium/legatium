@@ -18,6 +18,9 @@
         "adapter_response_status_code": {
           "type": "short"
         },
+        "adapter_name": {
+          "type": "keyword"
+        },
 
         "adapter_url_host": {
           "type": "keyword"

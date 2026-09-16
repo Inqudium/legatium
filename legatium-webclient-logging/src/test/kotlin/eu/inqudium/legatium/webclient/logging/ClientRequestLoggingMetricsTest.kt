@@ -188,6 +188,7 @@ class ClientRequestLoggingMetricsTest {
             val request =
                 request(method = HttpMethod.POST, uri = "https://api.example.com/things/7") {
                     attribute(ClientRequestLoggingFilter.URI_TEMPLATE_ATTRIBUTE, "https://api.example.com/things/{id}")
+                    attribute(ClientRequestLoggingFilter.ADAPTER_NAME_ATTRIBUTE, "things")
                     body(
                         org.springframework.web.reactive.function.BodyInserters
                             .fromValue("hello"),
@@ -211,8 +212,8 @@ class ClientRequestLoggingMetricsTest {
             // When
             measuring.call(request, writing)
 
-            // Then
-            val tags = arrayOf("uri", "https://api.example.com/things/{id}", "host", "api.example.com")
+            // Then: the three body meters share the uri/host/name tag set, the name from the attribute
+            val tags = arrayOf("uri", "https://api.example.com/things/{id}", "host", "api.example.com", "name", "things")
             assertThat(
                 registry
                     .get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER)

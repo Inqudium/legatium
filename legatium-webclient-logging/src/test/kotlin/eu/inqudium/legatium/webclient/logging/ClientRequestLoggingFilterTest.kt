@@ -25,6 +25,7 @@ import org.springframework.web.util.pattern.PatternParseException
 import reactor.core.publisher.BaseSubscriber
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
+import reactor.core.scheduler.Schedulers
 import reactor.test.StepVerifier
 import java.io.IOException
 import java.time.Duration
@@ -159,6 +160,40 @@ class ClientRequestLoggingFilterTest {
                 .containsEntry("adapter_url_path", "/things/7")
                 .containsEntry("adapter_url_query", "page=2")
                 .containsEntry("adapter_url_template", "http://localhost:8081/things/{id}")
+        }
+
+        @Test
+        fun `should log the client's name from the request attribute and leave the field off otherwise`() {
+            // What is tested: adapter_name, read from the ADAPTER_NAME_ATTRIBUTE the host sets once per
+            //   client (ADR-0009) - present with the attribute, absent without it, absent for a blank one.
+            // Success criteria: "billing" lands in adapter_name and the URL host stays the sidecar's; a
+            //   request without the attribute and one with a blank name carry no adapter_name at all.
+            // Why it matters: behind an egress sidecar every dependency shares one adapter_url_host; the
+            //   name is the field that tells the clients apart, and an empty bucket would only look
+            //   like a client.
+            // Given: two clients calling through one sidecar host, one named, one not, one blank
+            val named =
+                request(uri = "http://localhost:15001/billing/invoices/7") {
+                    attribute(ClientRequestLoggingFilter.ADAPTER_NAME_ATTRIBUTE, "billing")
+                }
+            val unnamed = request(uri = "http://localhost:15001/geo/lookup")
+            val blank =
+                request(uri = "http://localhost:15001/geo/lookup") {
+                    attribute(ClientRequestLoggingFilter.ADAPTER_NAME_ATTRIBUTE, "  ")
+                }
+
+            // When
+            filter.call(named, answering())
+            filter.call(unnamed, answering())
+            filter.call(blank, answering())
+
+            // Then: the name beside the shared host; no field without a usable name
+            assertThat(log.events).hasSize(3)
+            assertThat(keyValues(log.events[0]))
+                .containsEntry("adapter_name", "billing")
+                .containsEntry("adapter_url_host", "localhost:15001")
+            assertThat(keyValues(log.events[1])).doesNotContainKey("adapter_name")
+            assertThat(keyValues(log.events[2])).doesNotContainKey("adapter_name")
         }
 
         @Test
@@ -676,6 +711,177 @@ class ClientRequestLoggingFilterTest {
     }
 
     private fun buffer(text: String): DataBuffer = DefaultDataBufferFactory.sharedInstance.wrap(text.toByteArray())
+
+    @Nested
+    inner class `The caller's context` {
+        private val key = "endpoint_request_id"
+        private lateinit var accessor: MdcAccessorGuard
+
+        // The body completes on another thread here, and the emission runs there AFTER the terminal
+        // signal reached the blocking caller: the events are awaited, not read, and the appender pins
+        // each event's MDC to the emitting thread (see AwaitingAppender).
+        private val awaiting = AwaitingAppender().apply { start() }
+
+        @BeforeEach
+        fun registerAccessor() {
+            accessor = MdcAccessorGuard(key)
+            MDC.remove(key)
+            log.logger.addAppender(awaiting)
+        }
+
+        @AfterEach
+        fun removeAccessor() {
+            log.logger.detachAppender(awaiting)
+            awaiting.stop()
+            MDC.remove(key)
+            accessor.close()
+        }
+
+        /** A peer whose body arrives on a bounded-elastic thread - the exchange completes off the caller's thread. */
+        private fun answeringElsewhere(): ExchangeFunction =
+            ExchangeFunction {
+                Mono.just(
+                    ClientResponse
+                        .create(HttpStatus.OK)
+                        .body(Flux.defer { Flux.just(buffer("payload")) }.subscribeOn(Schedulers.boundedElastic()))
+                        .build(),
+                )
+            }
+
+        @Test
+        fun `should restore the caller's Reactor Context around the exchange line on the completing thread`() {
+            // What is tested: the join of ADR-0010 - a key the caller put into the Reactor Context (the
+            //   way limesium puts endpoint_request_id there), an accessor registered for it, and a body
+            //   that completes on another thread.
+            // Success criteria: the event carries the key from the context in its MDC although it was
+            //   logged on a bounded-elastic thread, and the caller's thread carries no such key afterwards.
+            // Why it matters: the completing thread never ran the inbound request; without the
+            //   restoration the client line and the server line cannot be joined on the reactive stack.
+            // Given: no such key on the caller's thread, the key in the subscriber's context
+            assertThat(MDC.get(key)).isNull()
+
+            // When
+            filter
+                .filter(request(), answeringElsewhere())
+                .flatMap { it.bodyToMono(String::class.java) }
+                .contextWrite { it.put(key, "inbound-7") }
+                .block()
+
+            // Then: logged elsewhere, joined anyway; the caller's thread untouched
+            val event = awaiting.awaitEvents(1).single()
+            assertThat(event.threadName).isNotEqualTo(Thread.currentThread().name)
+            assertThat(event.mdcPropertyMap)
+                .containsEntry(key, "inbound-7")
+                .containsEntry(MdcKeys.REQUEST_ID, "generated-42")
+            assertThat(MDC.get(key)).isNull()
+        }
+
+        @Test
+        fun `should give the arrival line and the completion line the same ambient context`() {
+            // What is tested: logRequestStart restores the context exactly like the completion event.
+            // Success criteria: both events of one call carry the context's key.
+            // Why it matters: the two lines of one exchange are joined by the request id; an ambient
+            //   key on one and not the other would make the pair read like two different callers.
+            // Given
+            val startLogging = filterWith(properties.copy(logRequestStart = true))
+
+            // When
+            startLogging
+                .filter(request(), answeringElsewhere())
+                .flatMap { it.bodyToMono(String::class.java) }
+                .contextWrite { it.put(key, "inbound-7") }
+                .block()
+
+            // Then
+            val events = awaiting.awaitEvents(2)
+            assertThat(events).hasSize(2)
+            assertThat(events).allSatisfy { event -> assertThat(event.mdcPropertyMap).containsEntry(key, "inbound-7") }
+        }
+
+        @Test
+        fun `should carry the same ambient context on every retry attempt`() {
+            // What is tested: the context is the subscriber's, so a resubscription by an outer retry
+            //   sees the same one - unlike a thread-local snapshot, which the retry scheduler would not
+            //   carry.
+            // Success criteria: a first attempt that fails at the connector and a second that succeeds
+            //   both log with the context's key.
+            // Why it matters: two lines of one logical call must join the same server line.
+            // Given: a connector failing once, then answering elsewhere
+            var attempts = 0
+            val flaky =
+                ExchangeFunction { req ->
+                    if (attempts++ == 0) Mono.error(IOException("connection reset")) else answeringElsewhere().exchange(req)
+                }
+
+            // When
+            filter
+                .filter(request(), flaky)
+                .retry(1)
+                .flatMap { it.bodyToMono(String::class.java) }
+                .contextWrite { it.put(key, "inbound-7") }
+                .block()
+
+            // Then
+            val events = awaiting.awaitEvents(2)
+            assertThat(events).hasSize(2)
+            assertThat(keyValues(events[0])).containsEntry("adapter_outcome", "failure")
+            assertThat(keyValues(events[1])).containsEntry("adapter_outcome", "success")
+            assertThat(events).allSatisfy { event -> assertThat(event.mdcPropertyMap).containsEntry(key, "inbound-7") }
+        }
+
+        @Test
+        fun `should keep the emitting thread's own value when the context does not mention the key`() {
+            // What is tested: the additive contract on a call that completes synchronously on the
+            //   caller's thread, whose MDC carries the key while the context does not.
+            // Success criteria: the event shows the thread's value; the thread still has it afterwards.
+            // Why it matters: a WebClient used blockingly from a servlet thread has the inbound identity
+            //   on the thread, not in the context - the restorer must not erase it.
+            // Given
+            MDC.put(key, "on-thread")
+
+            // When
+            filter.call(request(), answering())
+
+            // Then
+            assertThat(awaiting.awaitEvents(1).single().mdcPropertyMap).containsEntry(key, "on-thread")
+            assertThat(MDC.get(key)).isEqualTo("on-thread")
+        }
+
+        @Test
+        fun `should log the module's own identity alone when the restorer throws`() {
+            // What is tested: restoreAmbientQuietly - the fail-open path around a host accessor that
+            //   throws on the emitting thread.
+            // Success criteria: the event is still logged with its adapter_* identity and outcome, the
+            //   context's key is absent, and the fail-open meter counts one stage=wiring occurrence.
+            // Why it matters: the restoration is an extra; a failing extra must cost the ambient keys,
+            //   never the event.
+            // Given
+            filter.emitter.ambientRestorer = AmbientContextRestorer { throw IllegalStateException("accessor refused") }
+
+            // When
+            try {
+                filter
+                    .filter(request(), answering())
+                    .flatMap { it.bodyToMono(String::class.java) }
+                    .contextWrite { it.put(key, "inbound-7") }
+                    .block()
+            } finally {
+                filter.emitter.ambientRestorer = AmbientContextRestorer.detect()
+            }
+
+            // Then
+            val event = awaiting.awaitEvents(1).single()
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "success")
+            assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42").doesNotContainKey(key)
+            assertThat(
+                meterRegistry
+                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
+                    .tag("stage", "wiring")
+                    .counter()
+                    .count(),
+            ).isEqualTo(1.0)
+        }
+    }
 
     @Nested
     inner class `Subscription and completion shapes` {

@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `adapter_name`: the logical name of the client that made the call, for the hosts whose
+  dependencies all sit behind one egress sidecar or proxy and therefore share one
+  `adapter_url_host`. The host names a client once, on its builder, through the request
+  attribute `ClientRequestLoggingInterceptor.ADAPTER_NAME_ATTRIBUTE` resp.
+  `ClientRequestLoggingFilter.ADAPTER_NAME_ATTRIBUTE` (one string,
+  `eu.inqudium.legatium.adapterName`, on both twins); every call of that client then carries
+  the field on the completion event and the arrival line, and the three body meters tag it as
+  `name` (`UNNAMED` for a client nobody named). The component template maps the field, the
+  lockstep test pins it; why an attribute and not a header, a property or a path rule is
+  [ADR-0009](docs/adr/ADR-0009-adapter-name-is-a-request-attribute.md).
+- WebClient twin: the caller's context is restored around the exchange line. The filter captures
+  the Reactor Context the caller subscribed with and the emitter turns it back into thread-locals
+  for the single log statement, through the `ThreadLocalAccessor`s the host registered with
+  Micrometer's context propagation - so a client line completed on an event-loop thread carries
+  the inbound request's `endpoint_*` identity (Limesium) under Boot's default
+  `spring.reactor.context-propagation=limited`, and identically across retry attempts. Additive
+  like the emission scope (`clearMissing` off), trace keys still owned by the module. Opt-in by
+  `io.micrometer:context-propagation` on the classpath (a new optional dependency), no
+  configuration key; a host without it behaves as before. The RestClient twin needs no counterpart,
+  its wire call blocks the caller's thread; why the Reactor Context and not a thread-local snapshot
+  is [ADR-0010](docs/adr/ADR-0010-reactive-twin-restores-the-callers-context.md).
+- RestClient twin: the caller's MDC is snapshotted at wiring, on the calling thread, and
+  restored around the exchange line when the host closes the response on **another** thread
+  (a streamed body handed to a pooled reader) - the one case in which the blocking twin's client
+  line could not join the server line. Own and trace keys are left out of the snapshot, it is
+  not applied on the calling thread (the live MDC is the truth there), and it is additive like
+  the emission scope. One map copy per call, nothing for an empty MDC, no configuration key;
+  [ADR-0011](docs/adr/ADR-0011-blocking-twin-snapshots-the-callers-mdc.md).
+
 ### Changed
 
 - The shared guide (`docs/GUIDE.md`) is now the **Common guide** (site nav, READMEs, module

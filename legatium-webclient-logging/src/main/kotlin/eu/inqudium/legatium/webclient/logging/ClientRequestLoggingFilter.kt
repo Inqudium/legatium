@@ -1,5 +1,6 @@
 package eu.inqudium.legatium.webclient.logging
 
+import eu.inqudium.legatium.common.AdapterName
 import eu.inqudium.legatium.common.ClientActivation
 import eu.inqudium.legatium.common.ClientIdentity
 import eu.inqudium.legatium.common.ClientLoggingMetrics
@@ -18,6 +19,7 @@ import org.springframework.web.reactive.function.client.ClientResponse
 import org.springframework.web.reactive.function.client.ExchangeFilterFunction
 import org.springframework.web.reactive.function.client.ExchangeFunction
 import reactor.core.publisher.Mono
+import reactor.util.context.ContextView
 
 /**
  * The WebClient twin of `legatium-restclient-logging`'s `ClientRequestLoggingInterceptor`: ONE
@@ -36,6 +38,11 @@ import reactor.core.publisher.Mono
  * - **No call-wide THREAD-LOCAL MDC:** the call hops event-loop threads; the exchange identity rides
  *   the emission's `MdcScope` (and the message inline). Handler-side propagation of the identity into
  *   reactive operators is the host's context-propagation business, not this filter's.
+ * - **The caller's context comes from the Reactor Context, not from a thread:** the `ContextView` the
+ *   caller subscribed with is captured at subscription and restored into thread-locals around the
+ *   exchange line ([AmbientContextRestorer], ADR-0010), so the client line joins the server line on
+ *   the event-loop thread that completes the body - where the blocking twin simply logs on the
+ *   caller's thread.
  * - **Emission point:** the response BODY's terminal signal instead of a `close()` - the next section.
  *
  * ## Emission point: the body's terminal signal
@@ -94,7 +101,9 @@ class ClientRequestLoggingFilter
     ) : ExchangeFilterFunction {
         /** Shared with the emitter and exposed for the tests; one owner per registry. */
         internal val metrics = ClientLoggingMetrics.forRegistry(meterRegistry, ClientStack.WEBCLIENT)
-        private val emitter = ExchangeLogEmitter(properties, nanoTime, metrics, masker)
+
+        /** Exposed for the tests, which swap the emitter's ambient restorer to drive its fail-open path. */
+        internal val emitter = ExchangeLogEmitter(properties, nanoTime, metrics, masker)
 
         // Activation is the shared implementation (ADR-0003): identical semantics on both stacks by construction.
         private val activation = ClientActivation(properties)
@@ -106,14 +115,16 @@ class ClientRequestLoggingFilter
             if (activation.shouldNotFilter(request.url())) {
                 return next.exchange(request)
             }
-            // Mono.defer around EVERYTHING, not only the connector call: wiring, the arrival line and the
-            // gauge then run once per SUBSCRIPTION, so a retrying outer filter that resubscribes this Mono
-            // gets one exchange - and one line - per attempt instead of a completed exchange it cannot
+            // Mono.deferContextual around EVERYTHING, not only the connector call: wiring, the arrival line
+            // and the gauge then run once per SUBSCRIPTION, so a retrying outer filter that resubscribes this
+            // Mono gets one exchange - and one line - per attempt instead of a completed exchange it cannot
             // reopen. And a downstream filter that THROWS while assembling its publisher (instead of
             // returning Mono.error) becomes THIS pipeline's error signal - invoked bare, the exception would
             // propagate synchronously past doOnError/doFinally, lose the exchange event and leak the gauge.
-            return Mono.defer {
-                val wiring = wireOrNull(request) ?: return@defer next.exchange(request)
+            // The contextual variant hands over the subscriber's Reactor Context - the caller's ambient
+            // context the emission restores (ADR-0010) - which is the same for every attempt.
+            return Mono.deferContextual { ambient ->
+                val wiring = wireOrNull(request, ambient) ?: return@deferContextual next.exchange(request)
                 val exchange = wiring.exchange
                 if (properties.logRequestStart) {
                     emitter.logRequestStart(exchange)
@@ -187,9 +198,12 @@ class ClientRequestLoggingFilter
          * The fail-open wiring: an exception degrades the filter to a plain pass-through (the caller sees
          * null), counted `stage=wiring` - a logging component must never fail the call it describes.
          */
-        private fun wireOrNull(request: ClientRequest): Wiring? =
+        private fun wireOrNull(
+            request: ClientRequest,
+            ambient: ContextView,
+        ): Wiring? =
             try {
-                wireExchange(request)
+                wireExchange(request, ambient)
             } catch (e: Exception) {
                 reportQuietly {
                     metrics.wiringFailure()
@@ -256,7 +270,10 @@ class ClientRequestLoggingFilter
          * rebuilt outgoing request, the eagerly captured request-side coordinates and the gauge. Called
          * exclusively from [wireOrNull] - anything thrown here is confined there.
          */
-        private fun wireExchange(request: ClientRequest): Wiring {
+        private fun wireExchange(
+            request: ClientRequest,
+            ambient: ContextView,
+        ): Wiring {
             val headers = request.headers()
             val identity = ClientIdentity.resolve(headers, properties, correlationIds)
             // Guarded in [ClientLoggingMetrics.requestId]: a throwing host counter never fails the call.
@@ -286,12 +303,14 @@ class ClientRequestLoggingFilter
                             outgoingHeaders[name]?.takeIf { it.isNotEmpty() }?.joinToString(", ")
                         },
                     uriTemplate = request.attribute(URI_TEMPLATE_ATTRIBUTE).orElse(null) as? String,
+                    name = AdapterName.of(request.attribute(ADAPTER_NAME_ATTRIBUTE).orElse(null)),
                     requestCapture = captures.request,
                     responseCapture = captures.response,
                     requestCharset = headers.declaredCharsetOrUtf8(),
                     startNanos = nanoTime.nanoTime(),
                     traceId = identity.traceId,
                     spanId = identity.spanId,
+                    ambient = ambient,
                 )
             metrics.exchangeOpened()
             return Wiring(exchange, outgoing)
@@ -328,6 +347,20 @@ class ClientRequestLoggingFilter
              * stays absent for an expanded `URI`.
              */
             const val URI_TEMPLATE_ATTRIBUTE = "org.springframework.web.reactive.function.client.WebClient.uriTemplate"
+
+            /**
+             * Request attribute the host sets to NAME a client - the value of `adapter_name` and the
+             * `name` tag of the body meters (ADR-0009). Set once per client, and every call of that client
+             * carries it:
+             *
+             * ```kotlin
+             * WebClient.builder().defaultRequest { it.attribute(ADAPTER_NAME_ATTRIBUTE, "billing") }
+             * ```
+             *
+             * The same string on both twins, so a host carrying both jars names its clients with one
+             * constant. A blank or non-string value counts as no name.
+             */
+            const val ADAPTER_NAME_ATTRIBUTE = AdapterName.ATTRIBUTE
 
             /** The cause attached to an exchange whose connector completed empty - WebClient's own message for the caller. */
             const val NO_RESPONSE_MESSAGE = "The underlying HTTP client completed without emitting a response"

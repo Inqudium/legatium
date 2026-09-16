@@ -71,6 +71,36 @@ class ClientRequestLoggingFilterIntegrationTest {
     }
 
     @Test
+    fun `should join the caller's Reactor Context on the Reactor Netty thread that completes the call`() {
+        // What is tested: ADR-0010 end to end - a key the caller put into the Reactor Context, an
+        //   accessor registered for it (as limesium registers its endpoint_* accessors), and a real
+        //   connector whose body completes on an event-loop thread.
+        // Success criteria: the exchange line is logged on a reactor-http thread and its MDC carries
+        //   the context's key beside the module's own identity.
+        // Why it matters: this is the server-line join a reactive host gets without configuring
+        //   automatic context propagation - the event-loop thread never saw the caller's MDC.
+        // Given
+        val client = webClientBuilder.baseUrl(peer.baseUrl).build()
+        MdcAccessorGuard("endpoint_request_id").use {
+            // When
+            client
+                .get()
+                .uri("/things/{id}", 7)
+                .retrieve()
+                .bodyToMono(String::class.java)
+                .contextWrite { it.put("endpoint_request_id", "inbound-42") }
+                .block()
+
+            // Then
+            val event = appender.awaitEvents(1).single()
+            assertThat(event.threadName).startsWith("reactor-http")
+            assertThat(event.mdcPropertyMap)
+                .containsEntry("endpoint_request_id", "inbound-42")
+                .containsEntry(MdcKeys.REQUEST_ID, peer.received.single().header("X-Correlation-Id"))
+        }
+    }
+
+    @Test
     fun `should log one complete event for a real call including template, headers and bodies`() {
         // What is tested: the full happy path through Boot's builder and Reactor Netty - the customizer
         //   attached the filter, the template attribute is recorded, both bodies are teed on pooled

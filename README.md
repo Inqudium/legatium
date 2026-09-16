@@ -54,7 +54,8 @@ Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_req
 ```
 
 plus the structured `adapter_*` key-values — outcome, duration until the response was fully read, method,
-status, peer host, URI template, path, query, optional headers and bodies — and the identity in the MDC.
+status, peer host, the client's name when the host set one, URI template, path, query, optional headers
+and bodies — and the identity in the MDC.
 The trace ids come from the `traceparent` header the host's tracing propagation put on the request; on a
 traceless call the module sends an `X-Correlation-Id` instead, so the peer can quote it. Outcomes:
 `success`, `failure`, `timeout`, and on the reactive stack `cancelled`.

@@ -1,5 +1,6 @@
 package eu.inqudium.legatium.restclient.logging
 
+import eu.inqudium.legatium.common.AdapterName
 import eu.inqudium.legatium.common.ClientActivation
 import eu.inqudium.legatium.common.ClientIdentity
 import eu.inqudium.legatium.common.ClientLoggingMetrics
@@ -97,7 +98,9 @@ class ClientRequestLoggingInterceptor
         private val masker: HeaderValueMasker = HeaderValueMasker.forKey(properties.maskingKey),
     ) : ClientHttpRequestInterceptor {
         private val metrics = ClientLoggingMetrics.forRegistry(meterRegistry, ClientStack.RESTCLIENT)
-        private val emitter = ExchangeLogEmitter(properties, nanoTime, metrics, masker)
+
+        /** Exposed for the tests, which swap the emitter's caller-MDC restorer to drive its fail-open path. */
+        internal val emitter = ExchangeLogEmitter(properties, nanoTime, metrics, masker)
 
         // Activation is the shared implementation (ADR-0003): identical semantics on both stacks by construction.
         private val activation = ClientActivation(properties)
@@ -334,16 +337,39 @@ class ClientRequestLoggingInterceptor
                             headers[name]?.takeIf { it.isNotEmpty() }?.joinToString(", ")
                         },
                     uriTemplate = request.attributes[URI_TEMPLATE_ATTRIBUTE] as? String,
+                    name = AdapterName.of(request.attributes[ADAPTER_NAME_ATTRIBUTE]),
                     requestCapture = captures.request,
                     responseCapture = captures.response,
                     requestCharset = headers.declaredCharsetOrUtf8(),
                     startNanos = nanoTime.nanoTime(),
                     traceId = identity.traceId,
                     spanId = identity.spanId,
+                    callerMdc = captureCallerMdcQuietly(request),
                 )
             metrics.exchangeOpened()
             return exchange
         }
+
+        /**
+         * The caller's MDC for a close on another thread (ADR-0011), or nothing: a throwing MDC adapter
+         * costs the snapshot, counted as stage=wiring, never the wiring - the call is logged either way,
+         * with the module's own identity.
+         */
+        private fun captureCallerMdcQuietly(request: HttpRequest): CallerMdcSnapshot =
+            try {
+                CallerMdcSnapshot.capture()
+            } catch (e: Exception) {
+                reportQuietly {
+                    metrics.wiringFailure()
+                    internalLog.warn(
+                        "The caller's MDC could not be captured for {} {} - a close on another thread logs without it: {}",
+                        request.method,
+                        request.uri,
+                        e.toString(),
+                    )
+                }
+                CallerMdcSnapshot.NONE
+            }
 
         /**
          * A capture exists when the body is logged in ANY mode OR measured - `on-failure` needs the bytes
@@ -404,6 +430,22 @@ class ClientRequestLoggingInterceptor
 
             /** Request attribute remembering the correlation id this module generated and sent, for re-entries by a retrying outer interceptor. */
             const val GENERATED_ID_ATTRIBUTE = "eu.inqudium.legatium.restclient.logging.generatedCorrelationId"
+
+            /**
+             * Request attribute the host sets to NAME a client - the value of `adapter_name` and the
+             * `name` tag of the body meters (ADR-0009). Set once per client, and every call of that client
+             * carries it:
+             *
+             * ```kotlin
+             * RestClient.builder().defaultRequest { it.attribute(ADAPTER_NAME_ATTRIBUTE, "billing") }
+             * ```
+             *
+             * A `RestTemplate` has no `defaultRequest`; an interceptor of the host's own that runs BEFORE
+             * this one sets `request.attributes[ADAPTER_NAME_ATTRIBUTE]` instead. The same string on both
+             * twins, so a host carrying both jars names its clients with one constant. A blank or non-string
+             * value counts as no name.
+             */
+            const val ADAPTER_NAME_ATTRIBUTE = AdapterName.ATTRIBUTE
 
             // The module's own logger, never the exchange logger: the exchange log stream stays parseable.
             private val internalLog = LoggerFactory.getLogger(ClientRequestLoggingInterceptor::class.java)

@@ -33,6 +33,7 @@ meters, the fail-open promise and the shared code — is written once, in the
    2. [Manual wiring](#32-manual-wiring)
    3. [Interceptor order and other interceptors](#33-interceptor-order-and-other-interceptors)
    4. [Verifying the integration](#34-verifying-the-integration)
+   5. [Naming a client](#35-naming-a-client)
 4. [Special characteristics](#4-special-characteristics)
    1. [Differences to the WebClient twin](#41-differences-to-the-webclient-twin)
    2. [Duration is response occupancy](#42-duration-is-response-occupancy)
@@ -134,8 +135,9 @@ five layers:
 | `ClientLoggingAutoConfiguration` | Registers the interceptor bean, the default `NanoTimeSource` / `CorrelationIdGenerator` / `HeaderValueMasker`, and — when Boot's `spring-boot-restclient` is present — a late `RestClientCustomizer` and `RestTemplateCustomizer` that append the interceptor. |
 | `ClientRequestLoggingInterceptor` | Owns the **client side**: activation by host and path, fail-open wiring, identity resolution (`traceparent` first, correlation header on traceless calls) with the traceless header, the request-body capture, the call-wide `MdcScope`, the breadcrumb, the no-response path, the handoff to the response wrapper. |
 | `CapturingClientHttpResponse` | The response the client gets back: delegates, tees the body the application reads, reports a failure of **any** delegate operation (status, headers, body open/read/close, response close), and turns `close()` into the emission point. |
-| `Exchange` | Per-exchange state from entry to emission; the exactly-once guards. |
-| `ExchangeLogEmitter` | Builds and emits the arrival line and the completion event; resolves level, outcome and cause (timeouts via the shared `Timeouts`); records body sizes; opens the emission `MdcScope` with trace ownership. |
+| `Exchange` | Per-exchange state from entry to emission; the exactly-once guards; the caller's MDC snapshot. |
+| `CallerMdcSnapshot` / `CallerMdcRestorer` | The caller's MDC at wiring, own and trace keys excluded, restored around the emission only on another thread than the calling one (ADR-0011). |
+| `ExchangeLogEmitter` | Builds and emits the arrival line and the completion event; resolves level, outcome and cause (timeouts via the shared `Timeouts`); records body sizes; restores the caller's MDC snapshot for a close on another thread, then opens the emission `MdcScope` with trace ownership. |
 | `BoundedBodyCapture` | The bounded capture target; count-only mode with limit `0`; the response-side read state (`BodyReadState`); single-writer/late-reader visibility via a volatile total. |
 | Shared layer (`legatium-common`, inlined) | `ClientLoggingProperties` / `HeaderLogProperties`, `ClientLogField`, `ClientLoggingMetrics`, `ClientActivation`, `MdcScope`, `Traceparent`, `Timeouts`, the injectable collaborators and the fail-open guards — one implementation for both twins, class by class in [Common guide §9.1](../../docs/GUIDE.md#91-the-shared-classes). |
 
@@ -280,6 +282,7 @@ The module advertises "call identity in MDC while the wire call runs". Concretel
 | The wire call (inner interceptors, the request factory, the HTTP engine's own logging) | call-wide `MdcScope` in `intercept` | yes |
 | The body read and the close, after the interceptor returned | — the client's converters run in the caller's context | no (the caller's ambient MDC applies — usually the same thread, with its inbound identity) |
 | The emission at close | `MdcScope` in the emitter, with trace ownership | yes |
+| The emission at a close on **another** thread | the caller's MDC snapshot (`CallerMdcSnapshot`), taken at wiring, restored around the emission — outside the `MdcScope` | yes, for the keys the caller had; see below |
 
 `MdcScope` is an **additive overlay**: it puts the three `adapter_*` keys and restores the previous values
 on close (threads are pooled; an inbound request's filter may own other keys). Around the call it leaves
@@ -290,6 +293,21 @@ bridge id on the closing thread can never join the event to a foreign trace.
 The one thing the overlay never does is *replace*: `endpoint_request_id` (Limesium) and every other
 ambient key stay visible on the client line, which is how inbound and outbound lines join without either
 library knowing about the other.
+
+**A response closed on another thread.** A host that takes the response as a stream and hands it to
+another thread — a download piped into a pooled writer — closes it there, and that thread carries none
+of the caller's MDC. For exactly this case the interceptor snapshots the caller's MDC at wiring, on the
+calling thread, minus the module's own keys and the trace keys (those belong to the emission scope; a
+nested client call must not carry the outer call's identity), and the emitter restores the snapshot
+around the exchange line **only when the closing thread is not the calling one**
+([ADR-0011](../../docs/adr/ADR-0011-blocking-twin-snapshots-the-callers-mdc.md)). On the caller's thread
+the live MDC is the truth and the snapshot is not applied, so a value updated between the call and the
+close stays the newer one. On another thread the snapshot wins for the keys it holds, a key only that
+thread has stays visible, and every touched key is restored on close. The cost is one map copy per call,
+nothing for an empty MDC; there is no configuration key for it. A throwing MDC adapter at capture or at
+restore costs the snapshot, counted as `stage=wiring`, never the event. The layering — the caller's
+context outside, the module's own `MdcScope` inside — is the one the WebClient twin uses with the Reactor
+Context as its source ([WebClient guide §2.6](../../legatium-webclient-logging/docs/GUIDE.md#26-mdc-and-the-reactive-call)).
 
 ### 2.7 Fail-open contract
 
@@ -302,6 +320,7 @@ response objects):
 | wiring | `wireExchange` (correlation bean, header selection, capture construction) | the interceptor degrades to a plain pass-through for this call | `failopen{stage=wiring}` |
 | wiring | `MdcScope` open | the call runs without call MDC | `failopen{stage=wiring}` |
 | wiring | `MdcScope` close | restoration lost; never masks an exception propagating out of the call | `failopen{stage=wiring}` |
+| wiring | `CallerMdcSnapshot` capture or restore (ADR-0011) | the event follows with the module's own identity, without the caller's keys | `failopen{stage=wiring}` |
 | wiring | body-size recording, operational counter updates | the event follows without the sample / the count | `failopen{stage=wiring}` |
 | arrival | `logRequestStart` (including the level gate) | the arrival line is dropped | `failopen{stage=arrival}` |
 | emission | `logExchange` — everything after the exactly-once CAS, including the status read | the exchange event is **lost**; the close returns normally | `failopen{stage=emission}` |
@@ -532,6 +551,71 @@ with the WebClient twin. If the host needs a different position, it attaches the
 
    `events` should equal the number of logged lines; `exchanges.open` should be `0` when idle.
 
+### 3.5 Naming a client
+
+`adapter_url_host` is the host of the request URI. As long as every dependency has its own host that is
+the coordinate dashboards split by; once the application reaches its dependencies through an **egress
+sidecar** or a forward proxy, the URI names the sidecar for every call and every dependency lands in
+one bucket. The interceptor cannot tell the clients apart from the request alone — the application
+can, and it says so once per client through a request attribute the interceptor reads at wiring time
+(`ClientRequestLoggingInterceptor.ADAPTER_NAME_ATTRIBUTE`,
+[ADR-0009](../../docs/adr/ADR-0009-adapter-name-is-a-request-attribute.md)):
+
+```kotlin
+@Configuration(proxyBeanMethods = false)
+class ClientsConfiguration {
+    @Bean
+    fun billingClient(builder: RestClient.Builder): RestClient =
+        builder
+            .baseUrl("http://localhost:15001/billing")
+            .defaultRequest { it.attribute(ClientRequestLoggingInterceptor.ADAPTER_NAME_ATTRIBUTE, "billing") }
+            .build()
+
+    @Bean
+    fun geoClient(builder: RestClient.Builder): RestClient =
+        builder
+            .baseUrl("http://localhost:15001/geo")
+            .defaultRequest { it.attribute(ClientRequestLoggingInterceptor.ADAPTER_NAME_ATTRIBUTE, "geo-lookup") }
+            .build()
+}
+```
+
+`defaultRequest` runs for every request the client builds, so the attribute is on each of them before
+the interceptor chain starts; a per-call `attribute(...)` on the request spec overrides it. Every call
+of a named client then carries `adapter_name` on the completion event and on the arrival line, and the
+three body meters carry the name as their `name` tag (`UNNAMED` for a client nobody named). A blank
+value counts as no name; the value is otherwise the host's vocabulary and is neither folded nor
+validated.
+
+**`RestTemplate`** has no `defaultRequest`. It does hand its interceptors an `HttpRequest` with
+attributes, so an interceptor of the host's own — registered **before** the logging interceptor, which
+must stay last ([§3.2](#32-manual-wiring)) — sets it:
+
+```kotlin
+@Bean
+fun legacyTemplate(loggingInterceptor: ClientRequestLoggingInterceptor): RestTemplate =
+    RestTemplate().apply {
+        interceptors =
+            listOf(
+                ClientHttpRequestInterceptor { request, body, execution ->
+                    request.attributes[ClientRequestLoggingInterceptor.ADAPTER_NAME_ATTRIBUTE] = "legacy-billing"
+                    execution.execute(request, body)
+                },
+                loggingInterceptor,
+            )
+    }
+```
+
+**Verifying it:** make one call through a named client and expect `adapter_name=billing` beside
+`adapter_url_host=localhost:15001` on the exchange line; a call through an unnamed client carries no
+`adapter_name` at all. With `measure-response-body-size` on,
+`curl -s localhost:8080/actuator/metrics/adapter.response.body.read` lists `name` among the available
+tags.
+
+The attribute string is the same on the WebClient twin, so a host carrying both jars names its clients
+with one literal. The field itself and the meter tag are documented once, in the
+[Common guide §7.7](../../docs/GUIDE.md#77-naming-a-client).
+
 ---
 
 ## 4. Special characteristics
@@ -547,6 +631,7 @@ Everything not listed here behaves exactly as in `legatium-webclient-logging`.
 | Never-completing exchange | a response the application never closes | a response body nobody subscribes to or releases |
 | Request body | the byte array the client hands the interceptor — complete, captured at wiring **before** the wire call (the field shows what was about to be sent; the size meter records only once a response proves it went out) | teed at the connector's `writeWith` as the inserter writes it |
 | Call-wide MDC | thread-local, for the wire call | none — the call hops event-loop threads; emission MDC and the message inline only |
+| The caller's context on the exchange line | on the thread; for a close on **another** thread, the caller's MDC snapshot taken at wiring ([§2.6](#26-mdc-coverage), ADR-0011) | restored from the **Reactor Context** through the host's `ThreadLocalAccessor`s (ADR-0010) — same layering, different source |
 | Read failure mid-body | `IOException` from the tee stream, reported and rethrown | the body `Flux`'s error signal |
 | URI template | recorded by `RestClient`; **never** by `RestTemplate` | recorded by `WebClient` |
 | Attachment | `RestClientCustomizer` + `RestTemplateCustomizer` | `WebClientCustomizer` |
@@ -606,7 +691,9 @@ against the client by `UriTemplateAttributeTest`) — that is `adapter_url_templ
 aggregation half of the path pair. `RestTemplate` sets its template only on the observation context, not
 on the request, so `RestTemplate` calls log the path alone and their body meters fall under
 `uri=UNKNOWN`. A host that wants the template on `RestTemplate` calls migrates to `RestClient`; the
-module does not reconstruct templates by guessing.
+module does not reconstruct templates by guessing. The client's name (`adapter_name`, ADR-0009) is a
+request attribute too, and `RestTemplate` has no `defaultRequest` to set it on: an interceptor of the
+host's own, registered before this one, sets it instead ([§3.5](#35-naming-a-client)).
 
 ### 4.7 Retries yield one line per attempt
 

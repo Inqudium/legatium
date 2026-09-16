@@ -6,7 +6,7 @@ import kotlin.reflect.KClass
 /**
  * The structured log fields of an OUTBOUND HTTP exchange: their wire names, and the one rendering each
  * name is allowed to carry. ONE enum for both twins (ADR-0003): the family is a cross-stack contract -
- * the RestClient interceptor and the WebClient filter emit the same thirteen fields under the same
+ * the RestClient interceptor and the WebClient filter emit the same fourteen fields under the same
  * names with the same shapes; only the VALUE vocabulary of
  * [OUTCOME] is wider on the reactive stack (`cancelled`), which is a property of the value, not of the
  * field.
@@ -75,6 +75,16 @@ internal enum class ClientLogField(
      * is the authoritative disposition.
      */
     RESPONSE_STATUS_CODE("adapter_response_status_code", Int::class),
+
+    /**
+     * ELK: `keyword`, index true, doc_values ON - aggregate. The logical name of the CLIENT that made
+     * the call - the host application's own name for the dependency behind it (`billing`,
+     * `geo-lookup`), set once per client as the [AdapterName.ATTRIBUTE] request attribute (ADR-0009).
+     * Present only when the host named the client. The coordinate [URL_HOST] cannot provide once the
+     * call goes through an egress sidecar or a proxy: every dependency then shares one URI host, and
+     * "which dependency is slow" becomes a question about THIS field.
+     */
+    NAME("adapter_name", String::class),
 
     /**
      * ELK: `keyword`, index true, doc_values ON - aggregate. The peer's host, with the port when the URI

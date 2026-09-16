@@ -61,6 +61,15 @@
             <artifactId>spring-boot-webclient</artifactId>
             <optional>true</optional>
         </dependency>
+        <!-- OPTIONAL by design (ADR-0010): its presence on the host classpath lets the emitter restore
+             the caller's thread-locals from the Reactor Context around the exchange line, so the
+             client line joins the server line (limesium's endpoint_* keys) on the event-loop thread
+             that completes the body. Absent, the module works unchanged without that restoration. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>context-propagation</artifactId>
+            <optional>true</optional>
+        </dependency>
         <dependency>
             <groupId>org.jetbrains.kotlin</groupId>
             <artifactId>kotlin-stdlib</artifactId>

@@ -35,7 +35,7 @@ class ClientLogFieldTest {
         fun `should be the literal strings the component template maps`() {
             // What is tested: every wire name, spelled out as a literal - independently of the enum, so a
             //   rename cannot pass by asserting a value against itself.
-            // Success criteria: all thirteen names match exactly.
+            // Success criteria: all fourteen names match exactly.
             // Why it matters: once the template is composed into a pipeline, changing a name is a breaking
             //   change for every dashboard and alert keying on it - the compiler cannot see that.
             // Given/When/Then: every wire name against its literal
@@ -43,6 +43,7 @@ class ClientLogFieldTest {
             assertThat(ClientLogField.DURATION_MS.wireName).isEqualTo("adapter_duration_ms")
             assertThat(ClientLogField.REQUEST_METHOD.wireName).isEqualTo("adapter_request_method")
             assertThat(ClientLogField.RESPONSE_STATUS_CODE.wireName).isEqualTo("adapter_response_status_code")
+            assertThat(ClientLogField.NAME.wireName).isEqualTo("adapter_name")
             assertThat(ClientLogField.URL_HOST.wireName).isEqualTo("adapter_url_host")
             assertThat(ClientLogField.URL_TEMPLATE.wireName).isEqualTo("adapter_url_template")
             assertThat(ClientLogField.URL_PATH.wireName).isEqualTo("adapter_url_path")
@@ -137,6 +138,17 @@ class ClientLogFieldTest {
             //   their doc values
             assertThat(properties[ClientLogField.URL_TEMPLATE.wireName]).isEqualTo(mapOf("type" to "keyword"))
             assertThat(properties[ClientLogField.URL_HOST.wireName]).isEqualTo(mapOf("type" to "keyword"))
+        }
+
+        @Test
+        fun `should keep the adapter name aggregatable`() {
+            // What is tested: the mapping of adapter_name - the field that tells several clients of one
+            //   application apart when the URI host cannot (an egress sidecar, ADR-0009).
+            // Success criteria: a plain keyword - indexed, with doc values.
+            // Why it matters: the field exists to be grouped by ("which dependency is slow" behind a
+            //   sidecar); a mapping without doc values would keep it filterable but defeat exactly that.
+            // Given / When / Then
+            assertThat(properties[ClientLogField.NAME.wireName]).isEqualTo(mapOf("type" to "keyword"))
         }
 
         @Test

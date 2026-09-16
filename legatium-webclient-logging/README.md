@@ -35,6 +35,7 @@ The RestClient module is the reference implementation; its documentation applies
 | Never-completing exchange | a response the application never closes stays open on the gauge | a response body nobody subscribes to or releases stays open on the gauge — every `retrieve`/`exchangeToMono`/`exchangeToFlux` path of `WebClient` subscribes or releases; a raw `exchange()` caller owns that duty |
 | Request body | the byte array the client hands the interceptor | teed at the connector's `writeWith` as the caller's `BodyInserter` writes it — the request is rebuilt with a wrapping inserter; a bodiless request stays untouched |
 | Call-wide MDC | thread-local `MdcScope` around the wire call | **none** — the call hops event-loop threads; the identity rides the emission's `MdcScope` (owned trace keys, additive overlay) and the message inline; propagating it into reactive operators is the host's context-propagation business |
+| The caller's context on the exchange line | on the thread — the wire call blocks the caller's thread; for a response closed on **another** thread, the caller's MDC snapshot taken at wiring ([ADR-0011](../docs/adr/ADR-0011-blocking-twin-snapshots-the-callers-mdc.md)) | restored from the **Reactor Context** the caller subscribed with, around the emission, through the `ThreadLocalAccessor`s the host registered (Limesium registers them for its `endpoint_*` keys) — so the client line joins the server line on the event-loop thread that completes the body, under Boot's default propagation mode. Opt-in by `io.micrometer:context-propagation` on the classpath, no configuration key; what the host provides per key is [guide §3.6](docs/GUIDE.md#36-joining-the-server-line-what-the-host-provides) ([mechanism §2.6](docs/GUIDE.md#26-mdc-and-the-reactive-call), [ADR-0010](../docs/adr/ADR-0010-reactive-twin-restores-the-callers-context.md)) |
 | Read failure mid-body | `IOException` from the tee stream, reported and rethrown | the body `Flux`'s error signal — `failure` with the received status |
 | Attachment | `RestClientCustomizer` + `RestTemplateCustomizer` | `WebClientCustomizer` (`builder.filter(...)`, late, so the filter runs inside the filters of earlier customizers — closest to the connector) |
 | Body tee concurrency | volatile single-writer capture | lock-guarded, **frozen at emission**: a body chunk still in flight after a cancellation cannot move the logged text or the size sample |
@@ -155,6 +156,27 @@ reports the total across them ([Common guide §7.4](../docs/GUIDE.md#74-meters))
 the filter itself (a host-defined `ClientRequestLoggingFilter` bean) is a different thing: the
 automatic wiring still attaches the replacement ([Common guide §3](../docs/GUIDE.md#3-overriding-beans)).
 
+### Naming a client
+
+`adapter_url_host` is the host on the wire. Behind an egress sidecar or a forward proxy that is the
+same host for every dependency, so name the client — once, on its builder — and every call of it
+carries `adapter_name` and the `name` tag on the body meters:
+
+```kotlin
+@Bean
+fun billingClient(builder: WebClient.Builder): WebClient =
+    builder
+        .baseUrl("http://localhost:15001/billing")
+        .defaultRequest { it.attribute(ClientRequestLoggingFilter.ADAPTER_NAME_ATTRIBUTE, "billing") }
+        .build()
+```
+
+The attribute string is the same on both twins, a blank value counts as no name, and a client nobody
+named simply logs no `adapter_name`. The why and the alternatives are
+[ADR-0009](../docs/adr/ADR-0009-adapter-name-is-a-request-attribute.md); the long form, with the
+verification steps, is the guide's [§3.5](docs/GUIDE.md#35-naming-a-client), and the field itself is
+in the [Common guide §7.7](../docs/GUIDE.md#77-naming-a-client).
+
 ### The exchange line
 
 On the `adapter-http-exchange` logger a completed exchange is one event. In a plain-text appender only
@@ -184,6 +206,7 @@ fields next to the encoder's own envelope:
   "adapter_duration_ms": 17,
   "adapter_request_method": "POST",
   "adapter_response_status_code": 200,
+  "adapter_name": "things",
   "adapter_url_host": "api.example.com",
   "adapter_url_path": "/things/42",
   "adapter_url_template": "https://api.example.com/things/{id}",

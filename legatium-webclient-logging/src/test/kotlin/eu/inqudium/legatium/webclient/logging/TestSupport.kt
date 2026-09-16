@@ -4,7 +4,10 @@ import ch.qos.logback.classic.Level
 import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
+import io.micrometer.context.ContextRegistry
+import io.micrometer.context.ThreadLocalAccessor
 import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.web.reactive.function.client.ClientRequest
@@ -57,5 +60,40 @@ internal class CapturedLogger(
     fun detach() {
         logger.detachAppender(appender)
         appender.stop()
+    }
+}
+
+/**
+ * Registers an MDC-backed `ThreadLocalAccessor` for [key] with the JVM-global [ContextRegistry] the way
+ * a host (or limesium, for its `endpoint_*` keys) does, and removes it again on [close] - but only when
+ * this guard added it: an accessor a host registered before is never deleted. Without the guard an
+ * accessor from one test would leak into every later test in the JVM.
+ */
+internal class MdcAccessorGuard(
+    private val key: String,
+    private val registry: ContextRegistry = ContextRegistry.getInstance(),
+) : AutoCloseable {
+    private val added: Boolean =
+        if (registry.threadLocalAccessors.none { it.key() == key }) {
+            registry.registerThreadLocalAccessor(
+                object : ThreadLocalAccessor<String> {
+                    override fun key(): Any = key
+
+                    override fun getValue(): String? = MDC.get(key)
+
+                    override fun setValue(value: String) = MDC.put(key, value)
+
+                    override fun setValue() = MDC.remove(key)
+                },
+            )
+            true
+        } else {
+            false
+        }
+
+    override fun close() {
+        if (added) {
+            registry.removeThreadLocalAccessor(key)
+        }
     }
 }

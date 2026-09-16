@@ -44,6 +44,21 @@ internal fun ClientHttpResponse.consumeAndClose(): String =
         response.body.readAllBytes().toString(StandardCharsets.UTF_8)
     }
 
+/**
+ * A list appender that pins each event's MDC to the EMITTING thread: logback captures the MDC lazily on
+ * the first `getMDCPropertyMap()` access, and a test reading an event that another thread logged would
+ * otherwise capture its own (empty) MDC. `prepareForDeferredProcessing()` is logback's own answer for
+ * cross-thread inspection (AsyncAppender does the same).
+ */
+internal class PinnedMdcAppender : ch.qos.logback.core.AppenderBase<ILoggingEvent>() {
+    val events = java.util.concurrent.CopyOnWriteArrayList<ILoggingEvent>()
+
+    override fun append(event: ILoggingEvent) {
+        event.prepareForDeferredProcessing()
+        events.add(event)
+    }
+}
+
 /** A list appender attached to [loggerName] at INFO, detached by [detach]. */
 internal class CapturedLogger(
     loggerName: String,

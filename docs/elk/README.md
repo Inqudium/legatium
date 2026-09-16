@@ -2,7 +2,7 @@
 
 Companion text to
 [`legatium-restclient-logging-fields.component-template.json`](legatium-restclient-logging-fields.component-template.json) —
-the mapping of the thirteen structured fields the Legatium modules write per outbound HTTP exchange.
+the mapping of the fourteen structured fields the Legatium modules write per outbound HTTP exchange.
 
 > **Status note.** This is **the definition, not an
 > extract**: the `adapter_*` family is not yet part of any upstream data-stream mapping. Whoever wires
@@ -31,6 +31,7 @@ ADR-0003), so one test is the lockstep for both.
 | `adapter_duration_ms` | `long` | true | on | **compute** — percentiles; response occupancy including the body read, not bare round-trip time |
 | `adapter_request_method` | `keyword` | true | on | aggregate — closed set of HTTP verbs |
 | `adapter_response_status_code` | `short` | true | on | aggregate — a numeric **label**, never summed; absent when no response arrived |
+| `adapter_name` | `keyword` | true | on | aggregate — the client's name as the host set it (ADR-0009); "which dependency is slow" once every dependency sits behind one sidecar host |
 | `adapter_url_host` | `keyword` | true | on | aggregate — the peer, `host` or `host:port`; "which dependency is slow" |
 | `adapter_url_template` | `keyword` | true | on | aggregate — the URI template, parametrised, so it repeats |
 | `adapter_url_path` | `keyword` | true | **off** | filter exactly — resolved ids, repetition factor ≈ 1 |

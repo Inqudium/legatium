@@ -40,6 +40,7 @@ two disagree, the code wins.
    4. [Meters](#74-meters)
    5. [Reading the meters together](#75-reading-the-meters-together)
    6. [Trace correlation](#76-trace-correlation)
+   7. [Naming a client](#77-naming-a-client)
 8. [Scope and guarantees](#8-scope-and-guarantees)
    1. [What the modules deliberately do not do](#81-what-the-modules-deliberately-do-not-do)
    2. [Fail-open contract](#82-fail-open-contract)
@@ -227,7 +228,7 @@ rest; which one fits depends on where the output goes.
 ```
 
 ```
-13:54:58.534 INFO  [http-nio-8080-exec-3] adapter-http-exchange - Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf9… traceId=4bf9… spanId=00f0…] adapter_outcome=success adapter_duration_ms=17 adapter_request_method=POST adapter_response_status_code=200 adapter_url_host=api.example.com adapter_url_path=/things/42 adapter_url_template=https://api.example.com/things/{id} [adapter_method=POST, adapter_request_id=4bf9…, adapter_route=https://api.example.com/things/42, endpoint_request_id=4bf9…, traceId=4bf9…, spanId=00f0…]
+13:54:58.534 INFO  [http-nio-8080-exec-3] adapter-http-exchange - Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf9… traceId=4bf9… spanId=00f0…] adapter_outcome=success adapter_duration_ms=17 adapter_request_method=POST adapter_response_status_code=200 adapter_name=things adapter_url_host=api.example.com adapter_url_path=/things/42 adapter_url_template=https://api.example.com/things/{id} [adapter_method=POST, adapter_request_id=4bf9…, adapter_route=https://api.example.com/things/42, endpoint_request_id=4bf9…, traceId=4bf9…, spanId=00f0…]
 ```
 
 (On the reactive stack the thread reads `reactor-http-epoll-2` or the like; the line is otherwise identical.)
@@ -285,6 +286,7 @@ The exchange at the top of this section becomes this document:
   "adapter_duration_ms": 17,
   "adapter_request_method": "POST",
   "adapter_response_status_code": 200,
+  "adapter_name": "things",
   "adapter_url_host": "api.example.com",
   "adapter_url_path": "/things/42",
   "adapter_url_template": "https://api.example.com/things/{id}",
@@ -301,9 +303,9 @@ The `adapter_request_id` / `adapter_method` / `adapter_route` / `traceId` / `spa
 the MDC ([§7.2](#72-mdc-keys)); the `adapter_*` key-values are the field family of
 [§7.1](#71-log-fields). The `endpoint_request_id` is not the modules': it is the ambient MDC of the
 inbound request the call was made from (Limesium), which the additive emission scope leaves in place —
-on the blocking stack as a matter of course, on the reactive stack when the host's context propagation
-restores it around the completing operator — and this is how the client line joins the server line
-without any coupling between the two libraries. How MDC entries land in the document (flat, nested,
+on the blocking stack as a matter of course, on the reactive stack restored from the Reactor Context the
+caller subscribed with (ADR-0010, with `io.micrometer:context-propagation` on the classpath) — and this
+is how the client line joins the server line without any coupling between the two libraries. How MDC entries land in the document (flat, nested,
 renamed) is the encoder's decision.
 
 | Option | Output | Key-value pairs | MDC | Typed values | Escapes control chars | Use for |
@@ -318,7 +320,7 @@ call (blocking stack) and the modules' own failure reports.
 
 ## 5. Index mapping (ELK)
 
-The thirteen `adapter_*` fields have a ready-made Elasticsearch component template in
+The fourteen `adapter_*` fields have a ready-made Elasticsearch component template in
 [`/docs/elk/`](elk/README.md):
 
 ```bash
@@ -598,6 +600,7 @@ component template; `ClientLogFieldTest` in `legatium-common` keeps the shared e
 | `adapter_duration_ms` | long | yes | on | always | from the injected monotonic source; until response close (RestClient) resp. the body's terminal signal (WebClient) |
 | `adapter_request_method` | keyword | yes | on | always | |
 | `adapter_response_status_code` | short | yes | on | when a response arrived | absent for a refused connection, a timeout before the status line, or a cancellation before the response (`-> -`) |
+| `adapter_name` | keyword | yes | on | when the host named the client | the client's logical name (`billing`, `geo-lookup`) from the `ADAPTER_NAME_ATTRIBUTE` request attribute — see [§7.7](#77-naming-a-client); the coordinate `adapter_url_host` cannot provide behind an egress sidecar (ADR-0009) |
 | `adapter_url_host` | keyword | yes | on | when the URI has a host | `host` or `host:port` — the outbound coordinate |
 | `adapter_url_template` | keyword | yes | on | when the client recorded a template | the aggregation half of the path pair, e.g. `https://api.example.com/things/{id}`; never for `RestTemplate` |
 | `adapter_url_path` | keyword | yes | **off** | always | the **raw** path as sent, ids and all — filter exactly, never group |
@@ -628,9 +631,20 @@ Set by `MdcScope` around each emission — and, on the blocking stack, around th
 
 `MdcScope` restores the previous value of every key on close, rolls back a partial install if the
 adapter throws mid-put, and restores best-effort on close with the first failure rethrown and later ones
-suppressed. It never removes keys it does not own: an inbound request's identity stays. The reactive
+suppressed. It never removes keys it does not own: an inbound request's identity stays. On the blocking
+stack the caller's MDC is snapshotted at wiring and restored around the emission only when the host
+closes the response on another thread than the calling one
+([RestClient guide §2.6](../legatium-restclient-logging/docs/GUIDE.md#26-mdc-coverage),
+[ADR-0011](adr/ADR-0011-blocking-twin-snapshots-the-callers-mdc.md)). The reactive
 stack has no call-wide thread-local scope — the call hops event-loop threads; propagating the identity
-into reactive operators is the host's context-propagation business.
+into reactive operators is the host's context-propagation business. The caller's context, though, is
+restored there: the WebClient twin captures the Reactor Context the caller subscribed with and turns it
+back into thread-locals around each emission through the host's `ThreadLocalAccessor`s, opt-in by
+`io.micrometer:context-propagation` on the classpath
+([WebClient guide §2.6](../legatium-webclient-logging/docs/GUIDE.md#26-mdc-and-the-reactive-call);
+what the host provides per key is
+[§3.6](../legatium-webclient-logging/docs/GUIDE.md#36-joining-the-server-line-what-the-host-provides);
+[ADR-0010](adr/ADR-0010-reactive-twin-restores-the-callers-context.md)).
 
 ### 7.3 Levels and outcomes
 
@@ -664,8 +678,8 @@ deliberately left to `http.client.requests` and the log fields.
 | `adapter.logging.events` | counter | `outcome` = `success` \| `failure` \| `timeout` (\| `cancelled` on the reactive stack) | Exchange events actually **emitted** on the exchange logger — after the level gate, arrival lines excluded. The reconciliation ground truth against the log index. |
 | `adapter.logging.exchanges.open` | gauge | `client` = `restclient` \| `webclient` | Exchanges between entry (wiring) and the exactly-once completion — response close, resp. the body's terminal signal. Hovers near the in-flight call count in health. Tagged per twin so that a host carrying both twins gets two gauges instead of Micrometer silently keeping the first one registered; sum over `client` for the total. |
 | `adapter.logging.correlation.id` | counter | `source` = `trace` \| `header` \| `generated` | Origin of each call's request id (ADR-0002). A re-entry by a retrying outer interceptor with the id generated on attempt 1 keeps counting `generated`. |
-| `adapter.response.body.read` | counter | `uri` = template with a placeholder, `UNKNOWN` otherwise; `host`; `state` = `unread` \| `partial` \| `complete` | How far the application **consumed** the response body, opt-in via `measure-response-body-size`. Recorded once per call that received a response — including bodiless consumption, which is the `unread` share the counter exists to show. `partial` = consumption started but the end of the body was never observed (a converter that stopped early, an exception mid-read, a consumer that stopped reading). On the blocking stack the end is observed either as the EOF or as the byte count reaching a trustworthy declared `Content-Length` (none with a `Content-Encoding`), because Spring's `ByteArrayHttpMessageConverter` reads exactly that many bytes and never asks for the EOF. Created lazily per tag set on first use. |
-| `adapter.request.body.size` / `adapter.response.body.size` | distribution summary, base unit `bytes` | `uri`, `host` | Bytes that **actually flowed**, opt-in via `measure-*-body-size`, independent of body logging and level. Exact beyond `max-body-bytes`. Zero-byte bodies record no sample. On the blocking stack the **request** sample is recorded only for an exchange that received a response: the interceptor copies the serialized body before the wire call and has no seam at the actual write, so a response is its one proof that the bytes went out (a refused connection or connect timeout records nothing; the reactive stack tees at the connector's write and needs no such rule). Created lazily per tag set on first use. |
+| `adapter.response.body.read` | counter | `uri` = template with a placeholder, `UNKNOWN` otherwise; `host`; `name` = the client's name, `UNNAMED` otherwise ([§7.7](#77-naming-a-client)); `state` = `unread` \| `partial` \| `complete` | How far the application **consumed** the response body, opt-in via `measure-response-body-size`. Recorded once per call that received a response — including bodiless consumption, which is the `unread` share the counter exists to show. `partial` = consumption started but the end of the body was never observed (a converter that stopped early, an exception mid-read, a consumer that stopped reading). On the blocking stack the end is observed either as the EOF or as the byte count reaching a trustworthy declared `Content-Length` (none with a `Content-Encoding`), because Spring's `ByteArrayHttpMessageConverter` reads exactly that many bytes and never asks for the EOF. Created lazily per tag set on first use. |
+| `adapter.request.body.size` / `adapter.response.body.size` | distribution summary, base unit `bytes` | `uri`, `host`, `name` | Bytes that **actually flowed**, opt-in via `measure-*-body-size`, independent of body logging and level. Exact beyond `max-body-bytes`. Zero-byte bodies record no sample. On the blocking stack the **request** sample is recorded only for an exchange that received a response: the interceptor copies the serialized body before the wire call and has no seam at the actual write, so a response is its one proof that the bytes went out (a refused connection or connect timeout records nothing; the reactive stack tees at the connector's write and needs no such rule). Created lazily per tag set on first use. |
 
 **One instance per registry and stack.** Micrometer deduplicates meters by id, so a second metrics
 owner against the same registry would share the counters but not the gauge — the second gauge
@@ -696,7 +710,7 @@ The meters are designed to cover each other's blind spots:
 | Are callers abandoning their own calls (operator timeouts, disconnects)? — reactive stack | `events{outcome=cancelled}` rises while `timeout` does not |
 | Is a call site discarding the payload it paid for? | the `unread` or `partial` share of `response.body.read{uri=...,host=...}` rises |
 | Are payloads growing beyond what the log captures? | `body.size` percentiles vs. `max-body-bytes` |
-| Which dependency is slow, or failing? | `adapter_url_host` on the log line, split by `adapter_outcome` — not a meter of this module; `http.client.requests` has the latency histogram |
+| Which dependency is slow, or failing? | `adapter_url_host` on the log line — `adapter_name` where the calls go through a sidecar — split by `adapter_outcome`; not a meter of this module, `http.client.requests` has the latency histogram |
 
 A suggested alert set:
 
@@ -754,6 +768,43 @@ unsampled trace still propagates, with flags `00`. Consequence: in a host with t
 `adapter.logging.correlation.id` reads zero by construction — and the peer never receives an
 `X-Correlation-Id` from this module. A peer without tracing that needs a quotable id in that setup is a
 matter for the host's propagation configuration (baggage), not for the modules, which stay neutral.
+
+### 7.7 Naming a client
+
+`adapter_url_host` is the host on the wire. Once the application reaches its dependencies through an
+egress sidecar or a forward proxy, that host is the sidecar's for every call, and every dependency
+lands in one bucket. The host application knows which client made the call, so it names it — once, on
+the builder, as a request attribute both twins read at wiring time
+([ADR-0009](adr/ADR-0009-adapter-name-is-a-request-attribute.md)):
+
+```kotlin
+@Bean
+fun billingClient(builder: RestClient.Builder): RestClient =
+    builder
+        .baseUrl("http://localhost:15001/billing")
+        .defaultRequest { it.attribute(ClientRequestLoggingInterceptor.ADAPTER_NAME_ATTRIBUTE, "billing") }
+        .build()
+
+@Bean
+fun geoClient(builder: WebClient.Builder): WebClient =
+    builder
+        .baseUrl("http://localhost:15001/geo")
+        .defaultRequest { it.attribute(ClientRequestLoggingFilter.ADAPTER_NAME_ATTRIBUTE, "geo-lookup") }
+        .build()
+```
+
+The attribute string is the same on both twins (`eu.inqudium.legatium.adapterName`), so a host carrying
+both jars uses one literal. Every call of a named client then carries `adapter_name` on the completion
+event and the arrival line, and the body meters tag it as `name` ([§7.4](#74-meters)); a client nobody
+named carries no field and meters under `name=UNNAMED`. A blank value counts as no name. A per-call
+`attribute(...)` on the request spec overrides the builder default. `RestTemplate` has no
+`defaultRequest`: an interceptor of the host's own, registered before the logging interceptor, sets
+`request.attributes[ADAPTER_NAME_ATTRIBUTE]` instead. The value is not folded or validated — it is the
+host's vocabulary, and a per-call value there buys the cardinality it asks for.
+
+Where the name lands on each stack, and how to verify it, is each module guide's §3.5
+([RestClient](../legatium-restclient-logging/docs/GUIDE.md#35-naming-a-client),
+[WebClient](../legatium-webclient-logging/docs/GUIDE.md#35-naming-a-client)).
 
 ---
 
@@ -843,6 +894,7 @@ near-identical code.
 |---|---|
 | `ClientLoggingProperties` / `HeaderLogProperties` | The `adapter-logging.*` binding, validated in `init` ([§6.6](#66-validation-at-startup)) — one class for both twins. `HeaderLogProperties` is one header section with `includes` / `excludes` / `masked` / `unmasked` and the masking fingerprint ([§6.2](#62-header-sections)); unit-tested and fuzzed here. |
 | `ClientLogField` | The wire names and the exact JVM type of each structured field ([§7.1](#71-log-fields)), with the builder extensions the emitters write through; a wrongly typed value drops the field with a warning, never the event. One enum for both twins. |
+| `AdapterName` | The request attribute a host names a client with and the rule that reads it (blank is no name) — the source of `adapter_name` and the `name` meter tag ([§7.7](#77-naming-a-client), ADR-0009); one string for both twins. |
 | `ClientLoggingMetrics` | The six meters ([§7.4](#74-meters)), one implementation parameterised by the `ClientStack` (outcome vocabulary, `client` tag) — the fixed-tag meters pre-registered, the body meters created lazily per tag, per-meter fallback to a private registry on a registration conflict. Shared since the amendment of 2026-09-04 to ADR-0003, when the twin copies had converged to near-identity. |
 | `ClientActivation` | Which calls are logged at all: host exclusion, include patterns, exclude prefixes ([§6.4](#64-activation-hosts-and-paths)) — one implementation, so the semantics are identical on both stacks by construction. Shared since the same amendment. |
 | `MdcKeys` / `TraceMdcKeys` / `MdcScope` | The MDC key names ([§7.2](#72-mdc-keys)) and the scope that installs them and restores the previous values on close — around the emission with trace ownership, on the blocking stack also around the wire call. |
