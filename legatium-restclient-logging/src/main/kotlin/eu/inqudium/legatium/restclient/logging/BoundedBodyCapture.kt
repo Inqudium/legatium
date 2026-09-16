@@ -73,7 +73,7 @@ internal class BoundedBodyCapture(
     @Volatile
     private var expectedBytes: Long = UNKNOWN_LENGTH
 
-    // The read position [reset] rewinds to - the start of the stream until [mark] moves it.
+    // The read position `reset` rewinds to - the start of the stream until `mark` moves it.
     private var markedTotal: Long = 0
     private var markedBuffered = 0
     private var markedState: BodyReadState = BodyReadState.UNREAD
