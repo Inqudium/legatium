@@ -63,7 +63,10 @@ Measures already in place, so you know what is expected behaviour:
   GitHub release, and attaches Sigstore-signed SLSA provenance
   (`*.intoto.jsonl`) — verifiable with
   [slsa-verifier](https://github.com/slsa-framework/slsa-verifier). Maven
-  Central artifacts are additionally GPG-signed by the release profile.
+  Central artifacts are additionally GPG-signed by the release profile, and
+  the build is reproducible (`project.build.outputTimestamp`, see the
+  README's build section): the jars on Maven Central are byte-identical to
+  the attested GitHub release assets, so the provenance verifies them too.
 - **The repository's supply-chain posture is scored publicly.** The OpenSSF
   Scorecard badge in the README links to the current per-check breakdown.
   Read it as a posture indicator, not as a grade: several checks assume a

@@ -125,6 +125,23 @@ mvn verify
 Maven multi-module build (group `eu.inqudium`), Java 21, Kotlin, Spring Boot parent. The twins compile
 against the shared `legatium-common` module through the reactor, so build from the root (or with `-am`).
 
+### Reproducible builds
+
+The same source and version produce the same bytes on any machine: the root
+POM sets `project.build.outputTimestamp` (bumped in every release commit), so
+the jar, source and shade archivers write that instant as every zip entry's
+timestamp, sort the entries and normalize their permissions, and the manifests
+carry no build user, build JDK or Maven version (`Build-Jdk-Spec` is omitted on
+purpose - CI builds on JDK 25, a maintainer on whatever 24+ is installed). This
+holds for all published jars of both twins: the javadoc jar is rendered by
+Dokka but packaged by the jar plugin, because Dokka's own `javadocJar` goal
+writes the build time and JDK into the archive. Consequently the jars the
+Release workflow attaches to the GitHub release (built on the tag by GitHub
+Actions, attested with SLSA provenance) and the jars deployed to Maven Central
+from a local checkout of the same tag are byte-identical. To check a build, run
+`mvn -DskipTests package` twice, or once on the tag, and compare
+`sha256sum <twin>/target/<twin>-<version>.jar` with the release asset.
+
 ## Contributing
 
 Contributions are welcome — please read [CONTRIBUTING.md](CONTRIBUTING.md) first.

@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   beans is reliable (auto-configuration import order) and where it ends (a host bean that
   itself lives in another auto-configuration); the auto-configuration tests of both twins
   now pin the back-off for `NanoTimeSource` and `CorrelationIdGenerator` as well.
+- Reproducible builds: the root POM sets `project.build.outputTimestamp`
+  (bumped in every release commit), the jar and sources manifests no longer
+  carry `Created-By`/`Build-Jdk-Spec` (the build-JDK line was the one thing
+  that kept a JDK 25 CI build and a JDK 26 local build of the same tag from
+  matching), and the javadoc jar is rendered by Dokka but packaged by the jar
+  plugin, because Dokka's `javadocJar` goal writes the build time and JDK into
+  the archive. Verified: three builds of one commit - twice on JDK 26, once on
+  Temurin 25 - produce byte-identical main (shaded), sources and javadoc jars
+  for both twins. From the next release on, the jars attached to the GitHub
+  release (SLSA-attested) and the jars deployed to Maven Central are therefore
+  the same bytes; README ("Reproducible builds") and SECURITY.md describe it.
 
 ### Fixed
 
