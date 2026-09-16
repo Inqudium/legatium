@@ -113,8 +113,9 @@ class ThingsAdapter(builder: WebClient.Builder) {        // Boot's WebClient.Bui
 ```
 
 The customizer is ordered late (`Ordered.LOWEST_PRECEDENCE - 10`), so the filter runs inside the filters
-of earlier customizers, closest to the connector: an authentication filter has already added its
-header, a retrying filter invokes it once per attempt
+of customizers ordered before that, closest to the connector: an authentication filter has already added
+its header, a retrying filter invokes it once per attempt. A host customizer **without** an `@Order` is
+applied after the module's, and its filter runs inside the logging
 ([§3.3](docs/GUIDE.md#33-filter-order-and-other-filters)).
 
 ### Manual wiring

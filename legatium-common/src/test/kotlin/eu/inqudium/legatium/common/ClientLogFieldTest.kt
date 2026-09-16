@@ -19,9 +19,7 @@ class ClientLogFieldTest {
     // halves of the index contract every twin ships; testing them once here IS the lockstep.
     private val template: String by lazy {
         val resource = ClassPathResource("elk/legatium-restclient-logging-fields.component-template.json")
-        assertThat(resource.exists())
-            .describedAs("the component template must be on the test classpath (declared test resource from the shared /docs)")
-            .isTrue()
+        check(resource.exists()) { "the component template must be on the test classpath (declared test resource from the shared /docs)" }
         resource.inputStream.use { String(it.readAllBytes(), StandardCharsets.UTF_8) }
     }
 
@@ -87,7 +85,7 @@ class ClientLogFieldTest {
             // Given: the fields the module can emit
             val emitted = ClientLogField.entries.map { it.wireName }
 
-            // When / Then: the template maps those and no others
+            // When/Then: the template maps those and no others
             assertThat(properties.keys).containsExactlyInAnyOrderElementsOf(emitted)
         }
 
@@ -108,7 +106,7 @@ class ClientLogFieldTest {
                     ClientLogField.RESPONSE_BODY,
                 )
 
-            // When / Then: none of them is indexed or given doc values
+            // When/Then: none of them is indexed or given doc values
             sensitive.forEach { field ->
                 assertThat(properties[field.wireName])
                     .describedAs("%s must not be searchable", field.wireName)
@@ -126,7 +124,7 @@ class ClientLogFieldTest {
             // Why it matters: the resolved path appears in about one line each - doc values on it grow an
             //   ordinal dictionary to the document count and buy only singleton buckets, while
             //   adapter_url_template is the field that answers "which endpoint is slow".
-            // Given / When / Then: path and query are filterable but not groupable
+            // Given/When/Then: path and query are filterable but not groupable
             listOf(ClientLogField.URL_PATH, ClientLogField.URL_QUERY).forEach { field ->
                 assertThat(properties[field.wireName])
                     .describedAs("%s: repetition factor ~1, see the mapping guide", field.wireName)
@@ -147,7 +145,7 @@ class ClientLogFieldTest {
             // Success criteria: a plain keyword - indexed, with doc values.
             // Why it matters: the field exists to be grouped by ("which dependency is slow" behind a
             //   sidecar); a mapping without doc values would keep it filterable but defeat exactly that.
-            // Given / When / Then
+            // Given/When/Then
             assertThat(properties[ClientLogField.NAME.wireName]).isEqualTo(mapOf("type" to "keyword"))
         }
 
@@ -158,7 +156,7 @@ class ClientLogFieldTest {
             // Success criteria: duration maps as long, the status code as short, the slow flag as boolean.
             // Why it matters: a keyword duration cannot be ranged or percentiled, and a status mapped as a
             //   number that is summed reads as garbage - the index type is what makes the dashboards work.
-            // Given / When / Then: the shape each field declares and the type the index expects
+            // Given/When/Then: the shape each field declares and the type the index expects
             //   must describe the same value - long duration, short status (three digits, a label never
             //   summed), boolean flags
             assertThat(properties[ClientLogField.DURATION_MS.wireName]).containsEntry("type", "long")
@@ -174,7 +172,7 @@ class ClientLogFieldTest {
             //   `index_patterns`.
             // Why it matters: an index_patterns entry would compete with the host's own template on priority
             //   and claim data streams the host never meant to hand to this module.
-            // Given / When: the top-level keys
+            // Given/When: the top-level keys
             val root: Map<String, Any> = JsonPath.read(template, "$")
 
             // Then: no index_patterns - it composes into the host's template rather than competing with

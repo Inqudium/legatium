@@ -15,11 +15,6 @@ import java.util.concurrent.TimeUnit
  * unseeded test covers the production constructor path.
  */
 class CountingCorrelationIdGeneratorTest {
-    private companion object {
-        /** 36^8 - the number of counter values the production counter width can render. */
-        private const val COUNTER_CAPACITY = 2_821_109_907_456L
-    }
-
     @Nested
     inner class `Id format` {
         @Test
@@ -63,8 +58,7 @@ class CountingCorrelationIdGeneratorTest {
             // Success criteria: the id starts with twelve zeros followed by `z`.
             // Why it matters: pins that the radix is 36 and the digits are lowercase; a radix of 32 or 62 or
             //   an uppercase alphabet would change the character set the index sees.
-            // Given: 35 is the largest value that still occupies a single base-36 digit,
-            // so this pins the digit alphabet at its upper end.
+            // Given: 35 is the largest value that still occupies a single base-36 digit
             val generator = CountingCorrelationIdGenerator(prefixSeed = 35L)
 
             // When
@@ -239,8 +233,7 @@ class CountingCorrelationIdGeneratorTest {
             // Success criteria: the first five ids of both instances are identical.
             // Why it matters: the seed is the test seam the other twins' tests rely on to pin ids without a
             //   mocking library; hidden per-instance randomness would make those tests flaky.
-            // Given: the seed is the injection point that makes the generator testable
-            // without any mocking library.
+            // Given: two instances under the same seed
             val first = CountingCorrelationIdGenerator(prefixSeed = 4711L)
             val second = CountingCorrelationIdGenerator(prefixSeed = 4711L)
 
@@ -314,14 +307,17 @@ class CountingCorrelationIdGeneratorTest {
     @Nested
     inner class `Thread safety` {
         @Test
-        fun `should hand out distinct ids under concurrent access`() {
-            // What is tested: that concurrent calls never hand out the same id twice.
-            // Success criteria: the number of distinct ids equals the number of calls. Since uniqueness
-            //   within an instance is a guarantee rather than a probability, any duplicate is a hard
-            //   failure, not a flake.
+        fun `should hand out distinct, well-formed ids under concurrent access`() {
+            // What is tested: that concurrent calls never hand out the same id twice, and that every id
+            //   handed out under contention still matches the 21-character base-36 contract.
+            // Success criteria: the number of distinct ids equals the number of calls, and each id
+            //   matches the format. Since uniqueness within an instance is a guarantee rather than a
+            //   probability, any duplicate is a hard failure, not a flake.
             // Why it matters: the counter is the one piece of mutable shared state in the class. Replacing
             //   the AtomicLong with a plain Long - or, more plausibly, with a ThreadLocal in an attempt to
-            //   avoid contention - would produce duplicates here.
+            //   avoid contention - would produce duplicates here; a non-atomic read-modify-write could
+            //   additionally render a value outside the width. The pool is released in a finally so a
+            //   failed assertion cannot strand its non-daemon threads and hang the forked JVM.
             // Given
             val threads = 16
             val idsPerThread = 2_000
@@ -331,50 +327,28 @@ class CountingCorrelationIdGeneratorTest {
             val done = CountDownLatch(threads)
             val pool = Executors.newFixedThreadPool(threads)
 
-            // When
-            repeat(threads) {
-                pool.submit {
-                    startSignal.await()
-                    repeat(idsPerThread) { ids.add(generator.nextCorrelationId()) }
-                    done.countDown()
+            try {
+                // When
+                repeat(threads) {
+                    pool.submit {
+                        startSignal.await()
+                        repeat(idsPerThread) { ids.add(generator.nextCorrelationId()) }
+                        done.countDown()
+                    }
                 }
+                startSignal.countDown()
+                val finished = done.await(30, TimeUnit.SECONDS)
+
+                // Then
+                assertThat(finished).isTrue()
+                assertThat(ids).hasSize(threads * idsPerThread)
+                assertThat(ids).allSatisfy { assertThat(it).matches("[0-9a-z]{21}") }
+            } finally {
+                pool.shutdownNow()
             }
-            startSignal.countDown()
-            val finished = done.await(30, TimeUnit.SECONDS)
-            pool.shutdownNow()
-
-            // Then
-            assertThat(finished).isTrue()
-            assertThat(ids).hasSize(threads * idsPerThread)
-        }
-
-        @Test
-        fun `should keep the id format intact under concurrent access`() {
-            // What is tested: the rendering under contention - eight threads sharing one AtomicLong.
-            // Success criteria: the pool finishes within the timeout and every id matches the 21-character
-            //   base-36 contract.
-            // Why it matters: the distinctness test would not catch a torn or malformed id; a non-atomic
-            //   read-modify-write could produce a value that renders outside the width.
-            // Given
-            val threads = 8
-            val generator = CountingCorrelationIdGenerator(prefixSeed = 0L)
-            val ids = ConcurrentHashMap.newKeySet<String>()
-            val done = CountDownLatch(threads)
-            val pool = Executors.newFixedThreadPool(threads)
-
-            // When
-            repeat(threads) {
-                pool.submit {
-                    repeat(500) { ids.add(generator.nextCorrelationId()) }
-                    done.countDown()
-                }
-            }
-            val finished = done.await(30, TimeUnit.SECONDS)
-            pool.shutdownNow()
-
-            // Then
-            assertThat(finished).isTrue()
-            assertThat(ids).allSatisfy { assertThat(it).matches("[0-9a-z]{21}") }
         }
     }
 }
+
+/** 36^8 - the number of counter values the production counter width can render. */
+private const val COUNTER_CAPACITY = 2_821_109_907_456L

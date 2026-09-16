@@ -45,8 +45,8 @@ class FailOpenDiagnosticsTest {
         // Why it matters: the handler runs against host-provided components; their failure is the case
         //   reportQuietly exists for.
         // Given/When
-        failOpen(onInterrupted = {}, onFailure = { throw IllegalStateException("counter broken") }) { throw IllegalArgumentException("boom") }
-        failOpen(onInterrupted = { throw IllegalStateException("counter broken") }, onFailure = {}) { throw InterruptedException("stop") }
+        failOpen(onInterrupted = {}, onFailure = { error("counter broken") }) { throw IllegalArgumentException("boom") }
+        failOpen(onInterrupted = { error("counter broken") }, onFailure = {}) { throw InterruptedException("stop") }
 
         // Then
         assertThat(Thread.currentThread().isInterrupted).isTrue()

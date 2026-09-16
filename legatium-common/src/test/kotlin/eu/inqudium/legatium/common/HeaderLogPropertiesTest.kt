@@ -46,7 +46,7 @@ class HeaderLogPropertiesTest {
                 "Accept" to HeaderValueMasker.DEFAULT.mask("text/plain"),
             )
 
-        // When/Then: the allowlisted name is plain, the other stays masked
+        // And: with an allowlisted name, that one is plain and the other stays masked
         val allowing = HeaderLogProperties(includes = listOf("*"), unmasked = listOf("accept"))
         assertThat(allowing.select(values.keys, HeaderValueMasker.DEFAULT) { values[it] })
             .containsExactly(
@@ -93,11 +93,13 @@ class HeaderLogPropertiesTest {
         // Success criteria: construction succeeds and a header the wildcard includes is masked.
         // Why it matters: `masked: ["*"]` is the default value; a validation tightened by mistake would
         //   fail every context that spells the default out.
-        // Given/When: the two documented wildcard positions
+        // Given: the two documented wildcard positions - constructed fine
         val section = HeaderLogProperties(includes = listOf("*"), masked = listOf("*"))
 
-        // Then: constructed fine, and selection masks everything it includes
+        // When: a header the wildcard includes is selected
         val selected = section.select(listOf("Accept"), HeaderValueMasker.DEFAULT) { "text/plain" }
+
+        // Then: masked, like everything the section includes
         assertThat(selected).containsExactly("Accept" to HeaderValueMasker.DEFAULT.mask("text/plain"))
     }
 
@@ -145,7 +147,7 @@ class HeaderLogPropertiesTest {
         // Success criteria: each list rejects a blank entry with a message naming the list.
         // Why it matters: a blank name binds silently otherwise and matches nothing, an operator's typo
         //   turning into a missing header without feedback.
-        // Given/When/Then
+        // Given: a blank entry in each of the four lists
         val cases =
             listOf(
                 "includes" to { HeaderLogProperties(includes = listOf(" ")) },
@@ -153,6 +155,8 @@ class HeaderLogPropertiesTest {
                 "masked" to { HeaderLogProperties(masked = listOf("Authorization", " ")) },
                 "unmasked" to { HeaderLogProperties(unmasked = listOf("\t")) },
             )
+
+        // When/Then: each list rejects it by name
         cases.forEach { (list, construct) ->
             assertThat(catchThrowable { construct() })
                 .describedAs(list)

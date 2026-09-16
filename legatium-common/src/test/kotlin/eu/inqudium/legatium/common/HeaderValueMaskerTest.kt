@@ -27,8 +27,10 @@ class HeaderValueMaskerTest {
         // Success criteria: the same value renders the same string in both cases.
         // Why it matters: a per-instance nonce or salt would keep the shape but break the correlation of a
         //   masked token across events, twins and the inbound sibling.
-        // Given/When/Then: stability is what keeps a masked token correlatable
+        // Given: one keyed masker
         val masker = HeaderValueMasker.keyed("k")
+
+        // When/Then: stability is what keeps a masked token correlatable
         assertThat(masker.mask("Bearer x")).isEqualTo(masker.mask("Bearer x"))
         assertThat(masker.mask("Bearer x")).isEqualTo(HeaderValueMasker.keyed("k").mask("Bearer x"))
     }

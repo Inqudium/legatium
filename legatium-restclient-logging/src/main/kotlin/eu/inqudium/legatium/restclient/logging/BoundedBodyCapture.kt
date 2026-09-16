@@ -10,8 +10,9 @@ import java.nio.charset.Charset
  * copies every byte the application reads, up to [maxBytes]; beyond the cap bytes are only counted.
  *
  * The capture is a passive copy - it never buffers, replays, or withholds bytes from the application - so
- * there is no lifecycle to manage and nothing to mark complete: at the moment the exchange line is
- * written (response close), whatever has flowed is what gets logged.
+ * there is no lifecycle of its own to manage: at the moment the exchange line is written (response
+ * close), whatever has flowed is what gets logged. The only marks it takes are those of the READ STATE
+ * below, and they are observations, never actions on the stream.
  *
  * Single-writer, single-late-reader concurrency model: the application reads the response body on one
  * thread at a time, and the emission reads once, at response close. On the blocking stack that is the
@@ -28,9 +29,13 @@ import java.nio.charset.Charset
  * read - or stopped reading half-way - is invisible in the byte count alone. The response tee marks the
  * start of consumption and the end of the stream; the emitter turns the state into the
  * `adapter.response.body.read` counter. The end of the stream is observed in two ways: an EOF the
- * application saw, or the byte count reaching the length the response DECLARED ([expectBytes]) - a reader
+ * application saw, or the byte count reaching the length the response CARRIES ([expectBytes]) - a reader
  * that knows the length asks for exactly that many bytes and never for the EOF (Spring's
- * `ByteArrayHttpMessageConverter` does), and must not be counted as having stopped early.
+ * `ByteArrayHttpMessageConverter` does), and must not be counted as having stopped early. A response
+ * that carries NO body (a 1xx, 204 or 304 answer, a declared length of zero) is complete the moment
+ * that is known: the clients never open such a body, there is nothing to consume and nothing an
+ * application could have discarded - the same answer the reactive twin's tee gives when the empty body
+ * flux completes.
  */
 internal class BoundedBodyCapture(
     private val maxBytes: Int,
@@ -88,24 +93,24 @@ internal class BoundedBodyCapture(
     }
 
     /**
-     * Tells the capture how many body bytes the response DECLARED (`Content-Length`), so a reader that
-     * consumes exactly that many without asking for the EOF still counts as complete. The caller passes
-     * only a length it can trust: none for a chunked answer, none when a `Content-Encoding` means the
-     * engine may hand the application a transformed body of another length. A declared zero completes
-     * the moment the stream is opened.
+     * Tells the capture how many body bytes the response CARRIES (`Content-Length`, or zero for an answer
+     * that has no body by the protocol), so a reader that consumes exactly that many without asking for
+     * the EOF still counts as complete. The caller passes only a length it can trust: none for a chunked
+     * answer, none when a `Content-Encoding` means the engine may hand the application a transformed
+     * body of another length. A length of ZERO completes the read state right here - there is nothing
+     * to read, and the clients never open such a body, so no later mark could.
      */
     fun expectBytes(length: Long) {
         expectedBytes = length
+        if (length == 0L) {
+            readState = BodyReadState.COMPLETE
+        }
     }
 
-    /**
-     * The application opened the body stream: from now on the body counts as (at least) partially read -
-     * or as complete right away when the response declared a zero-length body, which a length-aware
-     * reader consumes without a single read call.
-     */
+    /** The application opened the body stream: from now on the body counts as (at least) partially read. */
     fun markStarted() {
         if (readState == BodyReadState.UNREAD) {
-            readState = if (expectedBytes == 0L) BodyReadState.COMPLETE else BodyReadState.PARTIAL
+            readState = BodyReadState.PARTIAL
         }
     }
 

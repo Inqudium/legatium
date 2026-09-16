@@ -1,19 +1,11 @@
 package eu.inqudium.legatium.webclient.logging
 
-import ch.qos.logback.classic.Level
-import ch.qos.logback.classic.Logger
 import eu.inqudium.legatium.common.MdcKeys
 import io.micrometer.tracing.Tracer
 import org.assertj.core.api.Assertions.assertThat
-import org.junit.jupiter.api.AfterAll
-import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeAll
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
-import org.springframework.web.reactive.function.client.WebClient
 
 /**
  * ADR-0002 beside a REAL Micrometer Tracing bridge (Brave): the client observation Boot registers opens
@@ -26,29 +18,9 @@ import org.springframework.web.reactive.function.client.WebClient
     webEnvironment = SpringBootTest.WebEnvironment.NONE,
     properties = ["management.tracing.sampling.probability=1.0"],
 )
-class ClientRequestLoggingTracingIntegrationTest {
-    @Autowired
-    private lateinit var webClientBuilder: WebClient.Builder
-
+class ClientRequestLoggingTracingIntegrationTest : IntegrationFixture() {
     @Autowired
     private lateinit var tracer: Tracer
-
-    private val logger = LoggerFactory.getLogger("adapter-http-exchange") as Logger
-    private lateinit var appender: AwaitingAppender
-
-    @BeforeEach
-    fun setUp() {
-        appender = AwaitingAppender().apply { start() }
-        logger.addAppender(appender)
-        logger.level = Level.INFO
-        peer.received.clear()
-    }
-
-    @AfterEach
-    fun tearDown() {
-        logger.detachAppender(appender)
-        appender.stop()
-    }
 
     @Test
     fun `should join the event with the caller trace and add no correlation header on a traced call`() {
@@ -78,7 +50,7 @@ class ClientRequestLoggingTracingIntegrationTest {
         val received = peer.received.single()
         assertThat(received.header("traceparent")).startsWith("00-${outer.context().traceId()}-")
         assertThat(received.header("X-Correlation-Id")).isNull()
-        val event = appender.awaitEvents(1).single()
+        val event = log.awaitEvents(1).single()
         assertThat(event.mdcPropertyMap)
             .containsEntry("traceId", outer.context().traceId())
             .containsEntry(MdcKeys.REQUEST_ID, outer.context().traceId())
@@ -108,22 +80,6 @@ class ClientRequestLoggingTracingIntegrationTest {
         val received = peer.received.single()
         assertThat(received.header("traceparent")).isNotNull()
         assertThat(received.header("X-Correlation-Id")).isNull()
-        assertThat(appender.awaitEvents(1).single().mdcPropertyMap).containsKeys("traceId", "spanId")
-    }
-
-    companion object {
-        private lateinit var peer: PeerServer
-
-        @JvmStatic
-        @BeforeAll
-        fun startPeer() {
-            peer = PeerServer()
-        }
-
-        @JvmStatic
-        @AfterAll
-        fun stopPeer() {
-            peer.close()
-        }
+        assertThat(log.awaitEvents(1).single().mdcPropertyMap).containsKeys("traceId", "spanId")
     }
 }

@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.read.ListAppender;
+import ch.qos.logback.core.AppenderBase;
 import com.sun.net.httpserver.HttpServer;
 import eu.inqudium.legatium.restclient.logging.ClientRequestLoggingInterceptor;
 import eu.inqudium.legatium.webclient.logging.ClientRequestLoggingFilter;
@@ -12,9 +12,11 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -45,7 +47,7 @@ class ShadedTwinsSmokeTest {
     @Autowired private RestClient.Builder restClientBuilder;
     @Autowired private WebClient.Builder webClientBuilder;
 
-    private final ListAppender<ILoggingEvent> captured = new ListAppender<>();
+    private final AwaitingAppender captured = new AwaitingAppender();
 
     @BeforeAll
     static void startPeer() throws IOException {
@@ -95,11 +97,10 @@ class ShadedTwinsSmokeTest {
         // Why it matters: a broken artifactSet or a dependency-reduced POM that still names the
         //   unpublished module surfaces here, not at the first consumer's NoClassDefFoundError.
         // Given/When
-        List<URL> locations = Collections.list(getClass().getClassLoader().getResources(SHARED_CLASS));
-        List<String> jars = new ArrayList<>();
-        for (URL location : locations) {
-            jars.add(location.toString());
-        }
+        List<String> jars =
+                Collections.list(getClass().getClassLoader().getResources(SHARED_CLASS)).stream()
+                        .map(URL::toString)
+                        .toList();
 
         // Then
         assertThat(jars).hasSize(2);
@@ -121,12 +122,14 @@ class ShadedTwinsSmokeTest {
     }
 
     @Test
-    void should_log_one_exchange_line_per_client_against_a_real_peer() {
+    void should_log_one_exchange_line_per_client_against_a_real_peer() throws InterruptedException {
         // What is tested: the end-to-end path through the product jars - Boot's builders carry the
         //   customizers, the interceptor and the filter observe one call each against a local peer.
         // Success criteria: exactly two exchange events, one per client, both `-> 200` and both with
         //   adapter_outcome=success.
         // Why it matters: it is the one place the shaded runtime is executed as a consumer executes it.
+        //   The WebClient line is awaited, not read: the reactive twin emits AFTER it handed the body's
+        //   completion on, so block() can return while the Reactor Netty thread is still emitting.
         // Given
         RestClient restClient = restClientBuilder.build();
         WebClient webClient = webClientBuilder.build();
@@ -138,7 +141,7 @@ class ShadedTwinsSmokeTest {
         // Then
         assertThat(blocking).isEqualTo("served");
         assertThat(reactive).isEqualTo("served");
-        List<ILoggingEvent> events = captured.list;
+        List<ILoggingEvent> events = captured.awaitEvents(2);
         assertThat(events).hasSize(2);
         assertThat(events).allSatisfy(event -> {
             assertThat(event.getFormattedMessage()).contains("-> 200");
@@ -146,12 +149,36 @@ class ShadedTwinsSmokeTest {
         });
     }
 
-    private static Object outcomeOf(ILoggingEvent event) {
-        for (KeyValuePair pair : event.getKeyValuePairs()) {
-            if ("adapter_outcome".equals(pair.key)) {
-                return pair.value;
-            }
+    /**
+     * Collects the exchange logger's events and lets the test WAIT for a count: the reactive twin's
+     * line is written on the connector's thread after the caller's block() already returned, so a
+     * plain list read right after the call races the emission. Events are pinned with
+     * prepareForDeferredProcessing() for the same cross-thread reason.
+     */
+    private static final class AwaitingAppender extends AppenderBase<ILoggingEvent> {
+        private final List<ILoggingEvent> events = new CopyOnWriteArrayList<>();
+        private final Semaphore arrivals = new Semaphore(0);
+
+        @Override
+        protected void append(ILoggingEvent event) {
+            event.prepareForDeferredProcessing();
+            events.add(event);
+            arrivals.release();
         }
-        return null;
+
+        List<ILoggingEvent> awaitEvents(int count) throws InterruptedException {
+            assertThat(arrivals.tryAcquire(count, 5, TimeUnit.SECONDS))
+                    .as("%d exchange events within 5 s, got %d", count, events.size())
+                    .isTrue();
+            return List.copyOf(events);
+        }
+    }
+
+    private static Object outcomeOf(ILoggingEvent event) {
+        return event.getKeyValuePairs().stream()
+                .filter(pair -> "adapter_outcome".equals(pair.key))
+                .map(pair -> pair.value)
+                .findFirst()
+                .orElse(null);
     }
 }

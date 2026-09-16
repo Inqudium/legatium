@@ -9,16 +9,18 @@ import eu.inqudium.legatium.common.BodyReadState
 import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
+import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.NanoTimeSource
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import org.slf4j.Marker
+import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.http.client.ClientHttpRequestExecution
 import org.springframework.http.converter.ByteArrayHttpMessageConverter
@@ -42,13 +44,8 @@ class ClientRequestLoggingMetricsTest {
     private val ticker = AtomicLong(0)
     private val registry = SimpleMeterRegistry()
     private val properties = ClientLoggingProperties(loggerName = "adapter-http-exchange-metrics-test")
-    private val interceptor = ClientRequestLoggingInterceptor(properties, { ticker.get() }, { "generated-42" }, registry)
-    private lateinit var log: CapturedLogger
-
-    @BeforeEach
-    fun setUp() {
-        log = CapturedLogger(properties.loggerName)
-    }
+    private val interceptor = interceptorWith(properties, ticker, registry)
+    private val log = CapturedLogger(properties.loggerName)
 
     @AfterEach
     fun tearDown() {
@@ -66,6 +63,31 @@ class ClientRequestLoggingMetricsTest {
             .count()
 
     private fun gauge(): Double = registry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()
+
+    /**
+     * A turbo filter that makes the level check of [loggerName] at [atLevel] throw whatever [failure]
+     * yields (null lets the check pass): logback consults its turbo filters inside `isInfoEnabled`, so
+     * this is how a test makes the backend's own level gate fail or die.
+     */
+    private class FailingLevelCheck(
+        private val loggerName: String,
+        private val atLevel: Level,
+        private val failure: () -> Throwable?,
+    ) : TurboFilter() {
+        override fun decide(
+            marker: Marker?,
+            logger: Logger,
+            level: Level,
+            format: String?,
+            params: Array<Any>?,
+            t: Throwable?,
+        ): FilterReply {
+            if (logger.name == loggerName && level == atLevel) {
+                failure()?.let { throw it }
+            }
+            return FilterReply.NEUTRAL
+        }
+    }
 
     /**
      * A body stream that honours the InputStream contract for a zero-length read (returns 0), as the
@@ -136,15 +158,17 @@ class ClientRequestLoggingMetricsTest {
             //   failed call goes up and down within the call.
             // Why it matters: a response that is never closed must stay VISIBLE - the gauge baseline is
             //   the only signal for that silent-loss mode.
-            // Given/When
+            // Given: a call whose response the client holds open
             val response = interceptor.intercept(request(), ByteArray(0), answering(body = "x"))
+
+            // When/Then: open - 1; body read - still 1; closed - 0
             assertThat(gauge()).isEqualTo(1.0)
             response.body.readAllBytes()
             assertThat(gauge()).isEqualTo(1.0)
             response.close()
-
-            // Then
             assertThat(gauge()).isZero()
+
+            // And: a failed call goes up and down within the call
             catchThrowable { interceptor.intercept(request(), ByteArray(0)) { _, _ -> throw IOException("refused") } }
             assertThat(gauge()).isZero()
         }
@@ -162,7 +186,7 @@ class ClientRequestLoggingMetricsTest {
             interceptor
                 .intercept(request().apply { headers.set("traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01") }, ByteArray(0), answering())
                 .consumeAndClose()
-            interceptor.intercept(request().apply { headers.set("X-Correlation-Id", "c-1") }, ByteArray(0), answering()).consumeAndClose()
+            interceptor.intercept(request().apply { headers.set(properties.correlationIdHeader, "c-1") }, ByteArray(0), answering()).consumeAndClose()
             interceptor.intercept(request(), ByteArray(0), answering()).consumeAndClose()
 
             // Then
@@ -180,7 +204,7 @@ class ClientRequestLoggingMetricsTest {
             //   gauge to 1 mid-flight and back to 0 at close.
             // Why it matters: with a duplicate owner the second interceptor's live calls were invisible.
             // Given
-            val second = ClientRequestLoggingInterceptor(properties, { ticker.get() }, { "generated-43" }, registry)
+            val second = interceptorWith(properties, ticker, registry, correlationId = "generated-43")
 
             // When/Then
             val response = second.intercept(request(), ByteArray(0), answering())
@@ -199,16 +223,10 @@ class ClientRequestLoggingMetricsTest {
             // Success criteria: request 5 bytes, response 6 bytes, one `complete` count under the tags.
             // Why it matters: a metric must not depend on how loud the logger is configured.
             // Given
-            val measuring =
-                ClientRequestLoggingInterceptor(
-                    properties.copy(measureRequestBodySize = true, measureResponseBodySize = true),
-                    { ticker.get() },
-                    { "generated-42" },
-                    registry,
-                )
+            val measuring = interceptorWith(properties.copy(measureRequestBodySize = true, measureResponseBodySize = true), ticker, registry)
             log.logger.level = Level.OFF
             val request =
-                request(method = org.springframework.http.HttpMethod.POST, uri = "https://api.example.com/things/7").apply {
+                request(method = HttpMethod.POST, uri = "https://api.example.com/things/7").apply {
                     attributes[ClientRequestLoggingInterceptor.URI_TEMPLATE_ATTRIBUTE] = "https://api.example.com/things/{id}"
                     attributes[ClientRequestLoggingInterceptor.ADAPTER_NAME_ATTRIBUTE] = "things"
                 }
@@ -248,8 +266,7 @@ class ClientRequestLoggingMetricsTest {
             //   visible - the size summary cannot show it, and a zero sample there would distort the
             //   distribution of bodies that exist.
             // Given: measuring, and a response closed without reading
-            val measuring =
-                ClientRequestLoggingInterceptor(properties.copy(measureResponseBodySize = true), { ticker.get() }, { "generated-42" }, registry)
+            val measuring = interceptorWith(properties.copy(measureResponseBodySize = true), ticker, registry)
 
             // When
             measuring.intercept(request(), ByteArray(0), answering(body = "dropped")).close()
@@ -258,6 +275,30 @@ class ClientRequestLoggingMetricsTest {
             assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "unread"))
                 .isEqualTo(1.0)
             assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_SIZE_METER).summary()).isNull()
+        }
+
+        @Test
+        fun `should count a bodiless 204 the client never opens as complete`() {
+            // What is tested: the read state of an answer that has no body by the protocol - the
+            //   interceptor hands the capture a length of zero at handover (the rule of Spring's own
+            //   hasMessageBody(): 1xx, 204, 304), and the response is closed without the body ever
+            //   being opened, exactly as RestClient and RestTemplate do for such answers.
+            // Success criteria: adapter.response.body.read counts 1 under state=complete for the 204
+            //   and nothing under state=unread; the same for a 200 with Content-Length: 0.
+            // Why it matters: before this rule every 204 counted as unread, so a route of deletes and
+            //   updates showed 100 % "discarded payload" on the counter that exists to flag exactly
+            //   that - and the same answer counted complete on the reactive twin, breaking the twin
+            //   contract of the state tag.
+            // Given
+            val measuring = interceptorWith(properties.copy(measureResponseBodySize = true), ticker, registry)
+
+            // When: a 204 and a declared-empty 200, both closed unopened
+            measuring.intercept(request(), ByteArray(0), answering(status = HttpStatus.NO_CONTENT)).close()
+            measuring.intercept(request(), ByteArray(0), answering { it.headers.contentLength = 0 }).close()
+
+            // Then
+            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(2.0)
+            assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "unread").counter()).isNull()
         }
 
         @Test
@@ -271,15 +312,16 @@ class ClientRequestLoggingMetricsTest {
             //   body the peer never saw would inflate payload distributions with every outage and
             //   make the twin comparison lie (the reactive twin tees at the connector write).
             // Given
-            val measuring =
-                ClientRequestLoggingInterceptor(properties.copy(measureRequestBodySize = true), { ticker.get() }, { "generated-42" }, registry)
+            val measuring = interceptorWith(properties.copy(measureRequestBodySize = true), ticker, registry)
 
-            // When: refused, then answered
-            catchThrowable { measuring.intercept(request(method = org.springframework.http.HttpMethod.POST), "four".toByteArray()) { _, _ -> throw IOException("refused") } }
+            // When: a refused POST with a 4-byte body
+            catchThrowable { measuring.intercept(request(method = HttpMethod.POST), "four".toByteArray()) { _, _ -> throw IOException("refused") } }
+
+            // Then: no sample - none of those bytes reached the peer
             assertThat(registry.find(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).summary()).isNull()
-            measuring.intercept(request(method = org.springframework.http.HttpMethod.POST), "four".toByteArray(), answering()).consumeAndClose()
 
-            // Then: the answered call is the one that recorded
+            // And: the same body, answered, is the one that records
+            measuring.intercept(request(method = HttpMethod.POST), "four".toByteArray(), answering()).consumeAndClose()
             assertThat(registry.get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).summary().totalAmount()).isEqualTo(4.0)
         }
 
@@ -294,8 +336,7 @@ class ClientRequestLoggingMetricsTest {
             //   alarm for abandoned body processing fired on healthy calls.
             // Given: measuring, and a response that declares its length on an engine-like stream (a
             //   zero-length read at the end returns 0, not the -1 Spring's mock body would give)
-            val measuring =
-                ClientRequestLoggingInterceptor(properties.copy(measureResponseBodySize = true), { ticker.get() }, { "generated-42" }, registry)
+            val measuring = interceptorWith(properties.copy(measureResponseBodySize = true), ticker, registry)
             val response = measuring.intercept(request(), ByteArray(0), answeringLikeAnEngine("world!"))
 
             // When: the real Spring converter reads the body, then the client closes
@@ -317,8 +358,7 @@ class ClientRequestLoggingMetricsTest {
             // Why it matters: a wrong `complete` is worse than a conservative `partial` - the rule may
             //   only fire where the declared length is the length the application reads.
             // Given: measuring, a response declaring length AND encoding, on an engine-like stream
-            val measuring =
-                ClientRequestLoggingInterceptor(properties.copy(measureResponseBodySize = true), { ticker.get() }, { "generated-42" }, registry)
+            val measuring = interceptorWith(properties.copy(measureResponseBodySize = true), ticker, registry)
             val response = measuring.intercept(request(), ByteArray(0), answeringLikeAnEngine("world!", mapOf("Content-Encoding" to "gzip")))
 
             // When: exactly the declared length is read, no EOF asked for
@@ -341,8 +381,7 @@ class ClientRequestLoggingMetricsTest {
             // Why it matters: a peer must not be able to raise a warning and a fail-open count per
             //   answer with one garbage header; the header may only ever feed the comparison.
             // Given: measuring, a garbage Content-Length on an engine-like stream, the module logger captured
-            val measuring =
-                ClientRequestLoggingInterceptor(properties.copy(measureResponseBodySize = true), { ticker.get() }, { "generated-42" }, registry)
+            val measuring = interceptorWith(properties.copy(measureResponseBodySize = true), ticker, registry)
             val garbage =
                 ClientHttpRequestExecution { _, _ ->
                     MockClientHttpResponse(engineLikeStream("world!"), HttpStatus.OK).apply { headers.set("Content-Length", "abc") }
@@ -374,8 +413,7 @@ class ClientRequestLoggingMetricsTest {
             //   discarding a body the peer never sent, inflating exactly the share the counter exists
             //   to flag.
             // Given
-            val measuring =
-                ClientRequestLoggingInterceptor(properties.copy(measureResponseBodySize = true), { ticker.get() }, { "generated-42" }, registry)
+            val measuring = interceptorWith(properties.copy(measureResponseBodySize = true), ticker, registry)
 
             // When
             catchThrowable { measuring.intercept(request(), ByteArray(0)) { _, _ -> throw IOException("refused") } }
@@ -393,7 +431,7 @@ class ClientRequestLoggingMetricsTest {
             // Success criteria: the call succeeds untouched, no event, wiring=1, gauge untouched.
             // Why it matters: a logging component must never fail the call it describes.
             // Given
-            val broken = ClientRequestLoggingInterceptor(properties, { ticker.get() }, { throw IllegalStateException("no ids") }, registry)
+            val broken = ClientRequestLoggingInterceptor(properties, NanoTimeSource { ticker.get() }, CorrelationIdGenerator { throw IllegalStateException("no ids") }, registry)
 
             // When
             val body = broken.intercept(request(), ByteArray(0), answering(body = "served")).consumeAndClose()
@@ -433,6 +471,48 @@ class ClientRequestLoggingMetricsTest {
         }
 
         @Test
+        fun `should close the gauge and restore the call scope when the arrival line dies with an Error`() {
+            // What is tested: the Throwable boundary around the arrival line - a logging backend that
+            //   dies with an Error (a LinkageError, the likeliest source) while the start line is being
+            //   written, before the wire call.
+            // Success criteria: the Error reaches the caller unchanged, the wire call never ran, the
+            //   open-exchanges gauge is back at zero, the calling thread carries no adapter_* MDC keys,
+            //   and neither an event nor an arrival-stage count exists (the Error is outside the
+            //   fail-open promise; only the bookkeeping is protected).
+            // Why it matters: before the arrival line moved inside the try, such an Error left the
+            //   exchange open on the gauge forever and the call scope on a pooled thread - every later
+            //   line of that thread carried this call's request id.
+            // Given: a backend whose level check dies for the exchange logger at INFO
+            val context = LoggerFactory.getILoggerFactory() as LoggerContext
+            val exchangeLogger = properties.loggerName
+            val dying = FailingLevelCheck(exchangeLogger, Level.INFO) { LinkageError("backend died") }
+            context.addTurboFilter(dying)
+            try {
+                val announcing = interceptorWith(properties.copy(logRequestStart = true), ticker, registry)
+                var wireCalled = false
+
+                // When
+                val thrown =
+                    catchThrowable {
+                        announcing.intercept(request(), ByteArray(0)) { _, _ ->
+                            wireCalled = true
+                            MockClientHttpResponse(ByteArray(0), HttpStatus.OK)
+                        }
+                    }
+
+                // Then
+                assertThat(thrown).isInstanceOf(LinkageError::class.java).hasMessage("backend died")
+                assertThat(wireCalled).isFalse()
+                assertThat(gauge()).isZero()
+                assertThat(MDC.get(MdcKeys.REQUEST_ID)).isNull()
+                assertThat(log.events).isEmpty()
+                assertThat(counter(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "arrival")).isZero()
+            } finally {
+                context.turboFilterList.remove(dying)
+            }
+        }
+
+        @Test
         fun `should confine an arrival-line backend failure and count stage arrival`() {
             // What is tested: the arrival guard's coverage - the logger-level gate is a backend call and
             //   must sit INSIDE the fail-open guard.
@@ -445,23 +525,10 @@ class ClientRequestLoggingMetricsTest {
             val context = LoggerFactory.getILoggerFactory() as LoggerContext
             val exchangeLogger = properties.loggerName
             var armed = true
-            val throwing =
-                object : TurboFilter() {
-                    override fun decide(
-                        marker: Marker?,
-                        logger: Logger,
-                        level: Level,
-                        format: String?,
-                        params: Array<Any>?,
-                        t: Throwable?,
-                    ): FilterReply {
-                        if (armed && logger.name == exchangeLogger && level == Level.INFO) throw IllegalStateException("backend broke")
-                        return FilterReply.NEUTRAL
-                    }
-                }
+            val throwing = FailingLevelCheck(exchangeLogger, Level.INFO) { if (armed) IllegalStateException("backend broke") else null }
             context.addTurboFilter(throwing)
             try {
-                val announcing = ClientRequestLoggingInterceptor(properties.copy(logRequestStart = true), { ticker.get() }, { "generated-42" }, registry)
+                val announcing = interceptorWith(properties.copy(logRequestStart = true), ticker, registry)
 
                 // When: the arrival line fails, then the backend recovers for the completion event
                 val response = announcing.intercept(request(), ByteArray(0), answering(body = "served"))

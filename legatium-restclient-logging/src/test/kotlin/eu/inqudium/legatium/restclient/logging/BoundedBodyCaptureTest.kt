@@ -154,11 +154,11 @@ class BoundedBodyCaptureTest {
             //   COMPLETE in place.
             // Why it matters: the state becomes the state tag of adapter.response.body.read - a
             //   fully consumed body reported as partial would show payload discarded that was not.
-            // Given
+            // Given: a fresh capture
             val capture = BoundedBodyCapture(8)
-            assertThat(capture.readState).isEqualTo(BodyReadState.UNREAD)
 
-            // When/Then
+            // When/Then: UNREAD at construction, then one observation per transition
+            assertThat(capture.readState).isEqualTo(BodyReadState.UNREAD)
             capture.markStarted()
             assertThat(capture.readState).isEqualTo(BodyReadState.PARTIAL)
             capture.markCompleted()
@@ -192,16 +192,19 @@ class BoundedBodyCaptureTest {
         }
 
         @Test
-        fun `should complete a declared zero-length body when the stream is opened`() {
-            // What is tested: markStarted with a declared length of zero - a length-aware reader
-            //   opens the stream and reads nothing, which is the whole body.
-            // Success criteria: COMPLETE right after markStarted; with an unknown length the same
-            //   call yields PARTIAL.
-            // Why it matters: an empty declared body must not count as consumption that stopped
-            //   early.
-            // Given/When/Then: declared zero
+        fun `should complete a body of declared length zero at once, without the stream being opened`() {
+            // What is tested: expectBytes(0) - an answer that carries no body (a 204, a
+            //   Content-Length of 0) completes the read state the moment that is known, because
+            //   Spring's clients never open such a body and no later mark could.
+            // Success criteria: COMPLETE right after expectBytes(0) with no markStarted call, and
+            //   still COMPLETE after one; with an unknown length markStarted yields PARTIAL.
+            // Why it matters: before this rule every 204 counted as unread - a route of deletes and
+            //   updates read as 100 % discarded payload on the counter that exists to show exactly
+            //   that, and differently from the reactive twin, whose empty body flux completes.
+            // Given/When/Then: declared zero, never opened
             val declaredEmpty = BoundedBodyCapture(8)
             declaredEmpty.expectBytes(0)
+            assertThat(declaredEmpty.readState).isEqualTo(BodyReadState.COMPLETE)
             declaredEmpty.markStarted()
             assertThat(declaredEmpty.readState).isEqualTo(BodyReadState.COMPLETE)
 

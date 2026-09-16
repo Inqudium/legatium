@@ -9,6 +9,7 @@ import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.MdcScope
 import eu.inqudium.legatium.common.NanoTimeSource
+import eu.inqudium.legatium.common.NoOpScope
 import eu.inqudium.legatium.common.Timeouts
 import eu.inqudium.legatium.common.TraceMdcKeys
 import eu.inqudium.legatium.common.addKeyValue
@@ -88,24 +89,22 @@ internal class ExchangeLogEmitter(
             if (!exchangeLog.isInfoEnabled) {
                 return
             }
-            // The caller's context first, the module's own scope inside it - the same layering as the
-            // completion event; on the caller's thread, where the arrival line always runs, a no-op.
-            restoreCallerMdcQuietly(exchange).use {
-                MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true).use {
-                    exchangeLog
-                        .atInfo()
-                        .setMessage(
-                            "Adapter http exchange started ${exchange.method} ${exchange.target} " +
-                                "[${MdcKeys.REQUEST_ID}=${exchange.requestId}]",
-                        ).addKeyValue(ClientLogField.REQUEST_METHOD, exchange.method)
-                        .addKeyValueIfPresent(ClientLogField.NAME, exchange.name)
-                        .addKeyValueIfPresent(ClientLogField.URL_HOST, exchange.host)
-                        .addKeyValue(ClientLogField.URL_PATH, exchange.path)
-                        .addKeyValueIfPresent(ClientLogField.URL_TEMPLATE, exchange.uriTemplate)
-                        .addKeyValueIfPresent(ClientLogField.URL_QUERY, exchange.query)
-                        .addKeyValueIfPresent(ClientLogField.REQUEST_HEADERS, renderHeaders(exchange.requestHeaders))
-                        .log()
-                }
+            // The same scope layering as the completion event ([withEmissionScopes]); on the caller's
+            // thread, where the arrival line always runs, the caller scope is a no-op.
+            withEmissionScopes(exchange) {
+                exchangeLog
+                    .atInfo()
+                    .setMessage(
+                        "Adapter http exchange started ${exchange.method} ${exchange.target} " +
+                            "[${MdcKeys.REQUEST_ID}=${exchange.requestId}]",
+                    ).addKeyValue(ClientLogField.REQUEST_METHOD, exchange.method)
+                    .addKeyValueIfPresent(ClientLogField.NAME, exchange.name)
+                    .addKeyValueIfPresent(ClientLogField.URL_HOST, exchange.host)
+                    .addKeyValue(ClientLogField.URL_PATH, exchange.path)
+                    .addKeyValueIfPresent(ClientLogField.URL_TEMPLATE, exchange.uriTemplate)
+                    .addKeyValueIfPresent(ClientLogField.URL_QUERY, exchange.query)
+                    .addKeyValueIfPresent(ClientLogField.REQUEST_HEADERS, renderHeaders(exchange.requestHeaders))
+                    .log()
             }
         }
     }
@@ -153,8 +152,8 @@ internal class ExchangeLogEmitter(
         val slow = Duration.ofNanos(elapsedNanos) >= properties.slowRequestThreshold
         // Metrics BEFORE the level gate: a metric must not depend on how loud the logger is configured.
         recordBodySizesQuietly(exchange)
-        // Status and headers were snapshotted at handover (the interceptor counted and warned if the
-        // engine refused): the emission runs after the client's close and never asks the response again.
+        // Status and headers were read at handover (the interceptor counted and warned if the engine
+        // refused): the emission runs after the client's close and never asks the response again.
         val status = exchange.responseStatus
         val classification = classify(exchange.failure, status)
         // Slow escalates INFO -> WARN without changing the outcome.
@@ -162,15 +161,29 @@ internal class ExchangeLogEmitter(
         if (!exchangeLog.isEnabledForLevel(level)) {
             return
         }
-        // The caller's MDC FIRST when the close runs on another thread (ADR-0011), and the emission scope
-        // inside it, which OWNS the trace keys ([MdcScope]): the encoder emits the traceId/spanId the
-        // request went out with, never a stale bridge id of the closing thread - nor one the snapshot
-        // could have carried, which is why the snapshot leaves the trace keys out.
+        withEmissionScopes(exchange) {
+            logEvent(exchange, classification, level, status, elapsedNanos / NANOS_PER_MS, slow)
+        }
+    }
+
+    /**
+     * The MDC layering of both emissions: the caller's MDC FIRST when the emission runs on another thread
+     * (ADR-0011, a no-op on the caller's own thread), and the emission scope inside it, which OWNS the
+     * trace keys ([MdcScope]) - the encoder emits the traceId/spanId the request went out with, never a
+     * stale bridge id of the emitting thread, nor one the snapshot could have carried, which is why the
+     * snapshot leaves the trace keys out. Both scopes are torn down through [restoreQuietly], inner first:
+     * a restoration that fails AFTER the line is on the logger is bookkeeping (stage=wiring), not a lost
+     * line.
+     */
+    private inline fun withEmissionScopes(
+        exchange: Exchange,
+        block: () -> Unit,
+    ) {
         val callerScope = restoreCallerMdcQuietly(exchange)
         try {
             val mdcScope = MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true)
             try {
-                logEvent(exchange, classification, level, status, elapsedNanos / NANOS_PER_MS, slow)
+                block()
             } finally {
                 restoreQuietly(mdcScope, exchange)
             }
@@ -197,7 +210,7 @@ internal class ExchangeLogEmitter(
                     e.toString(),
                 )
             }
-            AutoCloseable {}
+            NoOpScope
         }
 
     /**
@@ -307,8 +320,9 @@ internal class ExchangeLogEmitter(
 
     /**
      * Restoration guarded on its own, like the interceptor's call scope: a throwing MDC adapter here must
-     * neither be reported as a LOST emission (the event is already on the logger) nor mask an emission
-     * failure propagating out of the try - it costs the restoration, counted as stage=wiring.
+     * neither be reported as a LOST line (the arrival line or the event is already on the logger) nor
+     * mask an emission failure propagating out of the try - it costs the restoration, counted as
+     * stage=wiring. One rule for both emissions: the line counts as emitted, the teardown as bookkeeping.
      */
     private fun restoreQuietly(
         scope: AutoCloseable,

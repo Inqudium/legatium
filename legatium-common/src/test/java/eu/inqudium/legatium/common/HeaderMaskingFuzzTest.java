@@ -4,13 +4,14 @@ import com.code_intelligence.jazzer.api.FuzzedDataProvider;
 import com.code_intelligence.jazzer.junit.FuzzTest;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
+import kotlin.Pair;
 
 /**
  * Fuzzes header selection and masking (the shared implementation both twins
@@ -80,7 +81,7 @@ class HeaderMaskingFuzzTest {
             }
         }
 
-        List<kotlin.Pair<String, String>> selected =
+        List<Pair<String, String>> selected =
                 properties.select(
                         headers.keySet(),
                         HeaderValueMasker.DEFAULT,
@@ -102,7 +103,7 @@ class HeaderMaskingFuzzTest {
             throw new IllegalStateException("empty includes selected " + selected);
         }
         Set<String> selectedNames = new HashSet<>();
-        for (kotlin.Pair<String, String> entry : selected) {
+        for (Pair<String, String> entry : selected) {
             if (!selectedNames.add(entry.getFirst().toLowerCase(Locale.ROOT))) {
                 throw new IllegalStateException("header selected twice: " + entry.getFirst());
             }
@@ -110,21 +111,17 @@ class HeaderMaskingFuzzTest {
         if (!selectedNames.equals(expectedNames)) {
             throw new IllegalStateException("selection mismatch: expected " + expectedNames + ", got " + selectedNames);
         }
-        for (kotlin.Pair<String, String> entry : selected) {
+        for (Pair<String, String> entry : selected) {
             String name = entry.getFirst();
             String value = entry.getSecond();
             String original = lookupIgnoreCase(headers, name);
             // Locale.ROOT mirrors Kotlin's lowercase(), which the library uses -
             // the oracle must speak the library's dialect.
-            boolean unmaskedName =
-                    unmasked.stream()
-                            .anyMatch(u -> u.toLowerCase(Locale.ROOT).equals(name.toLowerCase(Locale.ROOT)));
+            String lower = name.toLowerCase(Locale.ROOT);
+            boolean unmaskedName = unmasked.stream().anyMatch(u -> u.toLowerCase(Locale.ROOT).equals(lower));
             boolean shouldMask =
                     !unmaskedName
-                            && (maskAll
-                                    || masked.stream()
-                                            .anyMatch(m ->
-                                                    m.toLowerCase(Locale.ROOT).equals(name.toLowerCase(Locale.ROOT))));
+                            && (maskAll || masked.stream().anyMatch(m -> m.toLowerCase(Locale.ROOT).equals(lower)));
             if (shouldMask) {
                 if (!FINGERPRINT.matcher(value).matches()) {
                     throw new IllegalStateException("masked value is not a fingerprint: " + name + "=" + value);

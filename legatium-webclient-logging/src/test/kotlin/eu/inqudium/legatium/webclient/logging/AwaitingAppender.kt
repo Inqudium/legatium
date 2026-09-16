@@ -26,8 +26,9 @@ internal class AwaitingAppender : AppenderBase<ILoggingEvent>() {
         arrivals.release()
     }
 
+    /** The events captured so far, once [count] have arrived or [AWAIT] has passed. */
     fun awaitEvents(count: Int): List<ILoggingEvent> {
-        arrivals.tryAcquire(count, 5, TimeUnit.SECONDS)
+        arrivals.tryAcquire(count, AWAIT.toMillis(), TimeUnit.MILLISECONDS)
         return events.toList()
     }
 }

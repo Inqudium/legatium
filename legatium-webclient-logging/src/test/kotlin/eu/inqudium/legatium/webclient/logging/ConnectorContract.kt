@@ -1,17 +1,11 @@
 package eu.inqudium.legatium.webclient.logging
 
 import ch.qos.logback.classic.Level
-import ch.qos.logback.classic.Logger
 import eu.inqudium.legatium.common.MdcKeys
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
-import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeAll
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.http.MediaType
 import org.springframework.http.client.reactive.ClientHttpConnector
@@ -44,35 +38,20 @@ import java.time.Duration
             "org.springframework.boot.micrometer.tracing.autoconfigure.MicrometerTracingAutoConfiguration",
     ],
 )
-abstract class ConnectorContract {
+abstract class ConnectorContract : IntegrationFixture() {
     /** The engine under test, built with the given connect and response timeouts. */
     protected abstract fun connector(
         connectTimeout: Duration,
         responseTimeout: Duration,
     ): ClientHttpConnector
 
-    @Autowired
-    private lateinit var webClientBuilder: WebClient.Builder
-
-    private val logger = LoggerFactory.getLogger("adapter-http-exchange") as Logger
-    private lateinit var appender: AwaitingAppender
     private val closeables = mutableListOf<AutoCloseable>()
 
     /** Registers an engine resource to be released after the test. */
     protected fun <T : AutoCloseable> closing(resource: T): T = resource.also { closeables += it }
 
-    @BeforeEach
-    fun setUp() {
-        appender = AwaitingAppender().apply { start() }
-        logger.addAppender(appender)
-        logger.level = Level.INFO
-        peer.received.clear()
-    }
-
     @AfterEach
-    fun tearDown() {
-        logger.detachAppender(appender)
-        appender.stop()
+    fun releaseEngineResources() {
         closeables.reversed().forEach { runCatching { it.close() } }
         closeables.clear()
     }
@@ -112,7 +91,7 @@ abstract class ConnectorContract {
         val received = peer.received.single()
         assertThat(received.header("X-Correlation-Id")).isNotBlank()
         assertThat(received.body).isEqualTo("hello")
-        val event = appender.awaitEvents(1).single()
+        val event = log.awaitEvents(1).single()
         assertThat(event.level).isEqualTo(Level.INFO)
         assertThat(event.formattedMessage)
             .isEqualTo("Adapter http exchange POST ${peer.baseUrl}/things/7 -> 200 [adapter_request_id=${received.header("X-Correlation-Id")}]")
@@ -145,7 +124,7 @@ abstract class ConnectorContract {
 
         // Then
         assertThat(thrown).isNotNull()
-        val event = appender.awaitEvents(1).single()
+        val event = log.awaitEvents(1).single()
         assertThat(event.level).describedAs("event for %s", thrown).isEqualTo(Level.WARN)
         assertThat(keyValues(event)).containsEntry("adapter_outcome", "timeout").doesNotContainKey("adapter_response_status_code")
     }
@@ -175,7 +154,7 @@ abstract class ConnectorContract {
 
         // Then
         assertThat(thrown).isNotNull()
-        val event = appender.awaitEvents(1).single()
+        val event = log.awaitEvents(1).single()
         assertThat(event.level).describedAs("event for %s", thrown).isEqualTo(Level.WARN)
         assertThat(event.formattedMessage).startsWith("Adapter http exchange GET ${tarpit.baseUrl}/things/1 -> - [")
         assertThat(keyValues(event)).containsEntry("adapter_outcome", "timeout").doesNotContainKey("adapter_response_status_code")
@@ -201,29 +180,14 @@ abstract class ConnectorContract {
 
         // Then
         assertThat(thrown).isNotNull()
-        val event = appender.awaitEvents(1).single()
+        val event = log.awaitEvents(1).single()
         assertThat(event.level).describedAs("event for %s", thrown).isEqualTo(Level.ERROR)
         assertThat(event.formattedMessage).startsWith("Adapter http exchange GET http://127.0.0.1:1/things/1 -> - [")
         assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").doesNotContainKey("adapter_response_status_code")
     }
 
-    companion object {
-        private val SHORT: Duration = Duration.ofMillis(200)
-
+    private companion object {
         /** For every scenario whose subject is not the timeout: a loaded runner must not turn a tee test into a timeout test. */
-        private val GENEROUS: Duration = Duration.ofSeconds(10)
-        private lateinit var peer: PeerServer
-
-        @JvmStatic
-        @BeforeAll
-        fun startPeer() {
-            peer = PeerServer()
-        }
-
-        @JvmStatic
-        @AfterAll
-        fun stopPeer() {
-            peer.close()
-        }
+        val GENEROUS: Duration = Duration.ofSeconds(10)
     }
 }

@@ -13,11 +13,10 @@ import reactor.util.context.Context
  */
 class AmbientContextRestorerTest {
     private val key = "endpoint_request_id"
-    private lateinit var accessor: MdcAccessorGuard
+    private val accessor = MdcAccessorGuard(key)
 
     @BeforeEach
-    fun setUp() {
-        accessor = MdcAccessorGuard(key)
+    fun clearMdc() {
         MDC.clear()
     }
 

@@ -24,7 +24,7 @@ class TwinContractTest {
         // Why it matters: alerts on adapter.logging.events{outcome=...} for this stack must find every
         //   value at zero from the start, and none the blocking stack can never produce.
         // Given/When/Then
-        assertThat(ClientStack.RESTCLIENT.tag).isEqualTo("restclient")
+        assertThat(ClientStack.RESTCLIENT.tagValue).isEqualTo("restclient")
         assertThat(ClientStack.RESTCLIENT.outcomes.map { it.tagValue }).containsExactly("success", "failure", "timeout")
     }
 

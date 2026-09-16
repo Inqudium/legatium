@@ -8,9 +8,9 @@ import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.composite.CompositeMeterRegistry
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.boot.autoconfigure.AutoConfiguration
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBooleanProperty
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.restclient.RestClientCustomizer
 import org.springframework.boot.restclient.RestTemplateCustomizer
@@ -35,7 +35,7 @@ import org.springframework.core.annotation.Order
  * and adds it itself.
  */
 @AutoConfiguration
-@ConditionalOnProperty(prefix = "adapter-logging", name = ["enabled"], havingValue = "true", matchIfMissing = true)
+@ConditionalOnBooleanProperty(prefix = "adapter-logging", name = ["enabled"], matchIfMissing = true)
 @EnableConfigurationProperties(ClientLoggingProperties::class)
 class ClientLoggingAutoConfiguration {
     /** The system's monotonic clock, unless the host pins a time source. */
@@ -74,8 +74,10 @@ class ClientLoggingAutoConfiguration {
     /**
      * Attaches the interceptor to every `RestClient.Builder` Boot hands out (and to every HTTP service
      * client group built from one). Ordered LATE among the customizers, so the interceptor is appended
-     * behind the interceptors of earlier customizers and runs INSIDE them - closest to the wire, once
-     * per attempt of an outer retry ([ClientRequestLoggingInterceptor]).
+     * behind the interceptors of customizers ordered before [CUSTOMIZER_ORDER] and runs INSIDE them -
+     * closest to the wire, once per attempt of an outer retry ([ClientRequestLoggingInterceptor]). A
+     * host customizer WITHOUT an `@Order` has `Ordered.LOWEST_PRECEDENCE`, is applied after this one,
+     * and its interceptor therefore runs inside the logging - see the constant.
      */
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(RestClientCustomizer::class)
@@ -99,6 +101,13 @@ class ClientLoggingAutoConfiguration {
          * Late, not last: room is left below for a host customizer that must see the fully configured
          * interceptor list (a metrics or diagnostics wrapper), exactly as the inbound filter's
          * `HIGHEST_PRECEDENCE + 10` leaves room above it.
+         *
+         * The consequence, decided and pinned by the auto-configuration test: a host customizer without
+         * an `@Order` sits at `Ordered.LOWEST_PRECEDENCE`, in that room, and is applied AFTER this one -
+         * its interceptor is appended behind the logging interceptor and runs inside it, so a header it
+         * adds is not on the logged line and a retry it performs is one line for all attempts. A host
+         * that wants its interceptor observed orders its customizer before this value (any explicit
+         * `@Order` below `LOWEST_PRECEDENCE - 10`, `@Order(0)` being the usual choice).
          */
         const val CUSTOMIZER_ORDER = Ordered.LOWEST_PRECEDENCE - 10
     }

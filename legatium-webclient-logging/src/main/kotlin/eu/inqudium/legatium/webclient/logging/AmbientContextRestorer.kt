@@ -1,5 +1,6 @@
 package eu.inqudium.legatium.webclient.logging
 
+import eu.inqudium.legatium.common.NoOpScope
 import io.micrometer.context.ContextRegistry
 import io.micrometer.context.ContextSnapshotFactory
 import org.springframework.util.ClassUtils
@@ -33,7 +34,7 @@ internal fun interface AmbientContextRestorer {
         private const val SNAPSHOT_FACTORY = "io.micrometer.context.ContextSnapshotFactory"
 
         /** Restores nothing: the choice without `io.micrometer:context-propagation` on the classpath. */
-        val NONE: AmbientContextRestorer = AmbientContextRestorer { NoScope }
+        val NONE: AmbientContextRestorer = AmbientContextRestorer { NoOpScope }
 
         /**
          * The restorer for this classpath: the context-propagation one when the optional library is
@@ -41,10 +42,6 @@ internal fun interface AmbientContextRestorer {
          * which keeps the configuration identical to the RestClient twin's.
          */
         fun detect(classLoader: ClassLoader? = AmbientContextRestorer::class.java.classLoader): AmbientContextRestorer = if (ClassUtils.isPresent(SNAPSHOT_FACTORY, classLoader)) ContextPropagationRestorer() else NONE
-    }
-
-    private object NoScope : AutoCloseable {
-        override fun close() = Unit
     }
 }
 

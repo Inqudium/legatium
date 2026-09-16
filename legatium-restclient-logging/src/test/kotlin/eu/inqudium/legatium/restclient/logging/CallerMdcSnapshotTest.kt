@@ -3,29 +3,22 @@ package eu.inqudium.legatium.restclient.logging
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.TraceMdcKeys
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.entry
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.slf4j.MDC
-import java.util.concurrent.Executors
 
 /**
  * The caller's MDC snapshot (ADR-0011): what it captures, on which thread it applies, and how it leaves
  * the emitting thread afterwards.
  */
 class CallerMdcSnapshotTest {
-    private val executor = Executors.newSingleThreadExecutor()
-
     @BeforeEach
     fun clearMdc() = MDC.clear()
 
     @AfterEach
-    fun tearDown() {
-        MDC.clear()
-        executor.shutdownNow()
-    }
-
-    private fun <T> onAnotherThread(block: () -> T): T = executor.submit(block).get()
+    fun tearDown() = MDC.clear()
 
     @Test
     fun `should capture the caller's entries without the module's own and the trace keys`() {
@@ -43,7 +36,7 @@ class CallerMdcSnapshotTest {
         MDC.put(TraceMdcKeys.TRACE_ID, "stale")
         MDC.put(TraceMdcKeys.SPAN_ID, "stale")
 
-        // When / Then
+        // When/Then
         assertThat(CallerMdcSnapshot.capture().entries).containsOnly(entry("endpoint_request_id", "inbound-7"))
     }
 
@@ -52,7 +45,7 @@ class CallerMdcSnapshotTest {
         // What is tested: the cost floor - no MDC, no map.
         // Success criteria: capture on a thread without MDC yields the NONE instance.
         // Why it matters: the snapshot is taken on every call; a host without MDC must pay nothing.
-        // Given / When / Then
+        // Given/When/Then
         assertThat(CallerMdcSnapshot.capture()).isSameAs(CallerMdcSnapshot.NONE)
     }
 
@@ -67,7 +60,7 @@ class CallerMdcSnapshotTest {
         MDC.put("endpoint_request_id", "inbound-7")
         val snapshot = CallerMdcSnapshot.capture()
 
-        // When / Then
+        // When/Then
         val seen =
             onAnotherThread {
                 MDC.put("endpoint_request_id", "foreign")
@@ -91,16 +84,10 @@ class CallerMdcSnapshotTest {
         val snapshot = CallerMdcSnapshot.capture()
         MDC.put("endpoint_request_id", "v2")
 
-        // When / Then
+        // When/Then
         snapshot.restore().use {
             assertThat(MDC.get("endpoint_request_id")).isEqualTo("v2")
         }
         assertThat(MDC.get("endpoint_request_id")).isEqualTo("v2")
     }
-
-    private fun entry(
-        key: String,
-        value: String,
-    ) = org.assertj.core.api.Assertions
-        .entry(key, value)
 }

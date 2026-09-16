@@ -46,9 +46,17 @@ QUESTIONS = [
     ("How is success determined?", re.compile(r"Success criteria:")),
     ("Why does it matter?", re.compile(r"Why it matters:")),
 ]
-# The rationale run is directly followed by the Given/When/Then comments;
-# everything from the first stage label on is test structure, not rationale.
-STAGES_RE = re.compile(r"\b(?:Given|When|Then|And)\b\s*(?:\([^)]*\))?:")
+# The rationale run is directly followed by the Given/When/Then comments; everything
+# from the first stage line on is test structure, not rationale. A stage line is a
+# comment consisting of stage labels only (`Given`, `Given/When/Then`, `Given / When`),
+# optionally qualified `(...)` and optionally followed by `: text` - CONTRIBUTING's
+# spelling is the bare label, the colon form is equally common in the suites. Matched
+# per comment line, so a rationale sentence that happens to start with "When ..." is
+# never mistaken for a stage label (it carries more words before any colon).
+STAGE_LABEL = r"(?:Given|When|Then|And)"
+STAGE_LINE_RE = re.compile(
+    rf"^{STAGE_LABEL}(?:\s*/\s*{STAGE_LABEL})*\s*(?:\([^)]*\))?\s*(?::.*)?$"
+)
 
 
 def extract_rationales(module: Path) -> tuple[dict, dict]:
@@ -57,9 +65,9 @@ def extract_rationales(module: Path) -> tuple[dict, dict]:
 
     The rationale block is the run of '//' comment lines directly after
     the test function's opening line, cut off at the first Given/When/
-    Then stage label; method names are sentence-shaped and unique per
-    file, so the file's class name plus the method name is a sufficient
-    key. Kotlin tests under src/test/kotlin and the Java fuzz targets
+    Then stage line (with or without a colon); method names are
+    sentence-shaped and unique per file, so the file's class name plus
+    the method name is a sufficient key. Kotlin tests under src/test/kotlin and the Java fuzz targets
     under src/test/java are read alike.
 
     A detected rationale must answer all three questions (the
@@ -88,15 +96,15 @@ def extract_rationales(module: Path) -> tuple[dict, dict]:
             for follow in lines[i + 1:]:
                 stripped = follow.strip()
                 if stripped.startswith("//"):
-                    comment.append(stripped[2:].strip())
+                    body = stripped[2:].strip()
+                    if STAGE_LINE_RE.match(body):
+                        break
+                    comment.append(body)
                 elif stripped == "" and not comment:
                     continue
                 else:
                     break
             text = " ".join(comment)
-            stage = STAGES_RE.search(text)
-            if stage:
-                text = text[: stage.start()]
             parsed = {}
             spans = [(q.search(text), label) for label, q in QUESTIONS]
             spans = [(mm.start(), mm.end(), label) for mm, label in spans if mm]

@@ -19,30 +19,32 @@ class UriTemplateAttributeTest {
             MockClientHttpRequest(method, uri).apply { setResponse(MockClientHttpResponse(ByteArray(0), HttpStatus.OK)) }
         }
 
+    /** The attributes and the URI of the last request the recording interceptor saw. */
+    private var seen: Map<String, Any>? = null
+    private var seenUri: URI? = null
+
+    /** A real client over the mock factory, with a recording interceptor in the position the module's interceptor takes. */
+    private val client =
+        RestClient
+            .builder()
+            .baseUrl("https://api.example.com")
+            .requestFactory(requestFactory)
+            .requestInterceptor { request, body, execution ->
+                seen = request.attributes.toMap()
+                seenUri = request.uri
+                execution.execute(request, body)
+            }.build()
+
     @Test
     fun `should see the URI template RestClient records for the template form of uri`() {
         // What is tested: the mirrored attribute name - DefaultRestClient's constant is package-private,
         //   so the module derives it the same way and this test proves the derivation against the real
         //   client.
         // Success criteria: a call through `uri("/things/{id}", 7)` shows the expanded path on the
-        //   request and the template under the mirrored attribute; an expanded URI shows no attribute.
+        //   request and the template under the mirrored attribute.
         // Why it matters: a renamed attribute upstream would silently drop adapter_url_template from
         //   every event.
-        // Given: a client with a recording interceptor
-        var seen: Map<String, Any>? = null
-        var seenUri: URI? = null
-        val client =
-            RestClient
-                .builder()
-                .baseUrl("https://api.example.com")
-                .requestFactory(requestFactory)
-                .requestInterceptor { request, body, execution ->
-                    seen = request.attributes.toMap()
-                    seenUri = request.uri
-                    execution.execute(request, body)
-                }.build()
-
-        // When
+        // Given/When: a call through the template form of uri
         client
             .get()
             .uri("/things/{id}", 7)
@@ -52,8 +54,16 @@ class UriTemplateAttributeTest {
         // Then
         assertThat(seenUri).isEqualTo(URI.create("https://api.example.com/things/7"))
         assertThat(seen).containsEntry(ClientRequestLoggingInterceptor.URI_TEMPLATE_ATTRIBUTE, "https://api.example.com/things/{id}")
+    }
 
-        // When: an expanded URI
+    @Test
+    fun `should see no URI template for an expanded URI`() {
+        // What is tested: the other side of the mirrored attribute - a call through `uri(URI)` records
+        //   no template.
+        // Success criteria: the request's attributes carry no entry under the mirrored name.
+        // Why it matters: the emitter leaves adapter_url_template off exactly when the attribute is
+        //   absent; a template invented for an expanded URI would mislabel the body meters.
+        // Given/When: a call through an expanded URI
         client
             .get()
             .uri(URI.create("https://api.example.com/things/8"))

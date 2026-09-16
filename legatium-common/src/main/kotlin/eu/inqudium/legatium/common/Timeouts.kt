@@ -51,14 +51,5 @@ internal object Timeouts {
         return false
     }
 
-    private fun isTimeoutType(type: Class<*>): Boolean {
-        var current: Class<*>? = type
-        while (current != null) {
-            if (current.name in timeoutClassNames) {
-                return true
-            }
-            current = current.superclass
-        }
-        return false
-    }
+    private fun isTimeoutType(type: Class<*>): Boolean = generateSequence(type) { it.superclass }.any { it.name in timeoutClassNames }
 }

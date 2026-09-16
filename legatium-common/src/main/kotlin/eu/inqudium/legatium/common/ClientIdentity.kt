@@ -32,7 +32,7 @@ internal class ClientIdentity(
             val trace = Traceparent.parse(headers.getFirst(Traceparent.HEADER))
             val headerCorrelationId =
                 if (trace == null) CorrelationHeader.accept(headers.getFirst(properties.correlationIdHeader)) else null
-            val requestId = trace?.first ?: headerCorrelationId ?: correlationIds.nextCorrelationId()
+            val requestId = trace?.traceId ?: headerCorrelationId ?: correlationIds.nextCorrelationId()
             val source =
                 when {
                     trace != null -> RequestIdSource.TRACE
@@ -42,8 +42,8 @@ internal class ClientIdentity(
             return ClientIdentity(
                 requestId = requestId,
                 source = source,
-                traceId = trace?.first,
-                spanId = trace?.second,
+                traceId = trace?.traceId,
+                spanId = trace?.spanId,
                 sendCorrelationHeader = trace == null && headerCorrelationId == null,
             )
         }

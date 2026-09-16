@@ -25,10 +25,10 @@ internal object Traceparent {
     private const val CURRENT_VERSION = "00"
 
     /**
-     * Extracts `(traceId, spanId)` or null when the value is absent or not a conformant `traceparent`
+     * Extracts the [TraceContext] or null when the value is absent or not a conformant `traceparent`
      * (malformed structure, invalid version or flags, non-lowercase-hex or all-zero ids).
      */
-    fun parse(value: String?): Pair<String, String>? {
+    fun parse(value: String?): TraceContext? {
         val parts = (value ?: return null).split('-')
         if (parts.size < 4) {
             return null
@@ -48,6 +48,15 @@ internal object Traceparent {
         if (traceId.all { it == '0' } || spanId.all { it == '0' }) {
             return null
         }
-        return traceId to spanId
+        return TraceContext(traceId, spanId)
     }
 }
+
+/**
+ * The parsed content of an outbound `traceparent`: the trace id and the span id - the parent-id field
+ * of the header, i.e. the local client span of this call (see [Traceparent]).
+ */
+internal data class TraceContext(
+    val traceId: String,
+    val spanId: String,
+)

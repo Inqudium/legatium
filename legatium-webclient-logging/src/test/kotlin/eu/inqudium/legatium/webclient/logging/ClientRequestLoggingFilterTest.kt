@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test
 import org.reactivestreams.Subscription
 import org.slf4j.MDC
 import org.springframework.core.io.buffer.DataBuffer
-import org.springframework.core.io.buffer.DefaultDataBufferFactory
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.web.reactive.function.client.ClientResponse
@@ -33,6 +32,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Core behavior of [ClientRequestLoggingFilter]: the exchange line (IDENTICAL in format to the
@@ -57,25 +57,12 @@ class ClientRequestLoggingFilterTest {
             meterRegistry,
         )
 
-    private lateinit var log: CapturedLogger
-
-    @BeforeEach
-    fun setUp() {
-        log = CapturedLogger(properties.loggerName)
-    }
+    private val log = CapturedLogger(properties.loggerName)
 
     @AfterEach
     fun tearDown() {
         log.detach()
     }
-
-    private fun filterWith(properties: ClientLoggingProperties) = ClientRequestLoggingFilter(properties, { ticker.get() }, { "generated-42" }, SimpleMeterRegistry())
-
-    /** Runs the call the way `retrieve().bodyToMono(String)` does: exchange, then consume the body. */
-    private fun ClientRequestLoggingFilter.call(
-        request: org.springframework.web.reactive.function.client.ClientRequest,
-        next: ExchangeFunction,
-    ): String? = filter(request, next).flatMap { it.bodyToMono(String::class.java) }.block()
 
     @Nested
     inner class `The exchange line` {
@@ -203,10 +190,10 @@ class ClientRequestLoggingFilterTest {
             //   contains a line break.
             // Why it matters: a URL assembled from untrusted input could otherwise forge complete
             //   exchange lines in every plain-text appender.
-            // Given
+            // Given/When
             filter.call(request(uri = "https://api.example.com/th%0Aings?x=%0D%0Ay"), answering())
 
-            // When/Then
+            // Then
             val event = log.events.single()
             assertThat(event.formattedMessage)
                 .isEqualTo("Adapter http exchange GET https://api.example.com/th%0Aings -> 200 [adapter_request_id=generated-42]")
@@ -253,18 +240,13 @@ class ClientRequestLoggingFilterTest {
             // Why it matters: the peer's inbound line and this outbound line join on that id; a
             //   generated id that stayed local would leave the call unjoinable on the other side.
             // Given: a next function recording the request it receives
-            var sent: org.springframework.web.reactive.function.client.ClientRequest? = null
-            val next =
-                ExchangeFunction { req ->
-                    sent = req
-                    answering().exchange(req)
-                }
+            val next = RecordingExchange()
 
             // When
             filter.call(request(), next)
 
             // Then: the connector got the header, the event the same id
-            assertThat(requireNotNull(sent).headers().getFirst(properties.correlationIdHeader)).isEqualTo("generated-42")
+            assertThat(requireNotNull(next.sent).headers().getFirst(properties.correlationIdHeader)).isEqualTo("generated-42")
             assertThat(log.events.single().mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42")
         }
 
@@ -278,20 +260,14 @@ class ClientRequestLoggingFilterTest {
             // Why it matters: a caller that propagates its own id must see it unchanged on the
             //   wire, and the rebuild must be skipped when there is nothing to add.
             // Given
-            var sent: org.springframework.web.reactive.function.client.ClientRequest? = null
+            val next = RecordingExchange()
             val original = request { header(properties.correlationIdHeader, "caller-id") }
 
             // When
-            filter.call(
-                original,
-                ExchangeFunction { req ->
-                    sent = req
-                    answering().exchange(req)
-                },
-            )
+            filter.call(original, next)
 
             // Then: the very same request object went to the connector
-            assertThat(sent).isSameAs(original)
+            assertThat(next.sent).isSameAs(original)
             assertThat(log.events.single().formattedMessage).contains("[adapter_request_id=caller-id]")
         }
 
@@ -302,7 +278,7 @@ class ClientRequestLoggingFilterTest {
             //   request untouched although it carried a correlation header too.
             // Why it matters: observational neutrality on a traced call.
             // Given
-            var sent: org.springframework.web.reactive.function.client.ClientRequest? = null
+            val next = RecordingExchange()
             val original =
                 request {
                     header("traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
@@ -310,16 +286,10 @@ class ClientRequestLoggingFilterTest {
                 }
 
             // When
-            filter.call(
-                original,
-                ExchangeFunction { req ->
-                    sent = req
-                    answering().exchange(req)
-                },
-            )
+            filter.call(original, next)
 
             // Then
-            assertThat(sent).isSameAs(original)
+            assertThat(next.sent).isSameAs(original)
             val event = log.events.single()
             assertThat(event.mdcPropertyMap)
                 .containsEntry(MdcKeys.REQUEST_ID, "0af7651916cd43dd8448eb211c80319c")
@@ -338,20 +308,14 @@ class ClientRequestLoggingFilterTest {
             // Why it matters: an invalid traceparent must not become the request id - the W3C rule
             //   forbids the value and a downstream join on it would be meaningless.
             // Given: an all-zero (forbidden) trace id
-            var sent: org.springframework.web.reactive.function.client.ClientRequest? = null
+            val next = RecordingExchange()
             val original = request { header("traceparent", "00-00000000000000000000000000000000-b7ad6b7169203331-01") }
 
             // When
-            filter.call(
-                original,
-                ExchangeFunction { req ->
-                    sent = req
-                    answering().exchange(req)
-                },
-            )
+            filter.call(original, next)
 
             // Then
-            assertThat(requireNotNull(sent).headers().getFirst(properties.correlationIdHeader)).isEqualTo("generated-42")
+            assertThat(requireNotNull(next.sent).headers().getFirst(properties.correlationIdHeader)).isEqualTo("generated-42")
             assertThat(log.events.single().mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42").doesNotContainKey("traceId")
         }
     }
@@ -444,7 +408,7 @@ class ClientRequestLoggingFilterTest {
             //   cancelled flags healthy calls at WARN.
             // Given: a measuring filter and a response whose body never ends
             val registry = SimpleMeterRegistry()
-            val measuring = ClientRequestLoggingFilter(properties.copy(measureResponseBodySize = true), { ticker.get() }, { "generated-42" }, registry)
+            val measuring = filterWith(properties.copy(measureResponseBodySize = true), ticker, registry)
             val endless = ClientResponse.create(HttpStatus.OK).body(Flux.concat(Mono.just(buffer("partial")), Flux.never())).build()
             val response = requireNotNull(measuring.filter(request(), ExchangeFunction { Mono.just(endless) }).block())
 
@@ -559,7 +523,7 @@ class ClientRequestLoggingFilterTest {
             // Why it matters: a toMillis truncation would turn the 1.5 ms threshold into 1 ms and
             //   flag calls the operator explicitly configured as fast enough.
             // Given
-            val precise = filterWith(properties.copy(slowRequestThreshold = Duration.ofNanos(1_500_000)))
+            val precise = filterWith(properties.copy(slowRequestThreshold = Duration.ofNanos(1_500_000)), ticker)
 
             fun slowFlagAfter(elapsedNanos: Long): Boolean {
                 log.appender.list.clear()
@@ -601,21 +565,15 @@ class ClientRequestLoggingFilterTest {
             // Why it matters: a metrics push or health probe target must cost nothing - no rebuild,
             //   no correlation header, no line.
             // Given
-            val excluding = filterWith(properties.copy(excludeHosts = listOf("PushGateway.monitoring.svc")))
-            var sent: org.springframework.web.reactive.function.client.ClientRequest? = null
+            val excluding = filterWith(properties.copy(excludeHosts = listOf("PushGateway.monitoring.svc")), ticker)
+            val next = RecordingExchange()
             val original = request(uri = "http://pushgateway.monitoring.svc:9091/metrics/job/x")
 
             // When
-            excluding.call(
-                original,
-                ExchangeFunction { req ->
-                    sent = req
-                    answering().exchange(req)
-                },
-            )
+            excluding.call(original, next)
 
             // Then: passed untouched, nothing logged
-            assertThat(sent).isSameAs(original)
+            assertThat(next.sent).isSameAs(original)
             assertThat(log.events).isEmpty()
         }
 
@@ -628,7 +586,7 @@ class ClientRequestLoggingFilterTest {
             //   must win over it, or a noisy internal endpoint could not be silenced inside an
             //   included tree.
             // Given
-            val scoped = filterWith(properties.copy(includePathPatterns = listOf("/api/**"), excludePathPrefixes = listOf("/api/internal")))
+            val scoped = filterWith(properties.copy(includePathPatterns = listOf("/api/**"), excludePathPrefixes = listOf("/api/internal")), ticker)
 
             // When
             scoped.call(request(uri = "https://h/api/things"), answering())
@@ -651,7 +609,7 @@ class ClientRequestLoggingFilterTest {
             //   nor be denied an include; the logged path stays the raw one that went over the
             //   wire.
             // Given
-            val scoped = filterWith(properties.copy(includePathPatterns = listOf("/api/**"), excludePathPrefixes = listOf("/actuator/health")))
+            val scoped = filterWith(properties.copy(includePathPatterns = listOf("/api/**"), excludePathPrefixes = listOf("/actuator/health")), ticker)
 
             // When
             scoped.call(request(uri = "https://h/%61pi/things"), answering())
@@ -672,11 +630,10 @@ class ClientRequestLoggingFilterTest {
             //   start, not throw per call inside the fail-open path and silently degrade every
             //   exchange.
             // Given/When
-            val thrown = catchThrowable { filterWith(properties.copy(includePathPatterns = listOf("/api/{unclosed"))) }
+            val thrown = catchThrowable { filterWith(properties.copy(includePathPatterns = listOf("/api/{unclosed")), ticker) }
 
             // Then
-            assertThat(thrown).isInstanceOf(PatternParseException::class.java)
-            assertThat((thrown as PatternParseException).toDetailedString()).contains("/api/{unclosed")
+            assertThat(thrown).isInstanceOfSatisfying(PatternParseException::class.java) { assertThat(it.toDetailedString()).contains("/api/{unclosed") }
         }
 
         @Test
@@ -689,7 +646,7 @@ class ClientRequestLoggingFilterTest {
             // Why it matters: the arrival line is what shows a call that never returns; it must
             //   carry the same id as the completion line to be joined with it.
             // Given
-            val startLogging = filterWith(properties.copy(logRequestStart = true))
+            val startLogging = filterWith(properties.copy(logRequestStart = true), ticker)
             var eventsAtCallTime = listOf<String>()
             val next =
                 ExchangeFunction { req ->
@@ -710,12 +667,10 @@ class ClientRequestLoggingFilterTest {
         }
     }
 
-    private fun buffer(text: String): DataBuffer = DefaultDataBufferFactory.sharedInstance.wrap(text.toByteArray())
-
     @Nested
     inner class `The caller's context` {
         private val key = "endpoint_request_id"
-        private lateinit var accessor: MdcAccessorGuard
+        private val accessor = MdcAccessorGuard(key)
 
         // The body completes on another thread here, and the emission runs there AFTER the terminal
         // signal reached the blocking caller: the events are awaited, not read, and the appender pins
@@ -723,8 +678,7 @@ class ClientRequestLoggingFilterTest {
         private val awaiting = AwaitingAppender().apply { start() }
 
         @BeforeEach
-        fun registerAccessor() {
-            accessor = MdcAccessorGuard(key)
+        fun attachAwaiting() {
             MDC.remove(key)
             log.logger.addAppender(awaiting)
         }
@@ -757,9 +711,7 @@ class ClientRequestLoggingFilterTest {
             //   logged on a bounded-elastic thread, and the caller's thread carries no such key afterwards.
             // Why it matters: the completing thread never ran the inbound request; without the
             //   restoration the client line and the server line cannot be joined on the reactive stack.
-            // Given: no such key on the caller's thread, the key in the subscriber's context
-            assertThat(MDC.get(key)).isNull()
-
+            // Given: no such key on the caller's thread (the fixture removed it), the key in the subscriber's context
             // When
             filter
                 .filter(request(), answeringElsewhere())
@@ -783,7 +735,7 @@ class ClientRequestLoggingFilterTest {
             // Why it matters: the two lines of one exchange are joined by the request id; an ambient
             //   key on one and not the other would make the pair read like two different callers.
             // Given
-            val startLogging = filterWith(properties.copy(logRequestStart = true))
+            val startLogging = filterWith(properties.copy(logRequestStart = true), ticker)
 
             // When
             startLogging
@@ -959,26 +911,35 @@ class ClientRequestLoggingFilterTest {
             // Why it matters: with the state set to RESPONDED before the handover, this cancel was
             //   ignored as "the body owns it" and the exchange stayed open forever: no event, the gauge
             //   one too high for the life of the process.
-            // Given: a subscriber that holds the delivery until the caller has cancelled
+            // Given: a subscriber that holds the delivery until the caller has cancelled; the worker is a
+            //   daemon whose uncaught failure is collected, so a hang or a check() that fires inside
+            //   Reactor's onNext neither keeps the forked JVM alive nor hides behind the event assertion
             val delivering = CountDownLatch(1)
             val cancelled = CountDownLatch(1)
             val subscriber =
                 object : BaseSubscriber<ClientResponse>() {
                     override fun hookOnNext(value: ClientResponse) {
                         delivering.countDown()
-                        check(cancelled.await(5, TimeUnit.SECONDS)) { "the cancel never arrived" }
+                        check(cancelled.await(AWAIT.toMillis(), TimeUnit.MILLISECONDS)) { "the cancel never arrived" }
                     }
                 }
-            val worker = Thread { filter.filter(request(), answering(body = "payload")).subscribe(subscriber) }
+            val workerFailure = AtomicReference<Throwable>()
+            val worker =
+                Thread { filter.filter(request(), answering(body = "payload")).subscribe(subscriber) }.apply {
+                    isDaemon = true
+                    setUncaughtExceptionHandler { _, t -> workerFailure.set(t) }
+                }
             worker.start()
-            check(delivering.await(5, TimeUnit.SECONDS)) { "the response was never delivered" }
+            check(delivering.await(AWAIT.toMillis(), TimeUnit.MILLISECONDS)) { "the response was never delivered" }
 
             // When: the caller cancels from its own thread, mid-delivery, and the delivery then returns
             subscriber.cancel()
             cancelled.countDown()
-            worker.join(5_000)
+            worker.join(AWAIT)
 
-            // Then
+            // Then: the worker finished cleanly, and the exchange ended as cancelled
+            assertThat(worker.isAlive).describedAs("the delivering worker never returned").isFalse()
+            assertThat(workerFailure.get()).describedAs("uncaught failure on the delivering worker").isNull()
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.WARN)
             assertThat(keyValues(event)).containsEntry("adapter_outcome", "cancelled").containsEntry("adapter_response_status_code", 200)
@@ -992,20 +953,14 @@ class ClientRequestLoggingFilterTest {
             //   event carries the generated id and no trace of the forged one.
             // Why it matters: the value lands verbatim in the message and the MDC.
             // Given
-            var sent: org.springframework.web.reactive.function.client.ClientRequest? = null
+            val next = RecordingExchange()
             val forged = request { header("X-Correlation-Id", "abc\r\nforged=line") }
 
             // When
-            filter.call(
-                forged,
-                ExchangeFunction { req ->
-                    sent = req
-                    answering().exchange(req)
-                },
-            )
+            filter.call(forged, next)
 
             // Then
-            val outgoing = requireNotNull(sent)
+            val outgoing = requireNotNull(next.sent)
             assertThat(outgoing.headers().getFirst("X-Correlation-Id")).isEqualTo("generated-42")
             assertThat(outgoing.headers()["X-Correlation-Id"]).containsExactly("generated-42")
             val event = log.events.single()

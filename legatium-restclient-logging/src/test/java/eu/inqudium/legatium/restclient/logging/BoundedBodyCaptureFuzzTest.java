@@ -4,6 +4,7 @@ import com.code_intelligence.jazzer.api.FuzzedDataProvider;
 import com.code_intelligence.jazzer.junit.FuzzTest;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 /**
  * Fuzzes the bounded tee target both twins rest on (the blocking variant; the
@@ -20,9 +21,8 @@ import java.nio.charset.StandardCharsets;
  * build; the scheduled Fuzz workflow explores for real (JAZZER_FUZZ=1).
  */
 class BoundedBodyCaptureFuzzTest {
-    private static final Charset[] CHARSETS = {
-        StandardCharsets.UTF_8, StandardCharsets.ISO_8859_1, StandardCharsets.UTF_16, StandardCharsets.US_ASCII,
-    };
+    private static final List<Charset> CHARSETS =
+            List.of(StandardCharsets.UTF_8, StandardCharsets.ISO_8859_1, StandardCharsets.UTF_16, StandardCharsets.US_ASCII);
 
     @FuzzTest(maxDuration = "10m")
     void capture_upholds_its_contract(FuzzedDataProvider data) {

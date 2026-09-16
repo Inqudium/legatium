@@ -129,8 +129,9 @@ class LegacyThingsAdapter(builder: RestTemplateBuilder) { // Boot's RestTemplate
 ```
 
 The customizers are ordered late (`Ordered.LOWEST_PRECEDENCE - 10`), so the interceptor runs inside the
-interceptors of earlier customizers, closest to the wire: an authentication interceptor has already
-added its header, a retrying interceptor invokes it once per attempt
+interceptors of customizers ordered before that, closest to the wire: an authentication interceptor has
+already added its header, a retrying interceptor invokes it once per attempt. A host customizer
+**without** an `@Order` is applied after the module's, and its interceptor runs inside the logging
 ([§3.3](docs/GUIDE.md#33-interceptor-order-and-other-interceptors)).
 
 ### Manual wiring

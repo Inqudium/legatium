@@ -178,9 +178,9 @@ class BoundedBodyCaptureTest {
             //   regression to PARTIAL would report fully consumed bodies as discarded payload.
             // Given: a fresh capture
             val capture = BoundedBodyCapture(8)
-            assertThat(capture.readState).isEqualTo(BodyReadState.UNREAD)
 
-            // When/Then: start -> partial, completion -> complete, a later start does not regress
+            // When/Then: unread before any mark; start -> partial, completion -> complete, a later start does not regress
+            assertThat(capture.readState).isEqualTo(BodyReadState.UNREAD)
             capture.markStarted()
             assertThat(capture.readState).isEqualTo(BodyReadState.PARTIAL)
             capture.markCompleted()

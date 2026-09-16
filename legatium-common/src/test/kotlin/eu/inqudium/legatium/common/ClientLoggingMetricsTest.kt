@@ -27,6 +27,30 @@ class ClientLoggingMetricsTest {
         name: String,
     ): Collection<Counter> = registry.get(name).counters()
 
+    /** A host registry whose counters under [breakingMeters] register fine but throw on every increment. */
+    private fun registryWithBreakingCounters(vararg breakingMeters: String): MeterRegistry =
+        object : SimpleMeterRegistry() {
+            override fun newCounter(id: Meter.Id): Counter {
+                val real = super.newCounter(id)
+                if (id.name !in breakingMeters) return real
+                return object : Counter by real {
+                    override fun increment(amount: Double) = error("counter broke")
+                }
+            }
+        }
+
+    /** The response-read count under the one template and host the test records against. */
+    private fun responseReadCount(
+        registry: MeterRegistry,
+        name: String,
+        state: String,
+    ): Double =
+        registry
+            .get(ClientLoggingMetrics.RESPONSE_BODY_READ_METER)
+            .tags("uri", "https://api.example.com/things/{id}", "host", "api.example.com", "name", name, "state", state)
+            .counter()
+            .count()
+
     @ParameterizedTest
     @EnumSource(ClientStack::class)
     internal fun `should pre-register every fixed-tag meter at zero for the stack`(stack: ClientStack) {
@@ -51,7 +75,7 @@ class ClientLoggingMetricsTest {
         assertThat(
             registry
                 .get(ClientLoggingMetrics.OPEN_EXCHANGES_METER)
-                .tag(ClientLoggingMetrics.CLIENT_TAG, stack.tag)
+                .tag(ClientLoggingMetrics.CLIENT_TAG, stack.tagValue)
                 .gauge()
                 .value(),
         ).isZero()
@@ -149,7 +173,7 @@ class ClientLoggingMetricsTest {
         val hostState = AtomicLong(7)
         Gauge
             .builder(ClientLoggingMetrics.OPEN_EXCHANGES_METER, hostState) { it.get().toDouble() }
-            .tag(ClientLoggingMetrics.CLIENT_TAG, ClientStack.WEBCLIENT.tag)
+            .tag(ClientLoggingMetrics.CLIENT_TAG, ClientStack.WEBCLIENT.tagValue)
             .register(host)
         val metricsLog = CapturedLogger(ClientLoggingMetrics::class.java.name)
         try {
@@ -159,7 +183,7 @@ class ClientLoggingMetricsTest {
             val hostGaugeWhileOpen =
                 host
                     .get(ClientLoggingMetrics.OPEN_EXCHANGES_METER)
-                    .tag(ClientLoggingMetrics.CLIENT_TAG, ClientStack.WEBCLIENT.tag)
+                    .tag(ClientLoggingMetrics.CLIENT_TAG, ClientStack.WEBCLIENT.tagValue)
                     .gauge()
                     .value()
             metrics.exchangeCompleted()
@@ -184,16 +208,7 @@ class ClientLoggingMetricsTest {
         // Why it matters: a bookkeeping failure in a host meter must degrade to a lost count, never
         //   surface in the entry point and turn the call into an unlogged pass-through.
         // Given: a registry whose correlation and events counters throw on increment
-        val hostile: MeterRegistry =
-            object : SimpleMeterRegistry() {
-                override fun newCounter(id: Meter.Id): Counter {
-                    val real = super.newCounter(id)
-                    if (id.name != ClientLoggingMetrics.CORRELATION_METER && id.name != ClientLoggingMetrics.EVENTS_METER) return real
-                    return object : Counter by real {
-                        override fun increment(amount: Double) = throw IllegalStateException("counter broke")
-                    }
-                }
-            }
+        val hostile = registryWithBreakingCounters(ClientLoggingMetrics.CORRELATION_METER, ClientLoggingMetrics.EVENTS_METER)
         val metrics = ClientLoggingMetrics.forRegistry(hostile, ClientStack.RESTCLIENT)
 
         // When
@@ -212,6 +227,37 @@ class ClientLoggingMetricsTest {
                 .counter()
                 .count(),
         ).isEqualTo(2.0)
+    }
+
+    @Test
+    fun `should warn once per meter for a permanently throwing host counter and keep counting every failure`() {
+        // What is tested: the warning throttle in updateQuietly - a host counter that throws on EVERY
+        //   increment is hit twice per exchange (request-id origin and events).
+        // Success criteria: after three exchanges' worth of updates the fail-open counter shows
+        //   stage=wiring at 6, but the module logger carries exactly ONE warning for the meter.
+        // Why it matters: a warning per hit would flood the internal logger proportionally to the
+        //   traffic and drown the curated one-time warnings; the counter is the measure of the loss.
+        // Given: a registry whose correlation counter always throws, and the module logger captured
+        val hostile = registryWithBreakingCounters(ClientLoggingMetrics.CORRELATION_METER)
+        val moduleLog = CapturedLogger(ClientLoggingMetrics::class.java.name)
+        try {
+            val metrics = ClientLoggingMetrics.forRegistry(hostile, ClientStack.WEBCLIENT)
+
+            // When
+            repeat(6) { metrics.requestId(RequestIdSource.TRACE) }
+
+            // Then
+            assertThat(
+                hostile
+                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
+                    .tags("stage", "wiring")
+                    .counter()
+                    .count(),
+            ).isEqualTo(6.0)
+            assertThat(moduleLog.events.filter { it.level == Level.WARN && it.formattedMessage.contains("could not be updated") }).hasSize(1)
+        } finally {
+            moduleLog.detach()
+        }
     }
 
     @Test
@@ -283,17 +329,9 @@ class ClientLoggingMetricsTest {
         metrics.responseBodyRead("https://api.example.com/things/{id}", "api.example.com", null, BodyReadState.COMPLETE)
 
         // Then
-        fun read(
-            name: String,
-            state: String,
-        ) = registry
-            .get(ClientLoggingMetrics.RESPONSE_BODY_READ_METER)
-            .tags("uri", "https://api.example.com/things/{id}", "host", "api.example.com", "name", name, "state", state)
-            .counter()
-            .count()
-        assertThat(read("things", "unread")).isEqualTo(2.0)
-        assertThat(read("things", "complete")).isEqualTo(1.0)
-        assertThat(read(ClientLoggingMetrics.UNNAMED_ADAPTER, "complete")).isEqualTo(1.0)
+        assertThat(responseReadCount(registry, "things", "unread")).isEqualTo(2.0)
+        assertThat(responseReadCount(registry, "things", "complete")).isEqualTo(1.0)
+        assertThat(responseReadCount(registry, ClientLoggingMetrics.UNNAMED_ADAPTER, "complete")).isEqualTo(1.0)
         assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "partial").counter()).isNull()
     }
 

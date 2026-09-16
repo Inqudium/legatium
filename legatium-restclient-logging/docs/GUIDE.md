@@ -271,7 +271,11 @@ body read only partially is captured to exactly that extent, and the `[truncated
 counts what flowed, not `Content-Length`. This is the deliberate trade-off against a replaying buffer —
 the log tells the truth about what the application processed, and streaming stays untouched. Because of
 that, the log cannot tell a body the peer sent but the application dropped from one that was never sent;
-the counter `adapter.response.body.read` ([Common guide §7.4](../../docs/GUIDE.md#74-meters)) exists for exactly that distinction.
+the counter `adapter.response.body.read` ([Common guide §7.4](../../docs/GUIDE.md#74-meters)) exists for exactly that distinction: such a
+never-opened body counts `unread`, a body read to its EOF or to its declared `Content-Length` counts
+`complete`, and an answer that carries no body by the protocol (a 1xx, 204 or 304, a `Content-Length: 0`) —
+which `RestClient` and `RestTemplate` never open — counts `complete` at handover, so a route of deletes
+and updates does not read as discarded payload.
 
 ### 2.6 MDC coverage
 
@@ -505,8 +509,8 @@ automatic wiring — the interceptor does not know how it got onto the chain.
 ### 3.3 Interceptor order and other interceptors
 
 The customizers are ordered at `Ordered.LOWEST_PRECEDENCE - 10`, so the interceptor is appended **behind**
-the interceptors of earlier customizers and of the builder's own configuration, and runs **inside** them —
-closest to the wire:
+the interceptors of customizers ordered before that value and of the builder's own configuration, and
+runs **inside** them — closest to the wire:
 
 - an authentication interceptor outside it has already added its header, so the logged (and masked)
   request headers are what the peer receives;
@@ -514,6 +518,15 @@ closest to the wire:
   crossing ([§4.7](#47-retries-yield-one-line-per-attempt));
 - interceptors a host adds **after** the customizers ran (directly on a builder it obtained from Boot)
   run inside this one and are outside that guarantee — they see the request after this interceptor did.
+
+**"Earlier" means ordered earlier.** A `RestClientCustomizer` or `RestTemplateCustomizer` bean
+**without** an `@Order` sits at `Ordered.LOWEST_PRECEDENCE` — *after* the module's `LOWEST_PRECEDENCE - 10`
+— and is applied later: its interceptor is appended behind the logging interceptor and runs inside it.
+An authentication header added there is not on the logged line, and a retry performed there is one line
+spanning all attempts. To have the module observe a host interceptor, order its customizer before the
+module's, `@Order(0)` being the usual choice; the auto-configuration test pins both positions. The room
+below the module's order is deliberate: a customizer that must see the fully configured interceptor
+list (a diagnostics wrapper) has it.
 
 The `traceparent` header is not affected by the order at all: the client observation Boot registers
 injects it into the request **before** any interceptor runs ([Common guide §7.6](../../docs/GUIDE.md#76-trace-correlation)).

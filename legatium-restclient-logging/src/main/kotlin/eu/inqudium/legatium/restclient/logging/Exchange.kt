@@ -68,8 +68,8 @@ internal class Exchange(
 
     /**
      * The REAL response the wire call produced. Null when the call produced no response. Status and
-     * headers are SNAPSHOTTED at handover ([responseStatus], [responseHeaders]) - they are final there,
-     * and the emission runs after the client closed the response, when an engine need not answer.
+     * headers are READ at handover ([responseStatus], [responseHeaders]) - they are final there, and
+     * the emission runs after the client closed the response, when an engine need not answer.
      */
     @Volatile
     var response: ClientHttpResponse? = null
@@ -78,7 +78,11 @@ internal class Exchange(
     @Volatile
     var responseStatus: Int? = null
 
-    /** The response headers read at handover; null when the call produced no response or the engine could not say. */
+    /**
+     * The response's own header object, obtained at handover - a live view for engines that expose one
+     * (Jetty's `HttpFields`), final in content once the status line arrived; null when the call produced
+     * no response or the engine could not say.
+     */
     @Volatile
     var responseHeaders: HttpHeaders? = null
 }

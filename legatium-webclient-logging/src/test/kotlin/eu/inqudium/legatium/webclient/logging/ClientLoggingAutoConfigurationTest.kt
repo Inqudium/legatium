@@ -16,6 +16,7 @@ import org.springframework.boot.webclient.WebClientCustomizer
 import org.springframework.boot.webclient.autoconfigure.WebClientAutoConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.core.annotation.Order
 import org.springframework.web.reactive.function.client.ExchangeFilterFunction
 import org.springframework.web.reactive.function.client.WebClient
 
@@ -28,6 +29,9 @@ class ClientLoggingAutoConfigurationTest {
     private val contextRunner =
         ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(ClientLoggingAutoConfiguration::class.java, WebClientAutoConfiguration::class.java))
+
+    /** The filters [builder] holds, in order - `filters` hands its list to the callback synchronously. */
+    private fun filtersOf(builder: WebClient.Builder): List<ExchangeFilterFunction> = buildList { builder.filters { addAll(it) } }
 
     @Test
     fun `should register the filter, the defaults and the customizer`() {
@@ -57,12 +61,32 @@ class ClientLoggingAutoConfigurationTest {
         // Given/When
         contextRunner.run { context ->
             val filter = context.getBean(ClientRequestLoggingFilter::class.java)
-            var filters: List<ExchangeFilterFunction> = emptyList()
-            context.getBean(WebClient.Builder::class.java).filters { filters = it.toList() }
+            val filters = filtersOf(context.getBean(WebClient.Builder::class.java))
 
             // Then
             assertThat(filters).isNotEmpty()
             assertThat(filters.last()).isSameAs(filter)
+        }
+    }
+
+    @Test
+    fun `should run inside the filters of customizers ordered before it and outside those of unordered ones`() {
+        // What is tested: the customizer order LOWEST_PRECEDENCE - 10 against competing host
+        //   customizers - one ordered earlier (@Order(0)) and one WITHOUT an order, which Spring
+        //   treats as LOWEST_PRECEDENCE and therefore applies AFTER the module's.
+        // Success criteria: the builder's filter list reads [earlier host filter, module filter,
+        //   unordered host filter].
+        // Why it matters: "inside the filters of earlier customizers" is exactly this - an unordered
+        //   host customizer is NOT earlier, its filter runs inside the logging and its header or retry
+        //   is invisible to the line; the guide documents the rule, this pins it, and a dropped @Order
+        //   on the module's customizer would fail here instead of staying green on a filter list of one.
+        // Given/When
+        contextRunner.withUserConfiguration(CompetingCustomizersConfig::class.java).run { context ->
+            val filter = context.getBean(ClientRequestLoggingFilter::class.java)
+            val filters = filtersOf(context.getBean(WebClient.Builder::class.java))
+
+            // Then
+            assertThat(filters).containsExactly(CompetingCustomizersConfig.EARLIER, filter, CompetingCustomizersConfig.UNORDERED)
         }
     }
 
@@ -82,7 +106,7 @@ class ClientLoggingAutoConfigurationTest {
 
     @Test
     fun `should back off entirely when disabled by the property`() {
-        // What is tested: the class-level @ConditionalOnProperty on `adapter-logging.enabled`.
+        // What is tested: the class-level @ConditionalOnBooleanProperty on `adapter-logging.enabled`.
         // Success criteria: with the property false neither the filter, the defaults, the bound
         //   properties nor the customizer exist.
         // Why it matters: the switch-off must leave no trace - a lingering customizer would still
@@ -137,9 +161,7 @@ class ClientLoggingAutoConfigurationTest {
             // Then
             assertThat(context).hasSingleBean(ClientRequestLoggingFilter::class.java)
             assertThat(context.getBean(ClientRequestLoggingFilter::class.java)).isSameAs(context.getBean("hostFilter"))
-            var filters: List<ExchangeFilterFunction> = emptyList()
-            context.getBean(WebClient.Builder::class.java).filters { filters = it.toList() }
-            assertThat(filters.last()).isSameAs(context.getBean("hostFilter"))
+            assertThat(filtersOf(context.getBean(WebClient.Builder::class.java)).last()).isSameAs(context.getBean("hostFilter"))
             val registry = context.getBean(MeterRegistry::class.java)
             assertThat(registry.find(ClientLoggingMetrics.FAIL_OPEN_METER).counters()).hasSize(3)
             // And: the host's masker backed the default off
@@ -233,6 +255,22 @@ private class HostConfig {
         properties: ClientLoggingProperties,
         registry: MeterRegistry,
     ): ClientRequestLoggingFilter = ClientRequestLoggingFilter(properties, NanoTimeSource.SYSTEM, CorrelationIdGenerator.DEFAULT, registry)
+}
+
+/** Two host customizers: one ordered before the module's, one without an order (= LOWEST_PRECEDENCE). */
+@Configuration(proxyBeanMethods = false)
+private class CompetingCustomizersConfig {
+    @Bean
+    @Order(0)
+    fun earlierWebClientCustomizer(): WebClientCustomizer = WebClientCustomizer { it.filter(EARLIER) }
+
+    @Bean
+    fun unorderedWebClientCustomizer(): WebClientCustomizer = WebClientCustomizer { it.filter(UNORDERED) }
+
+    companion object {
+        val EARLIER = ExchangeFilterFunction { request, next -> next.exchange(request) }
+        val UNORDERED = ExchangeFilterFunction { request, next -> next.exchange(request) }
+    }
 }
 
 @Configuration(proxyBeanMethods = false)

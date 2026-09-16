@@ -7,6 +7,7 @@ import ch.qos.logback.classic.turbo.TurboFilter
 import ch.qos.logback.core.spi.FilterReply
 import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
+import eu.inqudium.legatium.common.ClientStack
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.NanoTimeSource
 import io.micrometer.core.instrument.Counter
@@ -16,15 +17,18 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
 import org.slf4j.Marker
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
-import org.springframework.web.reactive.function.client.ClientRequest
+import org.springframework.mock.http.client.reactive.MockClientHttpRequest
+import org.springframework.web.reactive.function.BodyInserters
+import org.springframework.web.reactive.function.client.ClientResponse
 import org.springframework.web.reactive.function.client.ExchangeFunction
+import org.springframework.web.reactive.function.client.ExchangeStrategies
+import reactor.core.Exceptions
 import reactor.core.publisher.Mono
 import reactor.test.StepVerifier
 import java.io.IOException
@@ -43,13 +47,11 @@ class ClientRequestLoggingMetricsTest {
     private val ticker = AtomicLong(0)
     private val registry = SimpleMeterRegistry()
     private val properties = ClientLoggingProperties(loggerName = "adapter-http-exchange-reactive-metrics-test")
-    private val filter = ClientRequestLoggingFilter(properties, { ticker.get() }, { "generated-42" }, registry)
-    private lateinit var log: CapturedLogger
+    private val filter = filterWith(properties, ticker, registry)
+    private val log = CapturedLogger(properties.loggerName)
 
-    @BeforeEach
-    fun setUp() {
-        log = CapturedLogger(properties.loggerName)
-    }
+    /** The tag values of this stack's outcome vocabulary, pinned by `TwinContractTest`. */
+    private val outcomes = ClientStack.WEBCLIENT.outcomes.map { it.tagValue }
 
     @AfterEach
     fun tearDown() {
@@ -68,11 +70,6 @@ class ClientRequestLoggingMetricsTest {
 
     private fun gauge(): Double = registry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()
 
-    private fun ClientRequestLoggingFilter.call(
-        request: ClientRequest,
-        next: ExchangeFunction,
-    ): String? = filter(request, next).flatMap { it.bodyToMono(String::class.java) }.block()
-
     @Nested
     inner class `Counters and gauge` {
         @Test
@@ -84,9 +81,9 @@ class ClientRequestLoggingMetricsTest {
             //   moves its side.
             // Why it matters: a rate() alert must see the zero before the first occurrence; the client
             //   tag is what keeps this twin's gauge apart from the blocking twin's in one host.
-            // Given
-            listOf("success", "failure", "timeout", "cancelled").forEach {
-                assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", it)).isZero()
+            // Given/When/Then: before the first call, every outcome and the gauge exist at zero
+            outcomes.forEach {
+                assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", it)).describedAs(it).isZero()
             }
             assertThat(
                 registry
@@ -96,14 +93,12 @@ class ClientRequestLoggingMetricsTest {
                     .value(),
             ).isZero()
 
-            // When
+            // And: one call per outcome moves exactly its side
             filter.call(request(), answering())
             filter.call(request(), answering(status = HttpStatus.BAD_GATEWAY))
             StepVerifier.create(filter.filter(request(), ExchangeFunction { Mono.error(TimeoutException("t")) })).expectError().verify()
             StepVerifier.create(filter.filter(request(), ExchangeFunction { Mono.never() })).thenCancel().verify()
-
-            // Then
-            listOf("success", "failure", "timeout", "cancelled").forEach {
+            outcomes.forEach {
                 assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", it)).describedAs(it).isEqualTo(1.0)
             }
         }
@@ -115,13 +110,15 @@ class ClientRequestLoggingMetricsTest {
             //   0 after; a failed call goes up and down within the signal.
             // Why it matters: a body nobody consumes must stay VISIBLE - the gauge baseline is the only
             //   signal for that silent-loss mode.
-            // Given/When
+            // Given: a delivered response, body untouched
             val response = requireNotNull(filter.filter(request(), answering(body = "x")).block())
+
+            // When/Then: up while the body is unread, down at its terminal signal
             assertThat(gauge()).isEqualTo(1.0)
             response.releaseBody().block()
-
-            // Then
             assertThat(gauge()).isZero()
+
+            // And: a failed call goes up and down within its error signal
             StepVerifier.create(filter.filter(request(), ExchangeFunction { Mono.error(IOException("refused")) })).expectError().verify()
             assertThat(gauge()).isZero()
         }
@@ -155,7 +152,7 @@ class ClientRequestLoggingMetricsTest {
             // Why it matters: a duplicate owner's gauge would be silently dropped by Micrometer and
             //   that filter's open exchanges would become invisible on the liveness signal.
             // Given
-            val second = ClientRequestLoggingFilter(properties, { ticker.get() }, { "generated-43" }, registry)
+            val second = filterWith(properties, ticker, registry, correlationId = "generated-43")
 
             // When/Then
             val response = requireNotNull(second.filter(request(), answering()).block())
@@ -177,36 +174,20 @@ class ClientRequestLoggingMetricsTest {
             // Why it matters: metrics run before the level gate; a size sample that vanished when
             //   the logger is quiet would make the meters depend on log configuration.
             // Given
-            val measuring =
-                ClientRequestLoggingFilter(
-                    properties.copy(measureRequestBodySize = true, measureResponseBodySize = true),
-                    { ticker.get() },
-                    { "generated-42" },
-                    registry,
-                )
+            val measuring = filterWith(properties.copy(measureRequestBodySize = true, measureResponseBodySize = true), ticker, registry)
             log.logger.level = Level.OFF
             val request =
                 request(method = HttpMethod.POST, uri = "https://api.example.com/things/7") {
                     attribute(ClientRequestLoggingFilter.URI_TEMPLATE_ATTRIBUTE, "https://api.example.com/things/{id}")
                     attribute(ClientRequestLoggingFilter.ADAPTER_NAME_ATTRIBUTE, "things")
-                    body(
-                        org.springframework.web.reactive.function.BodyInserters
-                            .fromValue("hello"),
-                    )
+                    body(BodyInserters.fromValue("hello"))
                 }
             val writing =
                 ExchangeFunction { req ->
-                    val connectorRequest =
-                        org.springframework.mock.http.client.reactive
-                            .MockClientHttpRequest(req.method(), req.url())
+                    val connectorRequest = MockClientHttpRequest(req.method(), req.url())
                     req
-                        .writeTo(
-                            connectorRequest,
-                            org.springframework.web.reactive.function.client.ExchangeStrategies
-                                .withDefaults(),
-                        ).then(
-                            answering(body = "world!").exchange(req),
-                        )
+                        .writeTo(connectorRequest, ExchangeStrategies.withDefaults())
+                        .then(answering(body = "world!").exchange(req))
                 }
 
             // When
@@ -233,6 +214,51 @@ class ClientRequestLoggingMetricsTest {
         }
 
         @Test
+        fun `should count a bodiless 204 as complete`() {
+            // What is tested: the read state of an answer that carries no body - the connector hands
+            //   over an empty body flux, the tee subscribes and sees it complete at once.
+            // Success criteria: adapter.response.body.read counts 1 under state=complete for the 204,
+            //   nothing under unread or partial, and no size sample exists (zero bytes).
+            // Why it matters: the twin contract of the state tag - the blocking twin counts the same
+            //   204 complete at handover although its client never opens the body; a route of deletes
+            //   and updates must not read as discarded payload on either stack.
+            // Given
+            val measuring = filterWith(properties.copy(measureResponseBodySize = true), ticker, registry)
+
+            // When
+            measuring.call(request(), ExchangeFunction { Mono.just(ClientResponse.create(HttpStatus.NO_CONTENT).build()) })
+
+            // Then
+            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(1.0)
+            assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "unread").counter()).isNull()
+            assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "partial").counter()).isNull()
+            assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_SIZE_METER).summary()).isNull()
+        }
+
+        @Test
+        fun `should count a body released through toBodilessEntity as complete with its bytes on the size sample`() {
+            // What is tested: the documented reactive observation point for a body the application
+            //   discards through Spring's API - toBodilessEntity() calls releaseBody(), which subscribes
+            //   and drains the body through the tee.
+            // Success criteria: state=complete at 1 and a 7-byte size sample for the released body; no
+            //   unread count.
+            // Why it matters: this is where the twins differ by construction (the blocking twin never
+            //   opens that body and counts unread) and the guide says so; a test pins the reactive side
+            //   of that sentence so a change in Spring's release path is noticed.
+            // Given
+            val measuring = filterWith(properties.copy(measureResponseBodySize = true), ticker, registry)
+
+            // When
+            val entity = measuring.filter(request(), answering(body = "dropped")).flatMap { it.toBodilessEntity() }.block()
+
+            // Then
+            assertThat(requireNotNull(entity).statusCode.value()).isEqualTo(200)
+            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(1.0)
+            assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "unread").counter()).isNull()
+            assertThat(registry.get(ClientLoggingMetrics.RESPONSE_BODY_SIZE_METER).summary().totalAmount()).isEqualTo(7.0)
+        }
+
+        @Test
         fun `should not record a read state when the call produced no response`() {
             // What is tested: the `exchange.response != null` guard around metrics.responseBodyRead
             //   for a connector error before any status line.
@@ -241,7 +267,7 @@ class ClientRequestLoggingMetricsTest {
             // Why it matters: a call that never got an answer has no body to consume; counting it
             //   as `unread` would inflate the discarded-payload share the counter exists to show.
             // Given
-            val measuring = ClientRequestLoggingFilter(properties.copy(measureResponseBodySize = true), { ticker.get() }, { "generated-42" }, registry)
+            val measuring = filterWith(properties.copy(measureResponseBodySize = true), ticker, registry)
 
             // When
             StepVerifier.create(measuring.filter(request(), ExchangeFunction { Mono.error(IOException("refused")) })).expectError().verify()
@@ -262,7 +288,7 @@ class ClientRequestLoggingMetricsTest {
             // Why it matters: a broken host collaborator must cost the log line, never the call -
             //   and the gauge must not be left up by an exchange that was never opened.
             // Given
-            val broken = ClientRequestLoggingFilter(properties, { ticker.get() }, { throw IllegalStateException("no ids") }, registry)
+            val broken = ClientRequestLoggingFilter(properties, NanoTimeSource { ticker.get() }, CorrelationIdGenerator { throw IllegalStateException("no ids") }, registry)
 
             // When
             val body = broken.call(request(), answering(body = "served"))
@@ -330,7 +356,7 @@ class ClientRequestLoggingMetricsTest {
                 }
             context.addTurboFilter(throwing)
             try {
-                val announcing = ClientRequestLoggingFilter(properties.copy(logRequestStart = true), { ticker.get() }, { "generated-42" }, registry)
+                val announcing = filterWith(properties.copy(logRequestStart = true), ticker, registry)
 
                 // When
                 val response = requireNotNull(announcing.filter(request(), answering(body = "served")).block())
@@ -347,12 +373,93 @@ class ClientRequestLoggingMetricsTest {
         }
 
         @Test
-        fun `should confine a terminal-callback failure and still complete the exchange`() {
-            // What is tested: the completion guard - the gauge decrement is a host-registry call made
-            //   inside Reactor's signal propagation.
-            // Success criteria: with a registry whose gauge bookkeeping cannot fail but whose events
-            //   counter throws, the body completes for the caller, the event is emitted, wiring counted.
-            // Why it matters: an escaping exception there would be rethrown into the caller's pipeline.
+        fun `should close the gauge and attempt no event when the arrival line dies with an Error`() {
+            // What is tested: the Throwable boundary around the arrival line - a logging backend that
+            //   dies with an Error (a LinkageError, the likeliest source) while the start line is being
+            //   written, inside the defer, before any operator of this filter exists.
+            // Success criteria: the Error reaches the caller, the open-exchanges gauge is back at zero,
+            //   no event and no arrival-stage count (the Error is outside the fail-open promise), and
+            //   the connector was never called.
+            // Why it matters: before the arrival line moved inside the try, such an Error left the
+            //   exchange open on the gauge forever - a false "bodies are never consumed" alarm from a
+            //   backend failure the module never caused.
+            // Given: a backend whose level check dies for the exchange logger at INFO
+            val context = LoggerFactory.getILoggerFactory() as LoggerContext
+            val exchangeLogger = properties.loggerName
+            val dying =
+                object : TurboFilter() {
+                    override fun decide(
+                        marker: Marker?,
+                        logger: Logger,
+                        level: Level,
+                        format: String?,
+                        params: Array<Any>?,
+                        t: Throwable?,
+                    ): FilterReply {
+                        if (logger.name == exchangeLogger && level == Level.INFO) throw LinkageError("backend died")
+                        return FilterReply.NEUTRAL
+                    }
+                }
+            context.addTurboFilter(dying)
+            try {
+                val announcing = filterWith(properties.copy(logRequestStart = true), ticker, registry)
+                var connectorCalled = false
+
+                // When
+                val thrown =
+                    catchThrowable {
+                        announcing
+                            .filter(
+                                request(),
+                                ExchangeFunction {
+                                    connectorCalled = true
+                                    answering().exchange(it)
+                                },
+                            ).block()
+                    }
+
+                // Then
+                assertThat(Exceptions.unwrap(thrown)).isInstanceOf(LinkageError::class.java)
+                assertThat(connectorCalled).isFalse()
+                assertThat(gauge()).isZero()
+                assertThat(log.events).isEmpty()
+                assertThat(counter(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "arrival")).isZero()
+            } finally {
+                context.turboFilterList.remove(dying)
+            }
+        }
+
+        @Test
+        fun `should close the gauge and attempt no event when the downstream throws an Error while assembling`() {
+            // What is tested: abandonExchange - a downstream filter or connector that THROWS an Error
+            //   (an AssertionError) instead of returning a Mono, inside the defer.
+            // Success criteria: the caller sees an error, the gauge is back at zero, no event, and
+            //   the fail-open counter shows no emission or wiring count for it (an Error is outside the
+            //   fail-open promise; only the bookkeeping is protected).
+            // Why it matters: no operator of this filter exists yet when the assembly throws, so no
+            //   signal hook could ever close the exchange - the catch is the only owner.
+            // Given/When
+            val thrown = catchThrowable { filter.filter(request(), ExchangeFunction { throw AssertionError("assembly broke") }).block() }
+
+            // Then
+            assertThat(Exceptions.unwrap(thrown)).isInstanceOf(AssertionError::class.java)
+            assertThat(gauge()).isZero()
+            assertThat(log.events).isEmpty()
+            assertThat(counter(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "emission")).isZero()
+            assertThat(counter(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isZero()
+        }
+
+        @Test
+        fun `should confine a throwing host events counter inside the terminal callback and still complete the exchange`() {
+            // What is tested: the completion path inside Reactor's signal propagation against a host
+            //   meter that throws - the events counter increment runs in the emitter after the line is
+            //   on the logger and is guarded by ClientLoggingMetrics.updateQuietly (the gauge itself is
+            //   a private counter that cannot throw and has no guard of its own).
+            // Success criteria: with a registry whose events counter throws, the body completes for the
+            //   caller, the event is emitted, and the loss is counted as stage=wiring - not as a lost
+            //   emission.
+            // Why it matters: an escaping exception there would be rethrown into the caller's pipeline,
+            //   and a stage=emission count would claim a line that exists was lost.
             // Given: a registry whose events counter throws on increment
             val hostile: MeterRegistry =
                 object : SimpleMeterRegistry() {
@@ -364,7 +471,7 @@ class ClientRequestLoggingMetricsTest {
                         }
                     }
                 }
-            val onHostile = ClientRequestLoggingFilter(properties, { ticker.get() }, { "generated-42" }, hostile)
+            val onHostile = filterWith(properties, ticker, hostile)
 
             // When
             val thrown = catchThrowable { onHostile.call(request(), answering(body = "served")) }

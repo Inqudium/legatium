@@ -13,16 +13,16 @@ class TraceparentTest {
     fun `should accept every conformant header of the shared fixture with the expected identifiers`() {
         // What is tested: the accepting side of the parser - each valid fixture line yields the trace id
         //   and the parent id it names, including higher versions with extra fields.
-        // Success criteria: the fixture is non-empty and every line parses to its expected pair.
+        // Success criteria: the fixture is non-empty and every line parses to its expected trace context.
         // Why it matters: a rejected valid header drops the call out of the trace and into the
         //   correlation-header path, so its log line no longer joins the tracing infrastructure.
         // Given: the valid lines of the shared fixture
         val cases = TraceparentConformanceFixture.valid()
         assertThat(cases).isNotEmpty()
 
-        // When/Then: each parses to the expected pair
+        // When/Then: each parses to the expected trace context
         cases.forEach { (header, traceId, spanId) ->
-            assertThat(Traceparent.parse(header)).describedAs(header).isEqualTo(traceId to spanId)
+            assertThat(Traceparent.parse(header)).describedAs(header).isEqualTo(TraceContext(traceId, spanId))
         }
     }
 

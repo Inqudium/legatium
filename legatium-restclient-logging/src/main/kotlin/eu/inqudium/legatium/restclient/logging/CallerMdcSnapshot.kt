@@ -1,6 +1,7 @@
 package eu.inqudium.legatium.restclient.logging
 
 import eu.inqudium.legatium.common.MdcKeys
+import eu.inqudium.legatium.common.NoOpScope
 import eu.inqudium.legatium.common.TraceMdcKeys
 import org.slf4j.MDC
 
@@ -34,7 +35,7 @@ internal class CallerMdcSnapshot private constructor(
      */
     fun restore(): AutoCloseable {
         if (entries.isEmpty() || Thread.currentThread() === thread) {
-            return NONE_SCOPE
+            return NoOpScope
         }
         val previous = entries.keys.associateWith { MDC.get(it) }
         try {
@@ -66,8 +67,6 @@ internal class CallerMdcSnapshot private constructor(
 
     companion object {
         private val OWNED_KEYS = setOf(MdcKeys.REQUEST_ID, MdcKeys.REQUEST_METHOD, MdcKeys.ROUTE, TraceMdcKeys.TRACE_ID, TraceMdcKeys.SPAN_ID)
-
-        private val NONE_SCOPE = AutoCloseable {}
 
         /** No snapshot: restores nothing, wherever it is closed. */
         val NONE = CallerMdcSnapshot(null, emptyMap())
