@@ -7,16 +7,10 @@ import java.nio.charset.CodingErrorAction
 import kotlin.math.ceil
 
 /**
- * How far the application consumed a RESPONSE body, as observed by a twin's tee. [UNREAD]: a body the
- * response carried was never read/subscribed to - the bytes the peer sent never reached the application
- * (a response closed without opening its body on the blocking stack). [PARTIAL]: consumption started but
- * the end of the stream was not observed - an early-exiting parser, an exception or cancellation
- * mid-read. [COMPLETE]: the end of the stream was observed - or the response carried no body at all
- * (a 1xx, 204 or 304 answer, a declared length of zero): nothing to consume, nothing an application
- * could have discarded, so both twins count it complete rather than letting every bodiless route look
- * like discarded payload. The values are the `state` tag of the `adapter.response.body.read` counter and
- * therefore a twin contract; the exact observation points are documented on each twin's
- * `BoundedBodyCapture` (deliberately separate implementations - ADR-0003).
+ * How far the application consumed a RESPONSE body, as observed by a twin's tee: the `state` tag of the
+ * `adapter.response.body.read` counter and therefore a twin contract ([tagValue]); the exact
+ * observation points are documented on each twin's `BoundedBodyCapture` (deliberately separate
+ * implementations - ADR-0003).
  *
  * The seam observes what flows through the tee, not WHY: on the reactive stack Spring's own
  * `releaseBody()` (`toBodilessEntity()`, the release of what an `exchangeToMono` handler left over)
@@ -30,10 +24,30 @@ import kotlin.math.ceil
  * so what the tee counted there is what went out.
  */
 enum class BodyReadState(
+    /**
+     * The value of the `state` tag on the `adapter.response.body.read` counter - a contract with
+     * every dashboard keying on it.
+     */
     val tagValue: String,
 ) {
+    /**
+     * A body the response carried was never read/subscribed to - the bytes the peer sent never reached
+     * the application (a response closed without opening its body on the blocking stack).
+     */
     UNREAD("unread"),
+
+    /**
+     * Consumption started but the end of the stream was not observed - an early-exiting parser, an
+     * exception or cancellation mid-read.
+     */
     PARTIAL("partial"),
+
+    /**
+     * The end of the stream was observed - or the response carried no body at all (a 1xx, 204 or 304
+     * answer, a declared length of zero): nothing to consume, nothing an application could have
+     * discarded, so both twins count it complete rather than letting every bodiless route look like
+     * discarded payload.
+     */
     COMPLETE("complete"),
 }
 

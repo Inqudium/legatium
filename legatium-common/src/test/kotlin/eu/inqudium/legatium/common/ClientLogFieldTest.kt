@@ -33,7 +33,7 @@ class ClientLogFieldTest {
         fun `should be the literal strings the component template maps`() {
             // What is tested: every wire name, spelled out as a literal - independently of the enum, so a
             //   rename cannot pass by asserting a value against itself.
-            // Success criteria: all fourteen names match exactly.
+            // Success criteria: every name matches its literal exactly.
             // Why it matters: once the template is composed into a pipeline, changing a name is a breaking
             //   change for every dashboard and alert keying on it - the compiler cannot see that.
             // Given/When/Then: every wire name against its literal

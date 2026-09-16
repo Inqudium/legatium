@@ -858,6 +858,45 @@ class ClientRequestLoggingFilterTest {
         }
 
         @Test
+        fun `should generate and send a fresh correlation id on every attempt of a resubscribed traceless call`() {
+            // What is tested: the identity of a traceless call across resubscriptions - resolved per
+            //   subscription from the caller's immutable ClientRequest, which never carries the header
+            //   this filter adds to its rebuilt copy.
+            // Success criteria: two subscriptions, two DIFFERENT generated ids on the lines, each one
+            //   sent on the wire of its own attempt, both counted `generated`.
+            // Why it matters: this is a documented stack difference (the filter's class KDoc, the README
+            //   table): the blocking twin's mutable request keeps the header of attempt 1 and re-sends
+            //   the same id. A change to either side must be a visible decision.
+            // Given: a counting generator and a connector that records what it is handed
+            var next = 0
+            val counting = ClientRequestLoggingFilter(properties, NanoTimeSource { ticker.get() }, CorrelationIdGenerator { "gen-${next++}" }, meterRegistry)
+            val sentHeaders = mutableListOf<String?>()
+            val call =
+                counting.filter(
+                    request(),
+                    ExchangeFunction { sent ->
+                        sentHeaders += sent.headers().getFirst(properties.correlationIdHeader)
+                        answering().exchange(sent)
+                    },
+                )
+
+            // When: subscribed twice, as an outer retry does
+            call.flatMap { it.bodyToMono(String::class.java) }.block()
+            call.flatMap { it.bodyToMono(String::class.java) }.block()
+
+            // Then
+            assertThat(log.events.map { it.mdcPropertyMap[MdcKeys.REQUEST_ID] }).containsExactly("gen-0", "gen-1")
+            assertThat(sentHeaders).containsExactly("gen-0", "gen-1")
+            assertThat(
+                meterRegistry
+                    .get(ClientLoggingMetrics.CORRELATION_METER)
+                    .tag("source", "generated")
+                    .counter()
+                    .count(),
+            ).isEqualTo(2.0)
+        }
+
+        @Test
         fun `should log an empty completion of the connector as ERROR failure without a status`() {
             // What is tested: a connector (or a host filter swallowing an error into Mono.empty()) that
             //   completes without a response.

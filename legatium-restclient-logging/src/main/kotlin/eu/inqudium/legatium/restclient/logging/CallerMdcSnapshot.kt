@@ -29,9 +29,8 @@ internal class CallerMdcSnapshot private constructor(
     internal val entries: Map<String, String>,
 ) {
     /**
-     * Installs the entries for the scope's lifetime when the current thread is not the capturing one;
-     * the returned scope restores the previous value of every touched key. A no-op on the capturing
-     * thread and for an empty snapshot.
+     * The scope installing the entries - a no-op on the capturing thread and for an empty snapshot
+     * (the class KDoc has the why).
      */
     fun restore(): AutoCloseable {
         if (entries.isEmpty() || Thread.currentThread() === thread) {
@@ -82,7 +81,10 @@ internal class CallerMdcSnapshot private constructor(
     }
 }
 
-/** How the emitter restores a snapshot - a seam for the tests, which swap in a throwing one to drive the fail-open path. */
+/**
+ * How the emitter restores a snapshot - a seam for the tests, which swap in a throwing one to drive
+ * the fail-open path.
+ */
 internal fun interface CallerMdcRestorer {
     fun restore(snapshot: CallerMdcSnapshot): AutoCloseable
 

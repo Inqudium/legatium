@@ -26,16 +26,17 @@ import java.time.Duration
 
 /**
  * Builds and emits the log events of an exchange - the arrival line and the completion event - with the
- * IDENTICAL message and field format of the legatium-restclient-logging emitter (fields locked by
- * `ClientLogFieldTest`, message text by `TwinContractTest`, in both twins); only the disposition
- * vocabulary is wider where the stack is (`cancelled`, which a blocking call cannot be).
+ * IDENTICAL message and field format of the legatium-restclient-logging emitter (the field family is
+ * locked once, by legatium-common's `ClientLogFieldTest` - ADR-0003; the message text by each twin's
+ * `TwinContractTest`); only the disposition vocabulary is wider where the stack is (`cancelled`, which
+ * a blocking call cannot be).
  *
  * ## Levels
  *
- * The level carries severity only, `adapter_outcome` the semantic: ERROR when the call errored (no
- * response, or the body errored), WARN for a timeout, a cancellation, a 5xx answer, or an exchange that
- * reached [ClientLoggingProperties.slowRequestThreshold], INFO otherwise. Severity and outcome are
- * resolved BEFORE the event is built, so a disabled level costs no assembly.
+ * The level carries severity only, `adapter_outcome` the semantic - the matrix is [classify]'s, plus
+ * the slow escalation (INFO to WARN at [ClientLoggingProperties.slowRequestThreshold], outcome
+ * unchanged). Severity and outcome are resolved BEFORE the event is built, so a disabled level costs
+ * no assembly.
  *
  * ## Fail-open
  *
@@ -82,7 +83,7 @@ internal class ExchangeLogEmitter(
             if (!exchangeLog.isInfoEnabled) {
                 return
             }
-            // The same scopes as the completion event's ([withEmissionScopes]), so both lines of one
+            // The same scopes as the completion event's (`withEmissionScopes`), so both lines of one
             // exchange carry the same ambient keys.
             withEmissionScopes(exchange) {
                 exchangeLog
@@ -103,9 +104,11 @@ internal class ExchangeLogEmitter(
     }
 
     /**
-     * The single emission point, called exactly once per exchange from `ClientRequestLoggingFilter.complete`
-     * - the one place that wins the [Exchange.state] transition to `COMPLETED` (the response body's
-     * terminal signal, or the response `Mono`'s error/cancel signal when no response arrived).
+     * The single emission point, called once per exchange by the filter AFTER it won the
+     * [Exchange.state] transition to [ExchangeState.COMPLETED] - through
+     * [ClientRequestLoggingFilter.complete] (the body's terminal signal, or the response `Mono`'s
+     * error/empty signal without a response) or through its cancel path (the caller abandoning the
+     * response `Mono`); the transition is the one exactly-once guard.
      */
     fun logExchange(exchange: Exchange) {
         failOpen(
@@ -135,7 +138,7 @@ internal class ExchangeLogEmitter(
         exchange.responseCapture?.freeze()
         val elapsedNanos = nanoTime.nanoTime() - exchange.startNanos
         // Compared at full precision (a 1.5 ms threshold must not flag a 1 ms exchange); the 1 ms floor
-        // is [ClientLoggingProperties.slowRequestThreshold]'s.
+        // is `ClientLoggingProperties.slowRequestThreshold`'s.
         val slow = Duration.ofNanos(elapsedNanos) >= properties.slowRequestThreshold
         // Metrics BEFORE the level gate: a metric must not depend on how loud the logger is configured.
         recordBodySizesQuietly(exchange)
@@ -160,8 +163,7 @@ internal class ExchangeLogEmitter(
      * (ADR-0010) - the join to the server line on an event-loop thread that carries none of them - and
      * the emission scope inside, which OWNS the trace keys ([MdcScope]) exactly like the RestClient
      * twin, so a bridge id the accessors restored never outranks the header's. Both scopes are torn down
-     * through [restoreQuietly]: a teardown that fails AFTER the event is on the logger (and counted) is
-     * bookkeeping, never a lost emission, and never masks an emission failure propagating out of the try.
+     * through [restoreQuietly], inner first.
      */
     private inline fun withEmissionScopes(
         exchange: Exchange,
@@ -181,10 +183,8 @@ internal class ExchangeLogEmitter(
     }
 
     /**
-     * Scope teardown guarded on its own, the RestClient twin's rule: a throwing MDC adapter or a host
-     * accessor failing on the way OUT must neither be reported as a LOST line (the line is already on
-     * the logger) nor mask an emission failure propagating out of the try - it costs the restoration,
-     * counted as stage=wiring.
+     * Scope teardown guarded on its own - the teardown rule of [reportQuietly]: the line counts as
+     * emitted, a failure here (an MDC adapter, a host accessor) is bookkeeping (`stage=wiring`).
      */
     private fun restoreQuietly(
         scope: AutoCloseable,
@@ -228,10 +228,12 @@ internal class ExchangeLogEmitter(
         }
 
     /**
-     * Severity and semantic decoupled, exactly like the RestClient twin - with `cancelled` on top: a
-     * timeout in the error's cause chain is WARN with its own outcome, any other error signal is ERROR,
-     * a subscription the caller abandoned (a downstream timeout operator, a disposed caller) is WARN, a
-     * 5xx answer without an error signal is WARN (the peer answered).
+     * The SLF4J level carries the severity, adapter_outcome the semantic - decoupled on purpose
+     * ([ClientLogField.OUTCOME]), with `cancelled` on top of the RestClient twin's matrix: a timeout in
+     * the error's cause chain is WARN with its own outcome (the peer is slow, not broken), any other
+     * error signal is ERROR, a subscription the caller abandoned (a downstream timeout operator, a
+     * disposed caller) is WARN with `cancelled`, a 5xx answer without an error signal is WARN (the peer
+     * answered, the application decides) - error and 5xx carry `failure`; INFO and `success` otherwise.
      */
     private fun classify(
         failure: Throwable?,
@@ -246,7 +248,10 @@ internal class ExchangeLogEmitter(
             else -> Classification(Level.INFO, ClientOutcome.SUCCESS, null)
         }
 
-    /** The one immutable builder chain of the completion event - identical to the RestClient twin; optional fields are left off by the *IfPresent helpers. */
+    /**
+     * The one immutable builder chain of the completion event; optional fields are left off by the
+     * *IfPresent helpers.
+     */
     private fun logEvent(
         exchange: Exchange,
         classification: Classification,
@@ -284,7 +289,7 @@ internal class ExchangeLogEmitter(
             .addKeyValueIfPresent(ClientLogField.REQUEST_BODY, requestBody)
             .addKeyValueIfPresent(ClientLogField.RESPONSE_BODY, responseBody)
             .log()
-        // Guarded in [ClientLoggingMetrics.eventEmitted]: the event is already on the logger.
+        // Guarded in `ClientLoggingMetrics.eventEmitted`: the event is already on the logger.
         metrics.eventEmitted(classification.outcome)
     }
 
@@ -317,7 +322,10 @@ internal class ExchangeLogEmitter(
         return requestBody to responseBody
     }
 
-    /** Guarded on its own: a host registry that rejects the body-size summary (meter-id conflict) costs the sample, never the event. */
+    /**
+     * Guarded on its own: a host registry that rejects the body-size summary (meter-id conflict)
+     * costs the sample, never the event.
+     */
     private fun recordBodySizesQuietly(exchange: Exchange) {
         try {
             recordBodySizes(exchange)

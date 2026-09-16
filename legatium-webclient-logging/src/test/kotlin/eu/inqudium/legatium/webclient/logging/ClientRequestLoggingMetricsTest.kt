@@ -29,6 +29,7 @@ import org.springframework.web.reactive.function.client.ClientResponse
 import org.springframework.web.reactive.function.client.ExchangeFunction
 import org.springframework.web.reactive.function.client.ExchangeStrategies
 import reactor.core.Exceptions
+import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import reactor.test.StepVerifier
 import java.io.IOException
@@ -256,6 +257,30 @@ class ClientRequestLoggingMetricsTest {
             assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(1.0)
             assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "unread").counter()).isNull()
             assertThat(registry.get(ClientLoggingMetrics.RESPONSE_BODY_SIZE_METER).summary().totalAmount()).isEqualTo(7.0)
+        }
+
+        @Test
+        fun `should count Spring's body skip for a Void body type as partial`() {
+            // What is tested: the other documented reactive observation point - bodyToMono(Void.class)
+            //   drains the body through takeWhile(release; false), which cancels upstream in onNext of
+            //   the FIRST buffer, so the tee sees a subscription but never the completion signal.
+            // Success criteria: state=partial at 1 (never complete or unread); the size sample carries the
+            //   first buffer only.
+            // Why it matters: BodyReadState's KDoc defines the `state` tag by this idiom; the behaviour
+            //   rests on Spring's release internals, which an upgrade can change without anything else
+            //   turning red - this pin turns red.
+            // Given: a two-buffer body the caller declares it does not want
+            val measuring = filterWith(properties.copy(measureResponseBodySize = true), ticker, registry)
+            val withBody = ClientResponse.create(HttpStatus.OK).body(Flux.just(buffer("ack"), buffer("nowledged"))).build()
+
+            // When
+            measuring.filter(request(), ExchangeFunction { Mono.just(withBody) }).flatMap { it.bodyToMono(Void::class.java) }.block()
+
+            // Then
+            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "partial")).isEqualTo(1.0)
+            assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "complete").counter()).isNull()
+            assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "unread").counter()).isNull()
+            assertThat(registry.get(ClientLoggingMetrics.RESPONSE_BODY_SIZE_METER).summary().totalAmount()).isEqualTo(3.0)
         }
 
         @Test

@@ -25,7 +25,7 @@ internal class ClientActivation(
     private val includePathPatterns: List<PathPattern> =
         properties.includePathPatterns.map { PathPatternParser.defaultInstance.parse(it) }
 
-    // Lower-cased and, for an IPv6 literal, unbracketed - the same normalisation [RequestTarget.hostName]
+    // Lower-cased and, for an IPv6 literal, unbracketed - the same normalisation `RequestTarget.hostName`
     // applies to the request, so `::1` and `[::1]` in the configuration both match a call to `[::1]`.
     private val excludedHosts: Set<String> = properties.excludeHosts.map { it.lowercase().removeSurrounding("[", "]") }.toSet()
 

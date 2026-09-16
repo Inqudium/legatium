@@ -10,32 +10,38 @@ package eu.inqudium.legatium.common
  * and the one list that removes masking are therefore never coupled the wrong way round: an
  * `includes: ["*"]` typed for a debugging session costs readability, not confidentiality.
  *
- * - [includes] names the headers to log; empty means NONE (the safe default). The entry `*` includes
- *   every header the message carries.
- * - [excludes] removes names from the included set - meaningful mainly together with the `*` include;
- *   an exclude always wins over an include. The `*` wildcard is NOT supported here and rejected at
- *   binding time - an empty [includes] already logs nothing, so a wildcard exclude could only be a
- *   misconfiguration that would otherwise fail silently.
- * - [masked] names the logged headers whose VALUE is replaced by the masker's rendering; the default
- *   `["*"]` masks every logged header. Narrowing it to explicit names is possible but rarely what is
- *   wanted - prefer [unmasked]. An empty list switches masking off wholesale: an explicit, visible
- *   decision, never the accidental result of another list.
- * - [unmasked] names the logged headers that appear in PLAINTEXT although [masked] covers them - the
- *   allowlist of harmless names (`Content-Type`, `Accept`, a correlation id). An unmasked name always
- *   wins over a masked one. The `*` wildcard is rejected here: the plaintext set is an explicit list of
- *   names by design; to log everything in plaintext, empty [masked] instead.
- *
- * Masking (and unmasking) only affects headers that are logged at all - listing a name in [masked] or
- * [unmasked] does not include it. All matching is case-insensitive, as header names are.
+ * The four lists and their precedence: [includes] minus [excludes] is what is logged (an exclude always
+ * wins); of those, [masked] minus [unmasked] is what the masker renders (an unmasked name always wins).
+ * Each list's own rule is documented on the property. Masking (and unmasking) only affects headers
+ * that are logged at all - listing a name in [masked] or [unmasked] does not include it. All matching
+ * is case-insensitive, as header names are.
  */
 data class HeaderLogProperties(
-    /** The headers to log; empty (the default) logs NONE, the entry `*` logs every header the message carries. */
+    /**
+     * The headers to log; empty (the default) logs NONE - the safe default. The entry [WILDCARD]
+     * logs every header the message carries.
+     */
     val includes: List<String> = emptyList(),
-    /** Removed from the included set - an exclude always wins over an include. No `*` (rejected at binding: an empty [includes] already logs nothing). */
+    /**
+     * Removed from the included set - meaningful mainly together with the wildcard include; an exclude
+     * always wins over an include. The [WILDCARD] is NOT supported here and rejected at binding time:
+     * an empty [includes] already logs nothing, so a wildcard exclude could only be a misconfiguration
+     * that would otherwise fail silently.
+     */
     val excludes: List<String> = emptyList(),
-    /** Logged headers whose VALUE the [HeaderValueMasker] renders; the default `["*"]` masks every logged header, an empty list switches masking off visibly. */
+    /**
+     * The logged headers whose VALUE is replaced by the [HeaderValueMasker]'s rendering; the default
+     * `["*"]` masks every logged header. Narrowing it to explicit names is possible but rarely what is
+     * wanted - prefer [unmasked]. An empty list switches masking off wholesale: an explicit, visible
+     * decision, never the accidental result of another list.
+     */
     val masked: List<String> = listOf(WILDCARD),
-    /** Logged headers that appear in PLAINTEXT although [masked] covers them - the allowlist of harmless names; always wins over [masked]. No `*` (rejected at binding). */
+    /**
+     * The logged headers that appear in PLAINTEXT although [masked] covers them - the allowlist of
+     * harmless names (`Content-Type`, `Accept`, a correlation id). An unmasked name always wins over a
+     * masked one. The [WILDCARD] is rejected here: the plaintext set is an explicit list of names by
+     * design; to log everything in plaintext, empty [masked] instead.
+     */
     val unmasked: List<String> = emptyList(),
 ) {
     init {
@@ -91,6 +97,10 @@ data class HeaderLogProperties(
     }
 
     companion object {
+        /**
+         * The entry that stands for every header: allowed in [includes] (every header the message
+         * carries) and [masked] (every logged header), rejected in [excludes] and [unmasked].
+         */
         const val WILDCARD = "*"
     }
 }

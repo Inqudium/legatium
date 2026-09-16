@@ -10,6 +10,15 @@ package eu.inqudium.legatium.common
  * catch handler and fail the outbound call or corrupt the response the application is reading - the one
  * outcome the fail-open contract forbids. There is nothing left to report to when the reporting channel
  * is broken, so the secondary failure is deliberately dropped.
+ *
+ * ## The teardown rule
+ *
+ * The guards around a scope TEARDOWN - the interceptor's call-wide MDC scope, both emitters' emission
+ * scope and caller-context scope (ADR-0010, ADR-0011) - follow one rule in both twins: once the line is
+ * on the logger, a failure on the way OUT is bookkeeping, counted `stage=wiring` and reported through
+ * this function - never a lost line (the emission counter does not see it), and never a masked
+ * exception: the teardown runs in a `finally` with its own catch, so an emission failure or the
+ * client's own exception keeps propagating past it.
  */
 internal inline fun reportQuietly(report: () -> Unit) {
     try {

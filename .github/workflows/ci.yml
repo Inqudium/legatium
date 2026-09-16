@@ -49,6 +49,18 @@ jobs:
       - name: Check the KDoc references (Dokka, failOnWarning)
         run: mvn --batch-mode --no-transfer-progress -pl legatium-restclient-logging,legatium-webclient-logging dokka:dokka
 
+      # Dokka reads KDoc only: a `[Symbol]` link in a `//` line comment looks
+      # checked and is not - a rename leaves it standing with the authority of
+      # a verified link (comment audit of 2026-09-16, finding 21). Such a
+      # comment names the symbol in backticks or moves into the enclosing
+      # declaration's KDoc, where Dokka sees it.
+      - name: Check that no line comment carries a KDoc-style [Symbol] link
+        run: |
+          if grep -rnE '^\s*//.*\[[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)?\]' --include='*.kt' legatium-*/src/main; then
+            echo '::error::[Symbol] links in // line comments are not checked by Dokka - use backticks, or move the sentence into KDoc'
+            exit 1
+          fi
+
       # Repo-local script instead of a third-party reporting action (this
       # workflow pins actions to SHAs; a summary needs no new supply-chain
       # surface). Runs on failure too, so a red build still shows which

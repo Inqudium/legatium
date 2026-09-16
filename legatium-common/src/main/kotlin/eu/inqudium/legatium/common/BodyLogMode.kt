@@ -31,7 +31,10 @@ enum class BodyLogMode {
     val captures: Boolean
         get() = this != NEVER
 
-    /** Whether the captured body is written to the line of an exchange that [failed] (outcome not `success`, or a 4xx status) or did not. */
+    /**
+     * Whether the captured body is written to the line of an exchange that [failed] (outcome not
+     * `success`, or a 4xx status) or did not.
+     */
     fun logs(failed: Boolean): Boolean =
         when (this) {
             NEVER -> false

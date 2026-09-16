@@ -26,18 +26,18 @@ import java.time.Duration
 
 /**
  * Builds and emits the log events of an exchange - the arrival line and the completion event - with the
- * IDENTICAL message and field format of the legatium-webclient-logging emitter (fields locked by
- * `ClientLogFieldTest`, message text by `TwinContractTest`, in both twins). The interceptor owns the
- * client lifecycle and hands over a populated [Exchange]; this class owns the exchange logger, the
- * level/outcome decision, the field assembly, and the fail-open discipline around all of it.
+ * IDENTICAL message and field format of the legatium-webclient-logging emitter (the field family is
+ * locked once, by legatium-common's `ClientLogFieldTest` - ADR-0003; the message text by each twin's
+ * `TwinContractTest`). The interceptor owns the client lifecycle and hands over a populated [Exchange];
+ * this class owns the exchange logger, the level/outcome decision, the field assembly, and the fail-open
+ * discipline around all of it.
  *
  * ## Levels
  *
- * The level carries severity only, `adapter_outcome` the semantic: ERROR when the call threw (no
- * response, or the body read failed), WARN for a timeout, a 5xx answer, or an exchange that reached
- * [ClientLoggingProperties.slowRequestThreshold], INFO otherwise. Severity and outcome are resolved
- * BEFORE the event is built, so an exchange whose level is disabled costs neither the key-value assembly
- * nor the header rendering.
+ * The level carries severity only, `adapter_outcome` the semantic - the matrix is [classify]'s, plus
+ * the slow escalation (INFO to WARN at [ClientLoggingProperties.slowRequestThreshold], outcome
+ * unchanged). Severity and outcome are resolved BEFORE the event is built, so an exchange whose level
+ * is disabled costs neither the key-value assembly nor the header rendering.
  *
  * ## Fail-open
  *
@@ -89,7 +89,7 @@ internal class ExchangeLogEmitter(
             if (!exchangeLog.isInfoEnabled) {
                 return
             }
-            // The same scope layering as the completion event ([withEmissionScopes]); on the caller's
+            // The same scope layering as the completion event (`withEmissionScopes`); on the caller's
             // thread, where the arrival line always runs, the caller scope is a no-op.
             withEmissionScopes(exchange) {
                 exchangeLog
@@ -148,7 +148,7 @@ internal class ExchangeLogEmitter(
     private fun emitExchange(exchange: Exchange) {
         val elapsedNanos = nanoTime.nanoTime() - exchange.startNanos
         // Compared at full precision (a 1.5 ms threshold must not flag a 1 ms exchange); the 1 ms floor
-        // is [ClientLoggingProperties.slowRequestThreshold]'s.
+        // is `ClientLoggingProperties.slowRequestThreshold`'s.
         val slow = Duration.ofNanos(elapsedNanos) >= properties.slowRequestThreshold
         // Metrics BEFORE the level gate: a metric must not depend on how loud the logger is configured.
         recordBodySizesQuietly(exchange)
@@ -171,9 +171,7 @@ internal class ExchangeLogEmitter(
      * (ADR-0011, a no-op on the caller's own thread), and the emission scope inside it, which OWNS the
      * trace keys ([MdcScope]) - the encoder emits the traceId/spanId the request went out with, never a
      * stale bridge id of the emitting thread, nor one the snapshot could have carried, which is why the
-     * snapshot leaves the trace keys out. Both scopes are torn down through [restoreQuietly], inner first:
-     * a restoration that fails AFTER the line is on the logger is bookkeeping (stage=wiring), not a lost
-     * line.
+     * snapshot leaves the trace keys out. Both scopes are torn down through [restoreQuietly], inner first.
      */
     private inline fun withEmissionScopes(
         exchange: Exchange,
@@ -214,10 +212,11 @@ internal class ExchangeLogEmitter(
         }
 
     /**
-     * The SLF4J level carries the severity, adapter_outcome the semantic - decoupled on purpose (see
-     * ClientLogField.OUTCOME): a timeout is WARN with its own outcome (the peer is slow, not broken),
+     * The SLF4J level carries the severity, adapter_outcome the semantic - decoupled on purpose
+     * ([ClientLogField.OUTCOME]): a timeout is WARN with its own outcome (the peer is slow, not broken),
      * any other thrown call is ERROR, a 5xx answer without an exception is WARN (the peer answered, the
-     * application decides what to make of it); all of the latter two carry "failure".
+     * application decides what to make of it) - both of the latter carry `failure`; INFO and `success`
+     * otherwise.
      */
     private fun classify(
         failure: Throwable?,
@@ -230,7 +229,10 @@ internal class ExchangeLogEmitter(
             else -> Classification(Level.INFO, ClientOutcome.SUCCESS, null)
         }
 
-    /** The one immutable builder chain of the completion event; optional fields are left off by the *IfPresent helpers. */
+    /**
+     * The one immutable builder chain of the completion event; optional fields are left off by the
+     * *IfPresent helpers.
+     */
     private fun logEvent(
         exchange: Exchange,
         classification: Classification,
@@ -268,11 +270,14 @@ internal class ExchangeLogEmitter(
             .addKeyValueIfPresent(ClientLogField.REQUEST_BODY, requestBody)
             .addKeyValueIfPresent(ClientLogField.RESPONSE_BODY, responseBody)
             .log()
-        // Guarded in [ClientLoggingMetrics.eventEmitted]: the event is already on the logger.
+        // Guarded in `ClientLoggingMetrics.eventEmitted`: the event is already on the logger.
         metrics.eventEmitted(classification.outcome)
     }
 
-    /** Multi-value resolution, like the request side: a single-value getFirst would silently truncate repeated headers (Set-Cookie being the classic). */
+    /**
+     * Multi-value resolution, like the request side: a single-value `getFirst` would silently truncate
+     * repeated headers (`Set-Cookie` being the classic).
+     */
     private fun selectedResponseHeaders(headers: HttpHeaders?): List<Pair<String, String>> =
         headers?.let {
             properties.responseHeaders.select(it.headerNames(), masker) { name ->
@@ -301,7 +306,10 @@ internal class ExchangeLogEmitter(
         return requestBody to responseBody
     }
 
-    /** Guarded on its own: a host registry that rejects the body-size summary (meter-id conflict) costs the sample, never the event. */
+    /**
+     * Guarded on its own: a host registry that rejects the body-size summary (meter-id conflict)
+     * costs the sample, never the event.
+     */
     private fun recordBodySizesQuietly(exchange: Exchange) {
         try {
             recordBodySizes(exchange)
@@ -319,10 +327,8 @@ internal class ExchangeLogEmitter(
     }
 
     /**
-     * Restoration guarded on its own, like the interceptor's call scope: a throwing MDC adapter here must
-     * neither be reported as a LOST line (the arrival line or the event is already on the logger) nor
-     * mask an emission failure propagating out of the try - it costs the restoration, counted as
-     * stage=wiring. One rule for both emissions: the line counts as emitted, the teardown as bookkeeping.
+     * Scope teardown guarded on its own - the teardown rule of [reportQuietly]: the line counts as
+     * emitted, a failure here is bookkeeping (`stage=wiring`).
      */
     private fun restoreQuietly(
         scope: AutoCloseable,

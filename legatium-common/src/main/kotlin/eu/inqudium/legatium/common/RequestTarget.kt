@@ -44,7 +44,10 @@ internal class RequestTarget private constructor(
             uri.host?.removeSurrounding("[", "]")
                 ?: registryAuthority(uri)?.substringBeforeLast(':')
 
-        /** The raw authority without user info when `java.net.URI` could not parse it as a host (`billing_api:8080`); null otherwise. */
+        /**
+         * The raw authority without user info when `java.net.URI` could not parse it as a host
+         * (`billing_api:8080`); null otherwise.
+         */
         private fun registryAuthority(uri: URI): String? = uri.rawAuthority?.substringAfter('@')?.takeIf { it.isNotEmpty() }
     }
 }

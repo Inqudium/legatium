@@ -25,8 +25,12 @@ import java.io.InputStream
  * reaching the length the response declared (the interceptor hands the capture a trustworthy
  * `Content-Length` at handover). The second rule exists because Spring's `ByteArrayHttpMessageConverter`
  * reads exactly `Content-Length` bytes with `readNBytes` and never asks for the EOF; without it every
- * `byte[]` answer counted as `partial`. Both are observations of what the application did, never an extra
- * read: the tee does not probe for EOF itself, so a body the application stopped reading stays PARTIAL.
+ * `byte[]` answer counted as `partial`. Its corollary: a response that carries NO body - a 1xx, 204 or
+ * 304 answer, a declared length of zero - is complete at handover, because the clients never open such
+ * a body (Spring's own `hasMessageBody()` rule) and nothing an application could have discarded exists
+ * ([eu.inqudium.legatium.common.BodyReadState]). Both are observations of what the application did,
+ * never an extra read: the tee does not probe for EOF itself, so a body the application stopped reading
+ * stays PARTIAL.
  *
  * EVERY delegate operation that can fail the caller is guarded, not only the body reads: status, status
  * text and headers (the read at handover tolerates a refusing engine, but the CLIENT's later access

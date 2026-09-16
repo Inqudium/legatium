@@ -123,10 +123,7 @@ internal class ClientLoggingMetrics private constructor(
     private val reportedConflicts: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val reportedUpdateFailures: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-    // One counter per fail-open site. The metric exists because the failure it counts is the one state
-    // logs cannot reliably show: when the emission breaks, the missing exchange line IS the symptom, and
-    // the report about it is itself only a log line in the same possibly-broken pipeline. A counter
-    // travels the independent metrics channel.
+    /** [FAIL_OPEN_METER], pre-registered per stage. */
     private val failOpenCounters =
         FailOpenStage.entries.associateWith { stage ->
             registerOrFallback(FAIL_OPEN_METER) { registry ->
@@ -140,9 +137,7 @@ internal class ClientLoggingMetrics private constructor(
             }
         }
 
-    // Counts EMITTED exchange events - after the level gate, arrival lines excluded - so its sum is the
-    // ground truth to reconcile against the log index: any difference is loss in the log pipeline
-    // (appender overflow, broker loss, index rejection), isolated from application behavior.
+    /** [EVENTS_METER], pre-registered per outcome of this stack's vocabulary. */
     private val eventCounters =
         stack.outcomes.associateWith { outcome ->
             registerOrFallback(EVENTS_METER) { registry ->
@@ -156,11 +151,7 @@ internal class ClientLoggingMetrics private constructor(
             }
         }
 
-    // The liveness check of the emission architecture itself: the event is emitted when the exchange
-    // truly ends (response close, or the body's terminal signal), and everything rests on the
-    // application closing or consuming every response it was handed. A response that never ends loses
-    // the event SILENTLY - nothing throws, so not even the fail-open counter sees it. This gauge (up at
-    // entry, down at completion) makes the assumption measurable.
+    /** [OPEN_EXCHANGES_METER]: up at entry, down at the exactly-once completion. */
     private val openExchanges =
         AtomicLong(0).also { open ->
             registerOrFallback(
@@ -179,9 +170,7 @@ internal class ClientLoggingMetrics private constructor(
             }
         }
 
-    // Watches the identity contract with the host's propagation: a rising `generated` share means the
-    // application stopped propagating traceparent (or a correlation header) onto its outbound calls - a
-    // regression neither logs nor other metrics surface reliably.
+    /** [CORRELATION_METER], pre-registered per source. */
     private val requestIdSourceCounters =
         RequestIdSource.entries.associateWith { source ->
             registerOrFallback(CORRELATION_METER) { registry ->
@@ -380,7 +369,10 @@ internal class ClientLoggingMetrics private constructor(
                 owners[stack]?.get() ?: ClientLoggingMetrics(registry, stack).also { owners[stack] = WeakReference(it) }
             }
 
-        /** The `uri` tag for a recorded template: the template itself when it carries a placeholder, [UNTEMPLATED_URI] otherwise. */
+        /**
+         * The `uri` tag for a recorded template: the template itself when it carries a placeholder,
+         * [UNTEMPLATED_URI] otherwise.
+         */
         fun uriTag(template: String?): String = template?.takeIf { '{' in it } ?: UNTEMPLATED_URI
 
         /**
@@ -388,15 +380,18 @@ internal class ClientLoggingMetrics private constructor(
          * exchange event was LOST), `stage=arrival` (the optional start line was lost) or `stage=wiring`
          * (wiring or bookkeeping around the call failed; a pre-call wiring failure degrades to an
          * unlogged pass-through, a post-call one usually still emits the event). Calls are never
-         * affected by what this counts - that is the fail-open contract; the counter makes its price
-         * visible on a channel independent of the possibly-broken log pipeline.
+         * affected by what this counts - that is the fail-open contract. The meter exists because the
+         * failure it counts is the one state logs cannot reliably show: when the emission breaks, the
+         * missing exchange line IS the symptom, and the report about it is itself only a log line in the
+         * same possibly-broken pipeline - a counter travels the independent metrics channel.
          */
         const val FAIL_OPEN_METER = "adapter.logging.failopen"
 
         /**
          * Meter counting the exchange events actually EMITTED (after the level gate; arrival lines are
          * not counted), tagged `outcome`. Its sum is the ground truth for reconciling metric-side event
-         * counts against the log index: any difference is loss in the log pipeline itself.
+         * counts against the log index: any difference is loss in the log pipeline itself (appender
+         * overflow, broker loss, index rejection), isolated from application behavior.
          */
         const val EVENTS_METER = "adapter.logging.events"
 
@@ -419,17 +414,19 @@ internal class ClientLoggingMetrics private constructor(
 
         /**
          * Gauge of exchanges between entry (wiring) and the exactly-once completion, tagged `client`
-         * (`restclient` | `webclient`). Hovers near the in-flight call count in health; a monotonically
-         * growing baseline means exchanges never end and exchange events are being lost SILENTLY - the
-         * one failure mode neither the fail-open counter (nothing throws) nor the events counter (no
-         * baseline) can see.
+         * (`restclient` | `webclient`) - the liveness check of the emission architecture itself, which
+         * rests on the application closing or consuming every response it was handed. Hovers near the
+         * in-flight call count in health; a monotonically growing baseline means exchanges never end
+         * and exchange events are being lost SILENTLY - the one failure mode neither the fail-open
+         * counter (nothing throws) nor the events counter (no baseline) can see.
          */
         const val OPEN_EXCHANGES_METER = "adapter.logging.exchanges.open"
 
         /**
-         * Counter of request-id origins, tagged `source=trace|header|generated` (ADR-0002). A rising
-         * `generated` share means the application stopped propagating `traceparent` or a correlation
-         * header onto its outbound calls.
+         * Counter of request-id origins, tagged `source=trace|header|generated` (ADR-0002) - the watch on
+         * the identity contract with the host's propagation: a rising `generated` share means the
+         * application stopped propagating `traceparent` or a correlation header onto its outbound calls,
+         * a regression neither logs nor other metrics surface reliably.
          */
         const val CORRELATION_METER = "adapter.logging.correlation.id"
 

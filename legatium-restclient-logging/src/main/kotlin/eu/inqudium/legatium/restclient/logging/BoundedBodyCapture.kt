@@ -22,24 +22,24 @@ import java.nio.charset.Charset
  * [totalBytes] read publishes all preceding buffer writes (a piggybacked happens-before edge).
  *
  * With `maxBytes = 0` the capture runs in COUNT-ONLY mode: nothing is buffered, [totalBytes] still
- * counts every byte - the mode the body-size metrics use when body logging is off.
+ * counts every byte - the mode the body-size metrics use when body logging is off; a negative limit is
+ * rejected at construction.
  *
  * Besides the bytes, the response capture records HOW FAR the application consumed the body
- * ([readState]): the tee mirrors consumption, not transmission, so a response body the application never
- * read - or stopped reading half-way - is invisible in the byte count alone. The response tee marks the
- * start of consumption and the end of the stream; the emitter turns the state into the
- * `adapter.response.body.read` counter. The end of the stream is observed in two ways: an EOF the
- * application saw, or the byte count reaching the length the response CARRIES ([expectBytes]) - a reader
- * that knows the length asks for exactly that many bytes and never for the EOF (Spring's
- * `ByteArrayHttpMessageConverter` does), and must not be counted as having stopped early. A response
- * that carries NO body (a 1xx, 204 or 304 answer, a declared length of zero) is complete the moment
- * that is known: the clients never open such a body, there is nothing to consume and nothing an
- * application could have discarded - the same answer the reactive twin's tee gives when the empty body
- * flux completes.
+ * ([readState], the `adapter.response.body.read` counter's source): the tee mirrors consumption, not
+ * transmission, so a body the application never read - or stopped reading half-way - is invisible in
+ * the byte count alone. The tee marks the start of consumption and the end of the stream; the end is
+ * observed as an EOF the application saw OR as the byte count reaching the length the response carries
+ * ([expectBytes]) - why both, and why a bodiless answer counts complete, is [CapturingClientHttpResponse]'s
+ * and [BodyReadState]'s documentation.
  */
 internal class BoundedBodyCapture(
     private val maxBytes: Int,
 ) {
+    init {
+        require(maxBytes >= 0) { "maxBytes must not be negative, got: $maxBytes" }
+    }
+
     private val buffer = ByteArrayOutputStream()
 
     /**
@@ -83,7 +83,10 @@ internal class BoundedBodyCapture(
         advance(length)
     }
 
-    /** Counts [length] bytes, completing the read state when the declared length is reached; [totalBytes] is written LAST. */
+    /**
+     * Counts [length] bytes, completing the read state when the declared length is reached;
+     * [totalBytes] is written LAST.
+     */
     private fun advance(length: Int) {
         val total = totalBytes + length
         if (expectedBytes != UNKNOWN_LENGTH && total >= expectedBytes) {
@@ -93,12 +96,11 @@ internal class BoundedBodyCapture(
     }
 
     /**
-     * Tells the capture how many body bytes the response CARRIES (`Content-Length`, or zero for an answer
-     * that has no body by the protocol), so a reader that consumes exactly that many without asking for
-     * the EOF still counts as complete. The caller passes only a length it can trust: none for a chunked
-     * answer, none when a `Content-Encoding` means the engine may hand the application a transformed
-     * body of another length. A length of ZERO completes the read state right here - there is nothing
-     * to read, and the clients never open such a body, so no later mark could.
+     * Tells the capture how many body bytes the response CARRIES, so a reader that consumes exactly
+     * that many without asking for the EOF still counts as complete (the second completion rule of
+     * [CapturingClientHttpResponse]). Only a length the caller trusts - the interceptor decides which
+     * ([UNKNOWN_LENGTH] otherwise). ZERO completes the read state right here: nothing to read, and the
+     * clients never open such a body, so no later mark could ([BodyReadState.COMPLETE]).
      */
     fun expectBytes(length: Long) {
         expectedBytes = length

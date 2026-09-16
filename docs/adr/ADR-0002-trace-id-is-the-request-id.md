@@ -83,8 +83,17 @@ only (`0x21`..`0x7E`; no whitespace, no control characters, no
 non-ASCII). A value outside the rule is treated as ABSENT: the twin
 generates its own id, SENDS it in place of the unacceptable value, and
 counts the call as `generated`. Legitimate ids (UUIDs, base-36 ids,
-ids with the usual punctuation) are unaffected. Limesium mirrors the
-rule on the inbound side so the pair stays consistent.
+ids with the usual punctuation) are unaffected. Limesium applies the
+same shape of rule on the inbound side (`CorrelationHeaderValue`),
+but with a bound of **128** characters since its commit `a9f992c` of
+2026-09-05 - the pair is NOT consistent between 129 and 200
+characters: an id of that length propagated onto an outbound call is
+accepted and sent by legatium and replaced (`generated`) by a
+limesium peer. Neither build can see the other's constant, so each
+repository pins its own bound as a literal in its tests
+(`CorrelationHeaderTest`; limesium's `CorrelationHeaderValueTest`) -
+a change on either side is a visible decision. Whether to align the
+two bounds is open (comment audit of 2026-09-16, finding 18).
 
 **Implementation order:** this ADR records the contract first; the
 code follows it. The implementation lands in lockstep across both
@@ -137,3 +146,8 @@ interceptor and filter wiring, the metrics
   was added per finding 13 of
   `docs/assessment/CODE_ANALYSIS-2026-09-04T20-56-15.md`; step 3 had
   adopted the header value verbatim.
+- **2026-09-16:** the acceptance rule's claim that limesium mirrors it
+  "so the pair stays consistent" was corrected: limesium bounds inbound
+  ids at 128 characters, this module at 200 (comment audit of
+  2026-09-16, finding 18). The bound is now pinned as a literal in
+  `CorrelationHeaderTest`.

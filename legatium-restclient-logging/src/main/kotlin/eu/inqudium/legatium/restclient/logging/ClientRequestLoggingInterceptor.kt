@@ -65,7 +65,10 @@ import org.springframework.http.client.ClientHttpResponse
  * factory or the HTTP engine carries `adapter_request_id`/`adapter_method`/`adapter_route`. It is an
  * ADDITIVE overlay: an inbound request's `endpoint_*` identity (limesium) or a bridge's trace keys on
  * the thread stay in place, so the client line joins the server line by MDC alone. The body read and
- * the emission happen after the interceptor returned, under the emission's own scope.
+ * the emission happen after the interceptor returned, under the emission's own scope - on the caller's
+ * thread in the usual case. A host that hands the response to ANOTHER thread and closes it there
+ * still gets the join: the caller's MDC is snapshotted at wiring (own and trace keys excluded) and
+ * restored around the emission on that other thread, additively (ADR-0011).
  *
  * ## Fail-open, including the wiring
  *
@@ -90,7 +93,10 @@ class ClientRequestLoggingInterceptor
         private val nanoTime: NanoTimeSource,
         /** Supplies the id a TRACELESS call sends (ADR-0002); production passes [CorrelationIdGenerator.DEFAULT]. */
         private val correlationIds: CorrelationIdGenerator,
-        /** The host's registry the meters are consumed from; interceptors on one registry share one metrics owner (see below). */
+        /**
+         * The host's registry the meters are consumed from; interceptors on one registry share one
+         * metrics owner (section "Manual wiring" of the class KDoc).
+         */
         meterRegistry: MeterRegistry,
         /**
          * How masked header values render. Defaults to the masker the properties' `masking-key` selects
@@ -119,7 +125,7 @@ class ClientRequestLoggingInterceptor
             val callScope = openCallScope(exchange)
             try {
                 // The optional arrival line, before the call but INSIDE the try: an Exception in it is
-                // confined in [ExchangeLogEmitter.logRequestStart] (level gate included) and can never
+                // confined in `ExchangeLogEmitter.logRequestStart` (level gate included) and can never
                 // reach the catch below as a call failure - only an Error can escape, and it then takes
                 // the same way as one from the wire call: gauge closed, call scope restored.
                 if (properties.logRequestStart) {
@@ -144,7 +150,7 @@ class ClientRequestLoggingInterceptor
             } catch (t: Throwable) {
                 // An Error (LinkageError, VirtualMachineError, AssertionError from an inner interceptor,
                 // a logging backend dying under the arrival line) is outside the fail-open promise
-                // ([failOpen]) - but not outside the gauge: the exchange is abandoned, the liveness
+                // (`failOpen`) - but not outside the gauge: the exchange is abandoned, the liveness
                 // signal stays truthful, no emission is attempted.
                 abandonExchange(exchange, t)
                 throw t
@@ -154,10 +160,8 @@ class ClientRequestLoggingInterceptor
         }
 
         /**
-         * The WIRING is fail-open too, not only the emission: identity resolution and the time source are
-         * host-provided beans, and header selection touches the request's header map - an exception in
-         * any of them degrades this interceptor to a plain pass-through (null), counted `stage=wiring`,
-         * never fails the call.
+         * Fail-open like the emission (section "Fail-open, including the wiring" of the class KDoc):
+         * null degrades this interceptor to a plain pass-through, counted `stage=wiring`, never a failed call.
          */
         private fun wireOrNull(
             request: HttpRequest,
@@ -181,7 +185,7 @@ class ClientRequestLoggingInterceptor
 
         /**
          * The call-wide MDC scope is logging-owned work and therefore fail-open too: a throwing MDC
-         * adapter degrades the identity feature, never the call. MdcScope itself rolls back a partial
+         * adapter degrades the identity feature, never the call. [MdcScope] itself rolls back a partial
          * install before rethrowing, so the calling thread never keeps half an identity.
          */
         private fun openCallScope(exchange: Exchange): MdcScope? =
@@ -202,9 +206,9 @@ class ClientRequestLoggingInterceptor
             }
 
         /**
-         * Restoration is guarded separately: a throwing MDC adapter here must neither fail the call nor
-         * MASK an exception already propagating out of it - it costs the restoration, counted as
-         * stage=wiring.
+         * Restoration guarded separately - the teardown rule of [reportQuietly]: a throwing MDC adapter
+         * here must neither fail the call nor MASK an exception already propagating out of it; it costs
+         * the restoration, counted `stage=wiring`.
          */
         private fun closeCallScope(
             scope: MdcScope?,
@@ -234,10 +238,8 @@ class ClientRequestLoggingInterceptor
          * propagates through the wrapper, which then records the failure on the exchange.
          *
          * Status and headers also tell the response capture the body length the response carries
-         * ([declaredBodyLength]): zero for an answer that has no body by the protocol - which the clients
-         * never open, and which counts as completely consumed rather than as unread - and the declared
-         * `Content-Length` otherwise, so a converter that reads exactly that many bytes without asking
-         * for the EOF (`ByteArrayHttpMessageConverter`) still counts as a complete read.
+         * ([declaredBodyLength] into [BoundedBodyCapture.expectBytes]) - the second completion rule of
+         * [CapturingClientHttpResponse].
          */
         private fun snapshotResponse(
             exchange: Exchange,
@@ -265,12 +267,12 @@ class ClientRequestLoggingInterceptor
 
         /**
          * The body length the response carries and the engine will deliver unchanged: ZERO for a 1xx,
-         * 204 or 304 answer, which has no body by the protocol - the same rule as Spring's own
-         * `IntrospectingClientHttpResponse.hasMessageBody()`, by which `RestClient` and `RestTemplate`
-         * never open such a body, so the capture must not wait for an open that never comes;
-         * `Content-Length` otherwise, when present and no `Content-Encoding` other than `identity` is on
-         * the response; [BoundedBodyCapture.UNKNOWN_LENGTH] for the rest (chunked, possibly decoded by
-         * the engine, or a value that is not a number). The header is PEER-CONTROLLED input: it only
+         * 204 or 304 answer - Spring's own `IntrospectingClientHttpResponse.hasMessageBody()` rule, by
+         * which `RestClient` and `RestTemplate` never open such a body, so the capture must not wait for
+         * an open that never comes; `Content-Length` otherwise, when present and no `Content-Encoding`
+         * other than `identity` is on the response; [BoundedBodyCapture.UNKNOWN_LENGTH] for the rest
+         * (chunked, possibly decoded by the engine, or a value that is not a number). The header is
+         * PEER-CONTROLLED input: it only
          * ever feeds the completeness comparison - never an allocation or a read - and a malformed value
          * (Spring parses it with `Long.parseLong`) is folded to unknown here rather than counted as a
          * wiring failure.
@@ -295,7 +297,10 @@ class ClientRequestLoggingInterceptor
             return declared.takeIf { it >= 0 } ?: BoundedBodyCapture.UNKNOWN_LENGTH
         }
 
-        /** The WARN breadcrumb of a thrown call - a host-backend call, guarded so a throwing backend cannot REPLACE the client's exception. */
+        /**
+         * The WARN breadcrumb of a thrown call - a host-backend call, guarded so a throwing backend
+         * cannot REPLACE the client's exception.
+         */
         private fun breadcrumb(
             exchange: Exchange,
             e: Exception,
@@ -340,8 +345,7 @@ class ClientRequestLoggingInterceptor
             val captures = newCaptures()
             // The request body is what the client hands the interceptor: the complete serialized body,
             // in memory, BEFORE the wire call - what the client is about to send, not what reached the
-            // peer. The field documents it as exactly that; the size meter records it only once a response
-            // proves the request went out ([ExchangeLogEmitter]).
+            // peer (which is why the size sample waits for a response: `ClientLoggingProperties.measureRequestBodySize`).
             captures.request?.capture(body, 0, body.size)
             if (identity.sendCorrelationHeader) {
                 headers.set(properties.correlationIdHeader, identity.requestId)
@@ -373,7 +377,7 @@ class ClientRequestLoggingInterceptor
                 )
             // The origin count LAST, right before the gauge: a wiring that fails above leaves the
             // correlation sum equal to the sum of exchanges that were actually opened. Guarded in
-            // [ClientLoggingMetrics.requestId]: a throwing host counter never fails the call.
+            // `ClientLoggingMetrics.requestId`: a throwing host counter never fails the call.
             metrics.requestId(identity.source)
             metrics.exchangeOpened()
             return exchange
@@ -401,9 +405,8 @@ class ClientRequestLoggingInterceptor
             }
 
         /**
-         * A capture exists when the body is logged in ANY mode OR measured - `on-failure` needs the bytes
-         * before the outcome is known and the emitter drops them on success; measure-only runs the capture
-         * in count-only mode (limit 0: nothing buffered, every byte counted).
+         * A capture exists when the body is logged in ANY mode ([BodyLogMode.captures]) OR measured
+         * ([ClientLoggingProperties.measureRequestBodySize]; then count-only, limit 0).
          */
         private fun newCaptures(): Captures =
             Captures(
@@ -411,7 +414,10 @@ class ClientRequestLoggingInterceptor
                 response = captureFor(properties.logResponseBody, properties.measureResponseBodySize),
             )
 
-        /** One side's capture by the rule above: buffering up to the limit when logged, count-only when merely measured, none otherwise. */
+        /**
+         * One side's capture by the rule of [newCaptures]: buffering up to the limit when logged,
+         * count-only when merely measured, none otherwise.
+         */
         private fun captureFor(
             mode: BodyLogMode,
             measured: Boolean,
@@ -468,7 +474,10 @@ class ClientRequestLoggingInterceptor
              */
             const val URI_TEMPLATE_ATTRIBUTE = "org.springframework.web.client.RestClient.uriTemplate"
 
-            /** Request attribute remembering the correlation id this module generated and sent, for re-entries by a retrying outer interceptor. */
+            /**
+             * Request attribute remembering the correlation id this module generated and sent, for
+             * re-entries by a retrying outer interceptor.
+             */
             const val GENERATED_ID_ATTRIBUTE = "eu.inqudium.legatium.restclient.logging.generatedCorrelationId"
 
             /**

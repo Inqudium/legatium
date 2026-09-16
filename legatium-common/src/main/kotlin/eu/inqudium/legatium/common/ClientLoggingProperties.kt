@@ -20,7 +20,10 @@ import java.time.Duration
  */
 @ConfigurationProperties("adapter-logging")
 data class ClientLoggingProperties(
-    /** Master switch; `false` removes the interceptor/filter and its customizers entirely (auto-configuration backs off). */
+    /**
+     * Master switch; `false` removes the interceptor/filter and its customizers entirely
+     * (auto-configuration backs off).
+     */
     val enabled: Boolean = true,
     /**
      * Name of the logger the exchange lines are emitted on. The default is a dedicated, stable name,
@@ -138,8 +141,8 @@ data class ClientLoggingProperties(
 
     /**
      * The data-class rendering minus the secret: a properties dump must never print the masking key. The
-     * renderer deliberately mirrors the constructor parameter list - the generated data-class `toString`
-     * cannot be reused once overridden - so a new property is added here as well.
+     * renderer mirrors the constructor parameter list - the generated data-class `toString` cannot be
+     * reused once overridden; that every property appears is pinned by `ClientLoggingPropertiesTest`.
      */
     override fun toString(): String =
         "ClientLoggingProperties(enabled=$enabled, loggerName=$loggerName, correlationIdHeader=$correlationIdHeader, " +

@@ -6,10 +6,9 @@ import kotlin.reflect.KClass
 /**
  * The structured log fields of an OUTBOUND HTTP exchange: their wire names, and the one rendering each
  * name is allowed to carry. ONE enum for both twins (ADR-0003): the family is a cross-stack contract -
- * the RestClient interceptor and the WebClient filter emit the same fourteen fields under the same
- * names with the same shapes; only the VALUE vocabulary of
- * [OUTCOME] is wider on the reactive stack (`cancelled`), which is a property of the value, not of the
- * field.
+ * the RestClient interceptor and the WebClient filter emit the same fields under the same names with
+ * the same shapes; only the VALUE vocabulary of [OUTCOME] is wider on the reactive stack
+ * (`cancelled`), which is a property of the value, not of the field.
  *
  * These names are a CONTRACT with the log index, not local identifiers: renaming a constant below is free,
  * changing a [wireName] breaks every dashboard, saved search and alert rule keying on it. The mapping is
@@ -160,11 +159,17 @@ internal fun LoggingEventBuilder.addKeyValue(
     value: Any?,
 ): LoggingEventBuilder = addKeyValue(field.wireName, value)
 
-/** As [addKeyValue], but leaves the field off the event when [value] is null - for optional fields in a single builder chain. */
+/**
+ * As [addKeyValue], but leaves the field off the event when [value] is null - for optional fields
+ * in a single builder chain.
+ */
 internal fun LoggingEventBuilder.addKeyValueIfPresent(
     field: ClientLogField,
     value: Any?,
 ): LoggingEventBuilder = if (value == null) this else addKeyValue(field, value)
 
-/** Attaches [cause] when there is one; otherwise returns the builder unchanged, so the chain stays a single expression. */
+/**
+ * Attaches [cause] when there is one; otherwise returns the builder unchanged, so the chain stays a
+ * single expression.
+ */
 internal fun LoggingEventBuilder.setCauseIfPresent(cause: Throwable?): LoggingEventBuilder = if (cause == null) this else setCause(cause)
