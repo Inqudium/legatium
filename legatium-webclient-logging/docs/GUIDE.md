@@ -274,9 +274,24 @@ subscribed to would be `unread` (and, never completing, is not counted at all �
 
 ### 2.6 MDC and the reactive call
 
-There is no call-wide thread-local MDC in a reactive client: the thread that runs the filter is not the
-thread that receives the response, and neither is the one that reads the body. The module provides the
-`adapter_*` identity in two places:
+The MDC — SLF4J's *mapped diagnostic context* — is a map of strings the logging backend keeps **per
+thread**. Whatever a thread puts there (`MDC.put("endpoint_request_id", …)`) rides along on every log
+event that thread writes afterwards: a pattern layout prints it with `%X{key}`, a structured encoder
+emits every entry as a field of the document. It is how a log line that says nothing about the request
+it belongs to still ends up joined to that request in the index.
+
+It is conventionally managed by a **request scope**: a servlet filter puts the request's identity into
+the MDC when the request enters, the whole handler chain inherits it for free, and the filter removes the
+keys when the request leaves — mandatory on a pooled thread, which would otherwise carry one request's
+identity into the next. Limesium's servlet twin does exactly this with its chain-wide `MdcScope`, and the
+RestClient twin of this project relies on it: the interceptor runs on that same thread, the wire call
+blocks it, and the client line inherits the inbound identity because the thread never changed.
+
+The convention rests on one assumption — **one request, one thread** — and a reactive client breaks
+it. The thread that runs this filter is not the thread that receives the response, and neither is the
+one that reads the body; the exchange line is written on whichever thread completes the body, usually a
+Reactor Netty event loop that never ran the inbound request and carries none of its MDC. The module
+therefore provides the `adapter_*` identity in two places that need no thread continuity:
 
 | Place | Mechanism | Who sees it |
 |---|---|---|
@@ -290,13 +305,11 @@ trace). Propagating the client identity *into* the caller's reactive operators i
 attempted: the caller's own context (its inbound request, its trace) is the identity that matters there,
 and the host's context-propagation setup owns it.
 
-**The caller's context comes from the Reactor Context.** The completing thread never ran the inbound
-request, so on its own it carries none of the caller's MDC — and the join of the client line to the
-server line (`endpoint_request_id`, Limesium) would depend on `spring.reactor.context-propagation=auto`,
-which restores thread-locals around every operator; Boot's default `limited` does not. The filter
-therefore captures the `ContextView` the caller subscribed with (`Mono.deferContextual`, one immutable
-reference, the same for every thread and every retry attempt) and the emitter restores the caller's
-thread-locals from it around each emission
+What the module cannot get from the completing thread is the **caller's** context — the inbound
+identity the client line should join to. For that it uses the one carrier a reactive chain has that is
+independent of threads: the **Reactor Context** the caller subscribed with, captured at subscription
+(`Mono.deferContextual`, one immutable reference, the same for every thread and every retry attempt)
+and turned back into thread-locals around each emission
 ([ADR-0010](../../docs/adr/ADR-0010-reactive-twin-restores-the-callers-context.md)):
 
 | Layer around the `log()` call | Mechanism | Owns |
@@ -304,15 +317,97 @@ thread-locals from it around each emission
 | outer: the caller's context | `AmbientContextRestorer` — Micrometer's `ContextSnapshotFactory.setThreadLocalsFrom(ctx)` through the `ThreadLocalAccessor`s the host registered, previous values restored on close | nothing: additive, `clearMissing` off — a thread-local the context does not mention stays as the thread has it |
 | inner: the module's identity | `MdcScope` | the trace keys — a bridge id an accessor restored never outranks the `traceparent` header's |
 
-Two things are the host's part: the identity in the Reactor Context and an accessor for it. Limesium's
-reactive twin does both for its `endpoint_*` keys; a host's own key needs the same two steps, spelled out
-with code in [§3.6](#36-joining-the-server-line-what-the-host-provides). The restoration is
-opt-in by classpath presence — `io.micrometer:context-propagation` is an optional dependency of this
-module; without it the emitter restores nothing and behaves as before ADR-0010. No `adapter-logging.*`
-key exists for it, so the configuration stays identical to the RestClient twin's. A restorer that throws
-(a host accessor failing on this thread) costs the ambient keys, counted as `stage=wiring`, never the
-event. The RestClient twin needs none of this: the blocking call carries the caller's MDC through the
-wire call on the thread itself ([§4.1](#41-differences-to-the-restclient-twin)).
+The restoration is opt-in by classpath presence — `io.micrometer:context-propagation` is an optional
+dependency of this module; without it the emitter restores nothing and behaves as before ADR-0010. No
+`adapter-logging.*` key exists for it, so the configuration stays identical to the RestClient twin's. A
+restorer that throws (a host accessor failing on this thread) costs the ambient keys, counted as
+`stage=wiring`, never the event. What reaches the Reactor Context in the first place, though, depends on
+the kind of application the module runs in — the two cases below. In both, the host's part per key is
+the same and is spelled out with code in [§3.6](#36-joining-the-server-line-what-the-host-provides).
+
+#### 2.6.1 In a WebFlux application
+
+In a WebFlux host **no thread owns the request**. The handler starts on one event-loop thread and its
+operators may continue on others; a value put into the thread's MDC is meaningful only until the next
+operator boundary. The identity of the inbound request therefore lives in the Reactor Context of the
+handler chain, not in a thread: a `WebFilter` writes it with `contextWrite`, every operator of the
+chain sees it, and Micrometer's context propagation restores it into the MDC around an operator when
+the host asks for it. Limesium's reactive twin does this for its `endpoint_*` keys — it writes them
+into the context under the MDC key names and registers a `ThreadLocalAccessor` per key.
+
+Whether the host's *own* log statements inside operators see those keys is Boot's
+`spring.reactor.context-propagation`: `auto` restores thread-locals around every operator, the default
+`limited` only around `tap` and `handle`. That is the host's concern for the host's lines.
+
+The `WebClient` call is part of the handler chain, so the context the filter captures at subscription
+**is** the handler's context — including the inbound identity, if the host or Limesium put it there.
+The module restores it on the completing event-loop thread around the exchange line, regardless of the
+propagation mode: the client line joins the server line under `limited` as under `auto`; under `auto`
+the restoration merely repeats what Reactor already did around the operator. A `WebClient` call made
+outside any request chain — a scheduled job, a startup probe — subscribes with an empty context and
+logs the module's own identity alone, which is the truth about such a call.
+
+What the host provides: the identity in the context (a `WebFilter` with `contextWrite`), an accessor
+per key, and the library — [§3.6](#36-joining-the-server-line-what-the-host-provides), steps 1 to 3;
+with Limesium's reactive twin only step 3 remains.
+
+#### 2.6.2 In a Tomcat (servlet) application
+
+In a servlet host **the request owns its thread**: the servlet filter chain sets the MDC on the
+request's thread and removes it at the end (Limesium's servlet twin, or the host's own filter), and
+every line written on that thread in between is joined. A `WebClient` used from such a host — a
+service that mixes `RestClient` for most calls with `WebClient` for a streaming one, or a Spring MVC
+controller returning a `Mono` — is subscribed on the servlet thread, but its response and body arrive
+on Reactor Netty's event-loop threads. With `.block()` the servlet thread waits while an event-loop
+thread completes the exchange and writes the line.
+
+Two things are missing there that the WebFlux case has for free: the completing thread has no MDC, and
+the Reactor Context is **empty** — a servlet request has no Reactor Context of its own, nothing wrote
+the inbound identity into the chain. The module's restorer can only restore what the context holds, so
+the host has to carry the servlet thread's MDC into the context at subscription. That is a capture from
+thread-locals into the context, the reverse direction of the restoration, and Reactor provides it
+through the same accessors:
+
+- **`spring.reactor.context-propagation=auto`.** With automatic propagation enabled, Reactor captures
+  the registered thread-local values into the context on the blocking subscription methods — `block()`
+  and `blockOptional()` on a `Mono`, `blockFirst()`, `blockLast()`, `toIterable()` and `toStream()` on
+  a `Flux` — on the thread that calls them, which is the servlet thread with its MDC. Nothing to add at
+  the call site.
+- **`contextCapture()` on the chain**, for a host that keeps Boot's default `limited`, or that subscribes
+  without blocking (a `Mono` returned from an MVC controller, a `subscribe()` of the host's own). The
+  operator captures the registered thread-local values at subscription time, on the subscribing thread:
+
+  ```kotlin
+  val body =
+      client
+          .get()
+          .uri("/things/{id}", id)
+          .retrieve()
+          .bodyToMono(String::class.java)
+          .contextCapture()
+          .block()
+  ```
+
+Both capture only keys that have a **`ThreadLocalAccessor`** registered — the same accessors the
+restoration uses on the way back — so step 2 of [§3.6](#36-joining-the-server-line-what-the-host-provides)
+applies in a servlet host as well, and here it is always the host's step: Limesium's *servlet* twin sets
+the `endpoint_*` keys in the MDC but registers no accessors (accessors are a reactive concern, and its
+reactive twin registers them), so a Tomcat host that wants `endpoint_request_id` on its `WebClient`
+lines registers an accessor for it. Step 1 of §3.6 — writing the identity into the context — is what
+`auto` or `contextCapture()` does here in place of a `WebFilter`.
+
+The round trip is then: servlet filter → MDC on the servlet thread → captured into the Reactor Context
+at subscription → restored by the module on the event-loop thread around the exchange line → the line
+carries `endpoint_request_id` beside `adapter_request_id`, logged on a `reactor-http-*` thread. When an
+exchange happens to complete on the servlet thread itself (an immediate answer, a mocked connector), the
+MDC is already there, and the additive restorer leaves it as it is.
+
+Two things are deliberately not offered: a thread-local snapshot taken by the module at subscription
+(the reasons are in ADR-0010 — on the reactive stack the subscribing thread is not a reliable source,
+and the capture into the context is the mechanism Reactor itself provides), and a hand-written copy of
+the MDC into the context per call (`contextWrite { it.putAllMap(MDC.getCopyOfContextMap()) }` works,
+but repeats what `contextCapture()` does through the accessors, without the restoration's key
+discipline).
 
 ### 2.7 Fail-open contract
 
@@ -589,8 +684,10 @@ ran the inbound request. The module restores the caller's context there from the
 restore what the host made restorable. Three things, the first two per key:
 
 **1. The identity in the Reactor Context.** The value must be in the context the caller subscribes
-with — Reactor's own cross-thread carrier — under the name the MDC will use. A `WebFilter` puts it
-there for every handler of the request:
+with — Reactor's own cross-thread carrier — under the name the MDC will use. In a WebFlux host a
+`WebFilter` puts it there for every handler of the request (in a servlet host, where the identity sits
+in the servlet thread's MDC instead, this step is the capture into the context described in
+[§2.6.2](#262-in-a-tomcat-servlet-application)):
 
 ```kotlin
 @Component
@@ -650,10 +747,13 @@ as before ADR-0010.
 to add beyond step 3 — Limesium writes them with `contextWrite` under the MDC key names and registers
 an accessor per key when the library is present.
 
-**Not needed:** `spring.reactor.context-propagation=auto`. The module restores around its own emission,
-so Boot's default `limited` suffices for the join. `auto` remains what a host wants for its *own* log
-statements inside reactive operators; with it, the restoration around the exchange line is redundant
-and harmless.
+**On `spring.reactor.context-propagation=auto`.** The restoration itself does not need it: the module
+restores around its own emission, so Boot's default `limited` suffices for the join in a WebFlux host.
+`auto` remains what a host wants for its *own* log statements inside reactive operators; with it, the
+restoration around the exchange line is redundant and harmless. In a **servlet** host `auto` plays a
+different role — it is one of the two ways the servlet thread's MDC gets captured into the context at
+subscription in the first place, the other being `contextCapture()` on the chain
+([§2.6.2](#262-in-a-tomcat-servlet-application)).
 
 **Verifying it:** make one call from inside a request that carries the key, and expect the key in the
 exchange line's MDC (`%X{tenant}` in a pattern, a top-level field with structured logging) beside
