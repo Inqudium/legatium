@@ -372,7 +372,20 @@ through the same accessors:
   the registered thread-local values into the context on the blocking subscription methods — `block()`
   and `blockOptional()` on a `Mono`, `blockFirst()`, `blockLast()`, `toIterable()` and `toStream()` on
   a `Flux` — on the thread that calls them, which is the servlet thread with its MDC. Nothing to add at
-  the call site.
+  the call site. **This is not the default.** Spring Boot's default for the property is `limited`, under
+  which no capture happens on `block()`; the host sets it explicitly in its `application.yml`:
+
+  ```yaml
+  spring:
+    reactor:
+      context-propagation: auto
+  ```
+
+  The module does not set it and never will: the property belongs to the host, it changes the
+  behaviour of every Reactor operator in the application and has a cost, and a logging library must
+  not switch that on silently. Without it — and without `contextCapture()` below — the Reactor Context
+  stays empty in a servlet host, and the exchange line carries the module's own `adapter_*` identity
+  alone.
 - **`contextCapture()` on the chain**, for a host that keeps Boot's default `limited`, or that subscribes
   without blocking (a `Mono` returned from an MVC controller, a `subscribe()` of the host's own). The
   operator captures the registered thread-local values at subscription time, on the subscribing thread:
