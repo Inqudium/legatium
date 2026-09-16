@@ -678,7 +678,7 @@ Everything not listed here behaves exactly as in `legatium-restclient-logging`.
 | Never-completing exchange | a response never closed | a body never subscribed nor released |
 | Request body | the byte array the client hands over | teed at the connector's `writeWith` through a wrapped inserter |
 | Call-wide MDC | thread-local `MdcScope` around the wire call | none |
-| The caller's context on the exchange line | present on the thread — the wire call blocks the caller's thread | restored from the **Reactor Context** around the emission through the host's `ThreadLocalAccessor`s ([§2.6](#26-mdc-and-the-reactive-call), ADR-0010); opt-in by `io.micrometer:context-propagation` on the classpath |
+| The caller's context on the exchange line | present on the thread — the wire call blocks the caller's thread; for a close on **another** thread, the caller's MDC snapshot taken at wiring (ADR-0011) | restored from the **Reactor Context** around the emission through the host's `ThreadLocalAccessor`s ([§2.6](#26-mdc-and-the-reactive-call), ADR-0010); opt-in by `io.micrometer:context-propagation` on the classpath |
 | Read failure mid-body | `IOException` from the tee stream | the body `Flux`'s error signal |
 | Body tee concurrency | volatile single-writer | lock-guarded, frozen at emission |
 | Attachment | `RestClientCustomizer` + `RestTemplateCustomizer` | `WebClientCustomizer` |

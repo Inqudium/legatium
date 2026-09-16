@@ -631,7 +631,11 @@ Set by `MdcScope` around each emission — and, on the blocking stack, around th
 
 `MdcScope` restores the previous value of every key on close, rolls back a partial install if the
 adapter throws mid-put, and restores best-effort on close with the first failure rethrown and later ones
-suppressed. It never removes keys it does not own: an inbound request's identity stays. The reactive
+suppressed. It never removes keys it does not own: an inbound request's identity stays. On the blocking
+stack the caller's MDC is snapshotted at wiring and restored around the emission only when the host
+closes the response on another thread than the calling one
+([RestClient guide §2.6](../legatium-restclient-logging/docs/GUIDE.md#26-mdc-coverage),
+[ADR-0011](adr/ADR-0011-blocking-twin-snapshots-the-callers-mdc.md)). The reactive
 stack has no call-wide thread-local scope — the call hops event-loop threads; propagating the identity
 into reactive operators is the host's context-propagation business. The caller's context, though, is
 restored there: the WebClient twin captures the Reactor Context the caller subscribed with and turns it

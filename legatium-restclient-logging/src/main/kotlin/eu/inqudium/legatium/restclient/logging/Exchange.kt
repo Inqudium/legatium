@@ -44,6 +44,11 @@ internal class Exchange(
      */
     val traceId: String? = null,
     val spanId: String? = null,
+    /**
+     * The caller's MDC at wiring, own and trace keys excluded (ADR-0011) - restored by the emitter when
+     * the response is closed on another thread than the one that made the call.
+     */
+    val callerMdc: CallerMdcSnapshot = CallerMdcSnapshot.NONE,
 ) {
     /**
      * The exactly-once guard of the COMPLETION (gauge close + emission): the response close and the

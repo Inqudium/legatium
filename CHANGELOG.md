@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configuration key; a host without it behaves as before. The RestClient twin needs no counterpart,
   its wire call blocks the caller's thread; why the Reactor Context and not a thread-local snapshot
   is [ADR-0010](docs/adr/ADR-0010-reactive-twin-restores-the-callers-context.md).
+- RestClient twin: the caller's MDC is snapshotted at wiring, on the calling thread, and
+  restored around the exchange line when the host closes the response on **another** thread
+  (a streamed body handed to a pooled reader) - the one case in which the blocking twin's client
+  line could not join the server line. Own and trace keys are left out of the snapshot, it is
+  not applied on the calling thread (the live MDC is the truth there), and it is additive like
+  the emission scope. One map copy per call, nothing for an empty MDC, no configuration key;
+  [ADR-0011](docs/adr/ADR-0011-blocking-twin-snapshots-the-callers-mdc.md).
 
 ### Changed
 

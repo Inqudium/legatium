@@ -49,6 +49,11 @@ internal class ExchangeLogEmitter(
     private val nanoTime: NanoTimeSource,
     private val metrics: ClientLoggingMetrics,
     private val masker: HeaderValueMasker,
+    /**
+     * Restores the caller's MDC snapshot around an emission on another thread (ADR-0011). Mutable for the
+     * tests only, which swap in a throwing restorer to drive the fail-open path.
+     */
+    internal var callerMdcRestorer: CallerMdcRestorer = CallerMdcRestorer.DEFAULT,
 ) {
     private val exchangeLog = LoggerFactory.getLogger(properties.loggerName)
 
@@ -83,19 +88,24 @@ internal class ExchangeLogEmitter(
             if (!exchangeLog.isInfoEnabled) {
                 return
             }
-            MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true).use {
-                exchangeLog
-                    .atInfo()
-                    .setMessage(
-                        "Adapter http exchange started ${exchange.method} ${exchange.target} " +
-                            "[${MdcKeys.REQUEST_ID}=${exchange.requestId}]",
-                    ).addKeyValue(ClientLogField.REQUEST_METHOD, exchange.method)
-                    .addKeyValueIfPresent(ClientLogField.URL_HOST, exchange.host)
-                    .addKeyValue(ClientLogField.URL_PATH, exchange.path)
-                    .addKeyValueIfPresent(ClientLogField.URL_TEMPLATE, exchange.uriTemplate)
-                    .addKeyValueIfPresent(ClientLogField.URL_QUERY, exchange.query)
-                    .addKeyValueIfPresent(ClientLogField.REQUEST_HEADERS, renderHeaders(exchange.requestHeaders))
-                    .log()
+            // The caller's context first, the module's own scope inside it - the same layering as the
+            // completion event; on the caller's thread, where the arrival line always runs, a no-op.
+            restoreCallerMdcQuietly(exchange).use {
+                MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true).use {
+                    exchangeLog
+                        .atInfo()
+                        .setMessage(
+                            "Adapter http exchange started ${exchange.method} ${exchange.target} " +
+                                "[${MdcKeys.REQUEST_ID}=${exchange.requestId}]",
+                        ).addKeyValue(ClientLogField.REQUEST_METHOD, exchange.method)
+                        .addKeyValueIfPresent(ClientLogField.NAME, exchange.name)
+                        .addKeyValueIfPresent(ClientLogField.URL_HOST, exchange.host)
+                        .addKeyValue(ClientLogField.URL_PATH, exchange.path)
+                        .addKeyValueIfPresent(ClientLogField.URL_TEMPLATE, exchange.uriTemplate)
+                        .addKeyValueIfPresent(ClientLogField.URL_QUERY, exchange.query)
+                        .addKeyValueIfPresent(ClientLogField.REQUEST_HEADERS, renderHeaders(exchange.requestHeaders))
+                        .log()
+                }
             }
         }
     }
@@ -152,15 +162,43 @@ internal class ExchangeLogEmitter(
         if (!exchangeLog.isEnabledForLevel(level)) {
             return
         }
-        // The emission scope OWNS the trace keys ([MdcScope]): the encoder emits the traceId/spanId the
-        // request went out with, never a stale bridge id of the closing thread.
-        val mdcScope = MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true)
+        // The caller's MDC FIRST when the close runs on another thread (ADR-0011), and the emission scope
+        // inside it, which OWNS the trace keys ([MdcScope]): the encoder emits the traceId/spanId the
+        // request went out with, never a stale bridge id of the closing thread - nor one the snapshot
+        // could have carried, which is why the snapshot leaves the trace keys out.
+        val callerScope = restoreCallerMdcQuietly(exchange)
         try {
-            logEvent(exchange, classification, level, status, elapsedNanos / NANOS_PER_MS, slow)
+            val mdcScope = MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true)
+            try {
+                logEvent(exchange, classification, level, status, elapsedNanos / NANOS_PER_MS, slow)
+            } finally {
+                restoreQuietly(mdcScope, exchange)
+            }
         } finally {
-            restoreQuietly(mdcScope, exchange)
+            restoreQuietly(callerScope, exchange)
         }
     }
+
+    /**
+     * The caller's MDC restored for a close on another thread, or nothing: a restorer that throws costs
+     * the caller's keys, counted as stage=wiring, never the event - which then carries the module's own
+     * identity alone, exactly as before ADR-0011.
+     */
+    private fun restoreCallerMdcQuietly(exchange: Exchange): AutoCloseable =
+        try {
+            callerMdcRestorer.restore(exchange.callerMdc)
+        } catch (e: Exception) {
+            reportQuietly {
+                metrics.wiringFailure()
+                internalLog.warn(
+                    "The caller's MDC could not be restored for {} {} - the event follows without it: {}",
+                    exchange.method,
+                    exchange.target,
+                    e.toString(),
+                )
+            }
+            AutoCloseable {}
+        }
 
     /**
      * The SLF4J level carries the severity, adapter_outcome the semantic - decoupled on purpose (see
@@ -273,7 +311,7 @@ internal class ExchangeLogEmitter(
      * failure propagating out of the try - it costs the restoration, counted as stage=wiring.
      */
     private fun restoreQuietly(
-        scope: MdcScope,
+        scope: AutoCloseable,
         exchange: Exchange,
     ) {
         try {

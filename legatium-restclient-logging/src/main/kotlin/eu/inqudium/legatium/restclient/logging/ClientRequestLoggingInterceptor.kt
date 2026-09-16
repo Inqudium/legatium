@@ -98,7 +98,9 @@ class ClientRequestLoggingInterceptor
         private val masker: HeaderValueMasker = HeaderValueMasker.forKey(properties.maskingKey),
     ) : ClientHttpRequestInterceptor {
         private val metrics = ClientLoggingMetrics.forRegistry(meterRegistry, ClientStack.RESTCLIENT)
-        private val emitter = ExchangeLogEmitter(properties, nanoTime, metrics, masker)
+
+        /** Exposed for the tests, which swap the emitter's caller-MDC restorer to drive its fail-open path. */
+        internal val emitter = ExchangeLogEmitter(properties, nanoTime, metrics, masker)
 
         // Activation is the shared implementation (ADR-0003): identical semantics on both stacks by construction.
         private val activation = ClientActivation(properties)
@@ -342,10 +344,32 @@ class ClientRequestLoggingInterceptor
                     startNanos = nanoTime.nanoTime(),
                     traceId = identity.traceId,
                     spanId = identity.spanId,
+                    callerMdc = captureCallerMdcQuietly(request),
                 )
             metrics.exchangeOpened()
             return exchange
         }
+
+        /**
+         * The caller's MDC for a close on another thread (ADR-0011), or nothing: a throwing MDC adapter
+         * costs the snapshot, counted as stage=wiring, never the wiring - the call is logged either way,
+         * with the module's own identity.
+         */
+        private fun captureCallerMdcQuietly(request: HttpRequest): CallerMdcSnapshot =
+            try {
+                CallerMdcSnapshot.capture()
+            } catch (e: Exception) {
+                reportQuietly {
+                    metrics.wiringFailure()
+                    internalLog.warn(
+                        "The caller's MDC could not be captured for {} {} - a close on another thread logs without it: {}",
+                        request.method,
+                        request.uri,
+                        e.toString(),
+                    )
+                }
+                CallerMdcSnapshot.NONE
+            }
 
         /**
          * A capture exists when the body is logged in ANY mode OR measured - `on-failure` needs the bytes

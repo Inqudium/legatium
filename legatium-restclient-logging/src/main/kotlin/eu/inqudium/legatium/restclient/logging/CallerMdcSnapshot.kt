@@ -1,0 +1,93 @@
+package eu.inqudium.legatium.restclient.logging
+
+import eu.inqudium.legatium.common.MdcKeys
+import eu.inqudium.legatium.common.TraceMdcKeys
+import org.slf4j.MDC
+
+/**
+ * The caller's MDC as it was when the exchange was wired, for the one case in which the emission does
+ * not run on the caller's thread (ADR-0011): the host handed the response to another thread and closes
+ * it there - a streamed body, a pooled reader - and that thread carries none of the caller's context,
+ * so the client line would not join the server line it was made from.
+ *
+ * Captured on the calling thread at wiring, WITHOUT the keys the module owns (`adapter_*`) and the trace
+ * keys: those belong to the emission's [eu.inqudium.legatium.common.MdcScope], and a nested client call
+ * would otherwise carry the outer call's identity in its snapshot. [restore] installs the entries only
+ * on ANOTHER thread than the one that captured them - on the caller's own thread the MDC is simply
+ * present, and a value the caller updated between the call and the close stays the newer one. Additive
+ * like the emission scope: the snapshot wins for the keys it holds, everything else stays as the
+ * emitting thread has it, and every touched key is restored on close.
+ *
+ * The RestClient counterpart of the WebClient twin's `AmbientContextRestorer`, with the thread as the
+ * source instead of the Reactor Context: on the blocking stack the thread IS the caller's context.
+ */
+internal class CallerMdcSnapshot private constructor(
+    /** The thread the snapshot was taken on - the thread on which restoring it would be a no-op. */
+    private val thread: Thread?,
+    /** The caller's entries, the module's own and the trace keys excluded. */
+    internal val entries: Map<String, String>,
+) {
+    /**
+     * Installs the entries for the scope's lifetime when the current thread is not the capturing one;
+     * the returned scope restores the previous value of every touched key. A no-op on the capturing
+     * thread and for an empty snapshot.
+     */
+    fun restore(): AutoCloseable {
+        if (entries.isEmpty() || Thread.currentThread() === thread) {
+            return NONE_SCOPE
+        }
+        val previous = entries.keys.associateWith { MDC.get(it) }
+        try {
+            entries.forEach { (key, value) -> MDC.put(key, value) }
+        } catch (e: Exception) {
+            // Roll back a PARTIAL install before propagating, as MdcScope does.
+            try {
+                restorePrevious(previous)
+            } catch (rollback: Exception) {
+                e.addSuppressed(rollback)
+            }
+            throw e
+        }
+        return AutoCloseable { restorePrevious(previous) }
+    }
+
+    private fun restorePrevious(previous: Map<String, String?>) {
+        var failure: Exception? = null
+        previous.forEach { (key, value) ->
+            try {
+                if (value == null) MDC.remove(key) else MDC.put(key, value)
+            } catch (e: Exception) {
+                val first = failure
+                if (first == null) failure = e else first.addSuppressed(e)
+            }
+        }
+        failure?.let { throw it }
+    }
+
+    companion object {
+        private val OWNED_KEYS = setOf(MdcKeys.REQUEST_ID, MdcKeys.REQUEST_METHOD, MdcKeys.ROUTE, TraceMdcKeys.TRACE_ID, TraceMdcKeys.SPAN_ID)
+
+        private val NONE_SCOPE = AutoCloseable {}
+
+        /** No snapshot: restores nothing, wherever it is closed. */
+        val NONE = CallerMdcSnapshot(null, emptyMap())
+
+        /**
+         * The current thread's MDC, the module's own and the trace keys left out. An empty MDC costs
+         * nothing: the adapter returns null and no map is built.
+         */
+        fun capture(): CallerMdcSnapshot {
+            val entries = MDC.getCopyOfContextMap()?.filterKeys { it !in OWNED_KEYS }?.takeIf { it.isNotEmpty() } ?: return NONE
+            return CallerMdcSnapshot(Thread.currentThread(), entries)
+        }
+    }
+}
+
+/** How the emitter restores a snapshot - a seam for the tests, which swap in a throwing one to drive the fail-open path. */
+internal fun interface CallerMdcRestorer {
+    fun restore(snapshot: CallerMdcSnapshot): AutoCloseable
+
+    companion object {
+        val DEFAULT = CallerMdcRestorer { it.restore() }
+    }
+}

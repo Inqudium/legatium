@@ -2,8 +2,12 @@
 
 **Status:** Accepted  
 **Date:** 2026-09-16  
+**Last updated:** 2026-09-16  
 **Deciders:** Dirk Haase (maintainer)  
-**Related:** ADR-0002 (the trace keys stay owned by the emission
+**Related:** ADR-0011 (the blocking twin's counterpart, a thread
+snapshot applied only for a close on another thread - it narrows the
+"deliberate stack difference" below to the mechanism),
+ADR-0002 (the trace keys stay owned by the emission
 scope; a bridge id the accessors restore never outranks the header's),
 ADR-0003 (this is reactive-only code and therefore lives in the
 WebClient module, not in `legatium-common`), ADR-0007 (the
@@ -118,12 +122,19 @@ alone.
 
 ### A deliberate stack difference
 
-The RestClient twin gets no counterpart. The blocking call carries
-the caller's context through the wire call on the thread itself; a
-thread-local snapshot there would only serve the rare host that
-closes a response on another thread, at the cost of a map copy on
-every call. This joins `cancelled` and the emission point in the list
-of documented stack differences.
+The RestClient twin gets no *Reactor Context* counterpart: a blocking
+call has none, and the caller's context travels through the wire call
+on the thread itself. The rare host that closes a response on
+another thread is served by
+[ADR-0011](ADR-0011-blocking-twin-snapshots-the-callers-mdc.md), a
+thread-local snapshot applied only there - with the same layering as
+here (the caller's context outside, the module's own scope inside),
+so the two twins differ in the source, not in the shape. This joins
+`cancelled` and the emission point in the list of documented stack
+differences.
+
+*Amended 2026-09-16: this section originally said the blocking twin
+gets no counterpart at all; ADR-0011 added the snapshot.*
 
 ## Consequences
 

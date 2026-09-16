@@ -264,6 +264,115 @@ class ClientRequestLoggingInterceptorTest {
     }
 
     @Nested
+    inner class `The caller's context on another thread` {
+        private val key = "endpoint_request_id"
+        private val executor =
+            java.util.concurrent.Executors
+                .newSingleThreadExecutor()
+        private val pinned = PinnedMdcAppender().apply { start() }
+
+        @BeforeEach
+        fun attach() {
+            MDC.clear()
+            log.logger.addAppender(pinned)
+        }
+
+        @AfterEach
+        fun detach() {
+            log.logger.detachAppender(pinned)
+            pinned.stop()
+            executor.shutdownNow()
+            MDC.clear()
+        }
+
+        private fun <T> onAnotherThread(block: () -> T): T = executor.submit(block).get()
+
+        @Test
+        fun `should restore the caller's MDC around the exchange line when the response is closed on another thread`() {
+            // What is tested: ADR-0011 - the call on one thread with an inbound identity in its MDC,
+            //   the response handed to and closed on another thread that carries a foreign value and a
+            //   key of its own.
+            // Success criteria: the event is logged on the other thread and carries the caller's value
+            //   beside the module's identity and the other thread's own key; that thread is left as it
+            //   was.
+            // Why it matters: a streamed body closed by a reader thread would otherwise log a client
+            //   line that cannot be joined to the server line it was made from - or, worse, joins a
+            //   foreign one.
+            // Given
+            MDC.put(key, "inbound-7")
+            val response = interceptor.intercept(request(), ByteArray(0), answering(body = "payload"))
+
+            // When
+            val afterOnWorker =
+                onAnotherThread {
+                    MDC.put(key, "foreign")
+                    MDC.put("worker_only", "w")
+                    response.consumeAndClose()
+                    MDC.get(key) to MDC.get("worker_only")
+                }
+
+            // Then
+            val event = pinned.events.single()
+            assertThat(event.threadName).isNotEqualTo(Thread.currentThread().name)
+            assertThat(event.mdcPropertyMap)
+                .containsEntry(key, "inbound-7")
+                .containsEntry("worker_only", "w")
+                .containsEntry(MdcKeys.REQUEST_ID, "generated-42")
+            assertThat(afterOnWorker).isEqualTo("foreign" to "w")
+        }
+
+        @Test
+        fun `should not override a value the caller updated when the response is closed on the caller's thread`() {
+            // What is tested: the snapshot is not applied on the capturing thread.
+            // Success criteria: the event carries the value set AFTER the call, before the close.
+            // Why it matters: on the caller's thread the live MDC is the truth; the snapshot exists for
+            //   another thread only.
+            // Given
+            MDC.put(key, "v1")
+            val response = interceptor.intercept(request(), ByteArray(0), answering())
+            MDC.put(key, "v2")
+
+            // When
+            response.consumeAndClose()
+
+            // Then
+            assertThat(pinned.events.single().mdcPropertyMap).containsEntry(key, "v2")
+        }
+
+        @Test
+        fun `should log the module's own identity alone when the restorer throws`() {
+            // What is tested: restoreCallerMdcQuietly - the fail-open path around the snapshot.
+            // Success criteria: the event is still logged with outcome and identity, without the
+            //   caller's key, and the fail-open meter counts one stage=wiring occurrence.
+            // Why it matters: the restoration is an extra; a failing extra must cost the caller's keys,
+            //   never the event.
+            // Given
+            MDC.put(key, "inbound-7")
+            val response = interceptor.intercept(request(), ByteArray(0), answering())
+            interceptor.emitter.callerMdcRestorer = CallerMdcRestorer { throw IllegalStateException("adapter refused") }
+
+            // When
+            try {
+                onAnotherThread { response.consumeAndClose() }
+            } finally {
+                interceptor.emitter.callerMdcRestorer = CallerMdcRestorer.DEFAULT
+            }
+
+            // Then
+            val event = pinned.events.single()
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "success")
+            assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42").doesNotContainKey(key)
+            assertThat(
+                meterRegistry
+                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
+                    .tag("stage", "wiring")
+                    .counter()
+                    .count(),
+            ).isEqualTo(1.0)
+        }
+    }
+
+    @Nested
     inner class `Identity per ADR-0002` {
         @Test
         fun `should generate a correlation id and SEND it on a traceless request without one`() {
