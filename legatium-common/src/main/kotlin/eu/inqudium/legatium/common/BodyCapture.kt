@@ -44,17 +44,17 @@ enum class BodyReadState(
 
     /**
      * The end of the stream was observed - or the response carried no body at all (a 1xx, 204 or 304
-     * answer, a declared length of zero): nothing to consume, nothing an application could have
-     * discarded, so both twins count it complete rather than letting every bodiless route look like
-     * discarded payload.
+     * answer, a declared length of zero, the answer to a HEAD): nothing to consume, nothing an
+     * application could have discarded, so both twins count it complete rather than letting every
+     * bodiless route look like discarded payload.
      */
     COMPLETE("complete"),
 }
 
 /**
- * Decodes a byte-bounded PREFIX of a text: the capture limit bounds bytes, not characters, so the cut can
- * fall inside a multi-byte sequence; decoded as a whole, that incomplete tail would render as a
- * replacement character and corrupt the logged prefix.
+ * Decodes a byte-bounded PREFIX of a text - the first [length] bytes of [bytes]: the capture limit bounds
+ * bytes, not characters, so the cut can fall inside a multi-byte sequence; decoded as a whole, that
+ * incomplete tail would render as a replacement character and corrupt the logged prefix.
  * Decoding with `endOfInput = false` leaves an incomplete trailing sequence undecoded (underflow) instead
  * of reporting it as malformed; malformed bytes INSIDE the prefix are still replaced, as `String(bytes,
  * charset)` would. Shared by both adapter-logging twins (ADR-0003).
@@ -62,6 +62,7 @@ enum class BodyReadState(
 internal fun decodeTruncated(
     bytes: ByteArray,
     charset: Charset,
+    length: Int = bytes.size,
 ): String {
     val decoder =
         charset
@@ -71,8 +72,8 @@ internal fun decodeTruncated(
     // Sized in double precision and rounded UP: maxCharsPerByte is a float, and a float product
     // truncated to Int can undershoot for large captures - the OVERFLOW result below is the guard
     // against a decoder whose declared maximum is wrong, not the normal path.
-    var capacity = ceil(bytes.size.toDouble() * decoder.maxCharsPerByte()).toInt() + 1
-    val input = ByteBuffer.wrap(bytes)
+    var capacity = ceil(length.toDouble() * decoder.maxCharsPerByte()).toInt() + 1
+    val input = ByteBuffer.wrap(bytes, 0, length)
     while (true) {
         val chars = CharBuffer.allocate(capacity)
         input.rewind()

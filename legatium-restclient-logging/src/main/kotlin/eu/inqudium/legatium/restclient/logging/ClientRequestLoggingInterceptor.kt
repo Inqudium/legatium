@@ -251,7 +251,7 @@ class ClientRequestLoggingInterceptor
                 exchange.responseStatus = status
                 val headers = response.headers
                 exchange.responseHeaders = headers
-                exchange.responseCapture?.expectBytes(declaredBodyLength(status, headers))
+                exchange.responseCapture?.expectBytes(declaredBodyLength(exchange.method, status, headers))
             } catch (e: Exception) {
                 reportQuietly {
                     metrics.wiringFailure()
@@ -266,10 +266,12 @@ class ClientRequestLoggingInterceptor
         }
 
         /**
-         * The body length the response carries and the engine will deliver unchanged: ZERO for a 1xx,
-         * 204 or 304 answer - Spring's own `IntrospectingClientHttpResponse.hasMessageBody()` rule, by
-         * which `RestClient` and `RestTemplate` never open such a body, so the capture must not wait for
-         * an open that never comes; `Content-Length` otherwise, when present and no `Content-Encoding`
+         * The body length the response carries and the engine will deliver unchanged: ZERO for the
+         * answer to a HEAD request - whose `Content-Length` is the representation's, not the body's
+         * (RFC 9110 §9.3.2), and which the clients never open - and for a 1xx, 204 or 304 answer -
+         * Spring's own `IntrospectingClientHttpResponse.hasMessageBody()` rule, by which `RestClient`
+         * and `RestTemplate` never open such a body, so the capture must not wait for an open that
+         * never comes; `Content-Length` otherwise, when present and no `Content-Encoding`
          * other than `identity` is on the response; [BoundedBodyCapture.UNKNOWN_LENGTH] for the rest
          * (chunked, possibly decoded by the engine, or a value that is not a number). The header is
          * PEER-CONTROLLED input: it only
@@ -278,10 +280,11 @@ class ClientRequestLoggingInterceptor
          * wiring failure.
          */
         private fun declaredBodyLength(
+            method: String,
             status: Int,
             headers: HttpHeaders,
         ): Long {
-            if (status in 100..199 || status == 204 || status == 304) {
+            if (method == "HEAD" || status in 100..199 || status == 204 || status == 304) {
                 return 0
             }
             val encoding = headers.getFirst(HttpHeaders.CONTENT_ENCODING)
