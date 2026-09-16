@@ -1,7 +1,7 @@
 package eu.inqudium.legatium.restclient.logging
 
 import eu.inqudium.legatium.common.BodyReadState
-import eu.inqudium.legatium.common.decodeTruncated
+import eu.inqudium.legatium.common.BoundedByteBuffer
 import java.nio.charset.Charset
 
 /**
@@ -26,9 +26,9 @@ import java.nio.charset.Charset
  *
  * The capture mirrors the application's READ POSITION, so it follows a `mark`/`reset` of the tee
  * stream: [mark] remembers the count, the buffered length and the read state, [reset] restores them,
- * and the bytes the application then reads again are neither counted nor buffered twice. The buffer is
- * a bare array (allocated on the first write, grown at most to [maxBytes]) rather than a
- * `ByteArrayOutputStream` because a reset must be able to cut it back.
+ * and the bytes the application then reads again are neither counted nor buffered twice. The bytes
+ * live in the shared [BoundedByteBuffer] (cut back on a reset, sized by the declared length); this
+ * class adds the count, the read state and the blocking stack's concurrency model.
  *
  * Besides the bytes, the response capture records HOW FAR the application consumed the body
  * ([readState], the `adapter.response.body.read` counter's source): the tee mirrors consumption, not
@@ -39,17 +39,9 @@ import java.nio.charset.Charset
  * and [BodyReadState]'s documentation.
  */
 internal class BoundedBodyCapture(
-    private val maxBytes: Int,
+    maxBytes: Int,
 ) {
-    init {
-        require(maxBytes >= 0) { "maxBytes must not be negative, got: $maxBytes" }
-    }
-
-    /** The buffered prefix - null until the first buffered byte, never longer than [maxBytes]. */
-    private var buffer: ByteArray? = null
-
-    /** The buffered length; the array beyond it is stale after a [reset]. */
-    private var buffered = 0
+    private val buffer = BoundedByteBuffer(maxBytes)
 
     /**
      * How far the application consumed the body - see [BodyReadState]. Volatile for the same
@@ -79,9 +71,7 @@ internal class BoundedBodyCapture(
     private var markedState: BodyReadState = BodyReadState.UNREAD
 
     fun capture(b: Int) {
-        if (buffered < maxBytes) {
-            ensureRoom(1)[buffered++] = b.toByte()
-        }
+        buffer.write(b)
         advance(1)
     }
 
@@ -90,31 +80,8 @@ internal class BoundedBodyCapture(
         offset: Int,
         length: Int,
     ) {
-        val room = maxBytes - buffered
-        if (room > 0 && length > 0) {
-            val n = minOf(length, room)
-            System.arraycopy(bytes, offset, ensureRoom(n), buffered, n)
-            buffered += n
-        }
+        buffer.write(bytes, offset, length)
         advance(length)
-    }
-
-    /**
-     * The buffer with room for [n] more bytes: allocated at the size of the first write, then doubled up
-     * to [maxBytes] - so a small body never pays for the whole cap, and a large one never grows past it.
-     */
-    private fun ensureRoom(n: Int): ByteArray {
-        val needed = buffered + n
-        val current = buffer
-        if (current != null && current.size >= needed) {
-            return current
-        }
-        val grown = ByteArray(minOf(maxBytes, maxOf(needed, (current?.size ?: 0) * 2)))
-        if (current != null) {
-            System.arraycopy(current, 0, grown, 0, buffered)
-        }
-        buffer = grown
-        return grown
     }
 
     /**
@@ -132,12 +99,14 @@ internal class BoundedBodyCapture(
     /**
      * Tells the capture how many body bytes the response CARRIES, so a reader that consumes exactly
      * that many without asking for the EOF still counts as complete (the second completion rule of
-     * [CapturingClientHttpResponse]). Only a length the caller trusts - the interceptor decides which
-     * ([UNKNOWN_LENGTH] otherwise). ZERO completes the read state right here: nothing to read, and the
-     * clients never open such a body, so no later mark could ([BodyReadState.COMPLETE]).
+     * [CapturingClientHttpResponse]) - and sizes the buffer by it. Only a length the caller trusts -
+     * the interceptor decides which ([UNKNOWN_LENGTH] otherwise). ZERO completes the read state right
+     * here: nothing to read, and the clients never open such a body, so no later mark could
+     * ([BodyReadState.COMPLETE]).
      */
     fun expectBytes(length: Long) {
         expectedBytes = length
+        buffer.expect(length)
         if (length == 0L) {
             readState = BodyReadState.COMPLETE
         }
@@ -156,7 +125,7 @@ internal class BoundedBodyCapture(
     /** Remembers the read position for [reset] - the tee's `mark`, taken when the engine stream took its own. */
     fun mark() {
         markedTotal = totalBytes
-        markedBuffered = buffered
+        markedBuffered = buffer.size
         markedState = readState
     }
 
@@ -166,7 +135,7 @@ internal class BoundedBodyCapture(
      * not count twice. [totalBytes] is written LAST, like every mutation.
      */
     fun reset() {
-        buffered = markedBuffered
+        buffer.truncate(markedBuffered)
         readState = markedState
         totalBytes = markedTotal
     }
@@ -179,22 +148,12 @@ internal class BoundedBodyCapture(
     /**
      * The captured bytes decoded with [charset], suffixed with a truncation note when the body was larger
      * than the capture limit. Returns `null` for a body of zero bytes, so the log emission can omit the
-     * key entirely instead of logging an empty string.
+     * key entirely instead of logging an empty string. Reads [totalBytes] FIRST (the handoff model).
      */
-    fun loggedValue(charset: Charset): String? {
-        if (totalBytes == 0L) {
-            return null
-        }
-        val bytes = buffer ?: ByteArray(0)
-        return if (totalBytes > buffered) {
-            "${decodeTruncated(bytes, charset, buffered)}... [truncated, $totalBytes bytes total]"
-        } else {
-            String(bytes, 0, buffered, charset)
-        }
-    }
+    fun loggedValue(charset: Charset): String? = buffer.render(charset, totalBytes)
 
     companion object {
         /** No trustworthy declared length: completion is observed through the EOF only. */
-        const val UNKNOWN_LENGTH = -1L
+        const val UNKNOWN_LENGTH = BoundedByteBuffer.UNKNOWN_LENGTH
     }
 }

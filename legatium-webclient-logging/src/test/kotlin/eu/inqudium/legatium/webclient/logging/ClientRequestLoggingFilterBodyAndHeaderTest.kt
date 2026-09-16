@@ -431,6 +431,34 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
         }
 
         @Test
+        fun `should log a response body whose peer declared a Content-Length that is not a number`() {
+            // What is tested: the response's declared length is read at handover as the capture's
+            //   sizing hint; Spring parses the header with Long.parseLong, so a peer's garbage would
+            //   throw into the delivery of the response.
+            // Success criteria: the body reaches the caller, the event logs it in full, and no
+            //   failure is counted.
+            // Why it matters: the header is peer-controlled input feeding an allocation hint - it must
+            //   be folded to unknown, never propagated.
+            // Given
+            val registry = SimpleMeterRegistry()
+            val filter = filterWith(base.copy(logResponseBody = BodyLogMode.ALWAYS), ticker, registry)
+            val response =
+                ClientResponse
+                    .create(HttpStatus.OK)
+                    .header("Content-Length", "many")
+                    .body("payload")
+                    .build()
+
+            // When
+            val body = filter.call(request(), ExchangeFunction { Mono.just(response) })
+
+            // Then
+            assertThat(body).isEqualTo("payload")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_outcome", "success").containsEntry("adapter_response_body", "payload")
+            assertThat(registry.find(ClientLoggingMetrics.FAIL_OPEN_METER).counters().sumOf { it.count() }).isZero()
+        }
+
+        @Test
         fun `should record the read state as partial for a cancelled body and complete for a consumed one`() {
             // What is tested: the observation points of the read state on the reactive tee - the
             //   subscription marks PARTIAL, the completion signal marks COMPLETE, a cancellation leaves

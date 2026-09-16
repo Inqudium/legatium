@@ -38,6 +38,65 @@ class BoundedBodyCaptureTest {
     }
 
     @Nested
+    inner class `Buffer sizing` {
+        @Test
+        fun `should take the declared length as the sizing hint only before the first buffered byte`() {
+            // What is tested: expectBytes - accepted while nothing is buffered, ignored once a byte is
+            //   in the buffer and once frozen; the hint never touches the count or the cap.
+            // Success criteria: the hint reads 5 after expectBytes(5), stays 5 after a write and a
+            //   later expectBytes(9), and stays 5 through a freeze; the logged text is exact.
+            // Why it matters: the hint sizes the buffer's single block at creation; a hint that moved
+            //   afterwards would suggest a resize that never happens.
+            // Given
+            val capture = BoundedBodyCapture(16)
+
+            // When/Then
+            capture.expectBytes(5)
+            assertThat(capture.expectedBytes).isEqualTo(5L)
+            capture.capture(bytes("hello"), 0, 5)
+            capture.expectBytes(9)
+            assertThat(capture.expectedBytes).isEqualTo(5L)
+            capture.freeze()
+            capture.expectBytes(9)
+            assertThat(capture.expectedBytes).isEqualTo(5L)
+            assertThat(capture.loggedValue(StandardCharsets.UTF_8)).isEqualTo("hello")
+        }
+
+        @Test
+        fun `should capture a body that outgrows its declared length up to the cap`() {
+            // What is tested: the buffer's growth path - the declared length sizes one block of 4, the
+            //   peer sends 10 bytes in chunks, then more than the cap.
+            // Success criteria: after 10 bytes the logged text is the whole body; after 20 the first 16
+            //   with the note for 20 bytes total - a lying declaration costs allocation, never bytes.
+            // Why it matters: Content-Length is peer-controlled; a declaration below the truth must not
+            //   clip the capture, and one above the cap or absent must not break it either.
+            // Given: declared 4, cap 16
+            val capture = BoundedBodyCapture(16)
+            capture.expectBytes(4)
+
+            // When: 10 bytes in chunks of 3, 3 and 4
+            capture.capture(bytes("012"), 0, 3)
+            capture.capture(bytes("345"), 0, 3)
+            capture.capture(bytes("6789"), 0, 4)
+
+            // Then: the whole body, across the second block
+            assertThat(capture.loggedValue(StandardCharsets.UTF_8)).isEqualTo("0123456789")
+
+            // And: beyond the cap, clipped with the note
+            capture.capture(bytes("abcdefghij"), 0, 10)
+            assertThat(capture.loggedValue(StandardCharsets.UTF_8)).isEqualTo("0123456789abcdef... [truncated, 20 bytes total]")
+
+            // And: a declaration above the cap, of zero and an unknown one all buffer to the cap
+            listOf(1L shl 40, 0L, BoundedBodyCapture.UNKNOWN_LENGTH).forEach { declared ->
+                val other = BoundedBodyCapture(4)
+                other.expectBytes(declared)
+                other.capture(bytes("abcdef"), 0, 6)
+                assertThat(other.loggedValue(StandardCharsets.UTF_8)).isEqualTo("abcd... [truncated, 6 bytes total]")
+            }
+        }
+    }
+
+    @Nested
     inner class `Freeze semantics` {
         @Test
         fun `should ignore every mutation after freeze and keep the snapshot stable`() {

@@ -46,21 +46,40 @@ internal fun tee(
  *
  * The publisher SPECIALIZATION is preserved: a `Mono` body stays a `Mono` (single-buffer requests take
  * the connector's optimized path), everything else becomes a `Flux` as it would anyway.
+ *
+ * At write time the request's `Content-Length` is known - `EncoderHttpMessageWriter` sets it for a
+ * single-buffer body right before `writeWith`, the caller may have set it for a streamed one - and is
+ * handed to the capture as its buffer's sizing hint ([BoundedBodyCapture.expectBytes]); a malformed
+ * caller-set value is folded to unknown, not thrown.
  */
 internal open class CapturingClientHttpRequestDecorator(
     delegate: ClientHttpRequest,
     protected val capture: BoundedBodyCapture,
 ) : ClientHttpRequestDecorator(delegate) {
-    override fun writeWith(body: Publisher<out DataBuffer>): Mono<Void> =
-        when (body) {
+    override fun writeWith(body: Publisher<out DataBuffer>): Mono<Void> {
+        expectDeclaredLength()
+        return when (body) {
             is Mono -> super.writeWith(body.map { tee(capture, it) })
             else -> super.writeWith(Flux.from(body).map { tee(capture, it) })
         }
+    }
 
-    override fun writeAndFlushWith(body: Publisher<out Publisher<out DataBuffer>>): Mono<Void> =
-        super.writeAndFlushWith(
+    override fun writeAndFlushWith(body: Publisher<out Publisher<out DataBuffer>>): Mono<Void> {
+        expectDeclaredLength()
+        return super.writeAndFlushWith(
             Flux.from(body).map { inner -> Flux.from(inner).map { tee(capture, it) } },
         )
+    }
+
+    private fun expectDeclaredLength() {
+        val declared =
+            try {
+                headers.contentLength
+            } catch (e: NumberFormatException) {
+                BoundedBodyCapture.UNKNOWN_LENGTH
+            }
+        capture.expectBytes(declared)
+    }
 }
 
 /**
