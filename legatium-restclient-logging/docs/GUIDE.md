@@ -33,6 +33,7 @@ meters, the fail-open promise and the shared code — is written once, in the
    2. [Manual wiring](#32-manual-wiring)
    3. [Interceptor order and other interceptors](#33-interceptor-order-and-other-interceptors)
    4. [Verifying the integration](#34-verifying-the-integration)
+   5. [Naming a client](#35-naming-a-client)
 4. [Special characteristics](#4-special-characteristics)
    1. [Differences to the WebClient twin](#41-differences-to-the-webclient-twin)
    2. [Duration is response occupancy](#42-duration-is-response-occupancy)
@@ -532,6 +533,71 @@ with the WebClient twin. If the host needs a different position, it attaches the
 
    `events` should equal the number of logged lines; `exchanges.open` should be `0` when idle.
 
+### 3.5 Naming a client
+
+`adapter_url_host` is the host of the request URI. As long as every dependency has its own host that is
+the coordinate dashboards split by; once the application reaches its dependencies through an **egress
+sidecar** or a forward proxy, the URI names the sidecar for every call and every dependency lands in
+one bucket. The interceptor cannot tell the clients apart from the request alone — the application
+can, and it says so once per client through a request attribute the interceptor reads at wiring time
+(`ClientRequestLoggingInterceptor.ADAPTER_NAME_ATTRIBUTE`,
+[ADR-0009](../../docs/adr/ADR-0009-adapter-name-is-a-request-attribute.md)):
+
+```kotlin
+@Configuration(proxyBeanMethods = false)
+class ClientsConfiguration {
+    @Bean
+    fun billingClient(builder: RestClient.Builder): RestClient =
+        builder
+            .baseUrl("http://localhost:15001/billing")
+            .defaultRequest { it.attribute(ClientRequestLoggingInterceptor.ADAPTER_NAME_ATTRIBUTE, "billing") }
+            .build()
+
+    @Bean
+    fun geoClient(builder: RestClient.Builder): RestClient =
+        builder
+            .baseUrl("http://localhost:15001/geo")
+            .defaultRequest { it.attribute(ClientRequestLoggingInterceptor.ADAPTER_NAME_ATTRIBUTE, "geo-lookup") }
+            .build()
+}
+```
+
+`defaultRequest` runs for every request the client builds, so the attribute is on each of them before
+the interceptor chain starts; a per-call `attribute(...)` on the request spec overrides it. Every call
+of a named client then carries `adapter_name` on the completion event and on the arrival line, and the
+three body meters carry the name as their `name` tag (`UNNAMED` for a client nobody named). A blank
+value counts as no name; the value is otherwise the host's vocabulary and is neither folded nor
+validated.
+
+**`RestTemplate`** has no `defaultRequest`. It does hand its interceptors an `HttpRequest` with
+attributes, so an interceptor of the host's own — registered **before** the logging interceptor, which
+must stay last ([§3.2](#32-manual-wiring)) — sets it:
+
+```kotlin
+@Bean
+fun legacyTemplate(loggingInterceptor: ClientRequestLoggingInterceptor): RestTemplate =
+    RestTemplate().apply {
+        interceptors =
+            listOf(
+                ClientHttpRequestInterceptor { request, body, execution ->
+                    request.attributes[ClientRequestLoggingInterceptor.ADAPTER_NAME_ATTRIBUTE] = "legacy-billing"
+                    execution.execute(request, body)
+                },
+                loggingInterceptor,
+            )
+    }
+```
+
+**Verifying it:** make one call through a named client and expect `adapter_name=billing` beside
+`adapter_url_host=localhost:15001` on the exchange line; a call through an unnamed client carries no
+`adapter_name` at all. With `measure-response-body-size` on,
+`curl -s localhost:8080/actuator/metrics/adapter.response.body.read` lists `name` among the available
+tags.
+
+The attribute string is the same on the WebClient twin, so a host carrying both jars names its clients
+with one literal. The field itself and the meter tag are documented once, in the
+[Common guide §7.7](../../docs/GUIDE.md#77-naming-a-client).
+
 ---
 
 ## 4. Special characteristics
@@ -606,7 +672,9 @@ against the client by `UriTemplateAttributeTest`) — that is `adapter_url_templ
 aggregation half of the path pair. `RestTemplate` sets its template only on the observation context, not
 on the request, so `RestTemplate` calls log the path alone and their body meters fall under
 `uri=UNKNOWN`. A host that wants the template on `RestTemplate` calls migrates to `RestClient`; the
-module does not reconstruct templates by guessing.
+module does not reconstruct templates by guessing. The client's name (`adapter_name`, ADR-0009) is a
+request attribute too, and `RestTemplate` has no `defaultRequest` to set it on: an interceptor of the
+host's own, registered before this one, sets it instead ([§3.5](#35-naming-a-client)).
 
 ### 4.7 Retries yield one line per attempt
 

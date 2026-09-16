@@ -1,5 +1,6 @@
 package eu.inqudium.legatium.restclient.logging
 
+import eu.inqudium.legatium.common.AdapterName
 import eu.inqudium.legatium.common.ClientActivation
 import eu.inqudium.legatium.common.ClientIdentity
 import eu.inqudium.legatium.common.ClientLoggingMetrics
@@ -334,6 +335,7 @@ class ClientRequestLoggingInterceptor
                             headers[name]?.takeIf { it.isNotEmpty() }?.joinToString(", ")
                         },
                     uriTemplate = request.attributes[URI_TEMPLATE_ATTRIBUTE] as? String,
+                    name = AdapterName.of(request.attributes[ADAPTER_NAME_ATTRIBUTE]),
                     requestCapture = captures.request,
                     responseCapture = captures.response,
                     requestCharset = headers.declaredCharsetOrUtf8(),
@@ -404,6 +406,22 @@ class ClientRequestLoggingInterceptor
 
             /** Request attribute remembering the correlation id this module generated and sent, for re-entries by a retrying outer interceptor. */
             const val GENERATED_ID_ATTRIBUTE = "eu.inqudium.legatium.restclient.logging.generatedCorrelationId"
+
+            /**
+             * Request attribute the host sets to NAME a client - the value of `adapter_name` and the
+             * `name` tag of the body meters (ADR-0009). Set once per client, and every call of that client
+             * carries it:
+             *
+             * ```kotlin
+             * RestClient.builder().defaultRequest { it.attribute(ADAPTER_NAME_ATTRIBUTE, "billing") }
+             * ```
+             *
+             * A `RestTemplate` has no `defaultRequest`; an interceptor of the host's own that runs BEFORE
+             * this one sets `request.attributes[ADAPTER_NAME_ATTRIBUTE]` instead. The same string on both
+             * twins, so a host carrying both jars names its clients with one constant. A blank or non-string
+             * value counts as no name.
+             */
+            const val ADAPTER_NAME_ATTRIBUTE = AdapterName.ATTRIBUTE
 
             // The module's own logger, never the exchange logger: the exchange log stream stays parseable.
             private val internalLog = LoggerFactory.getLogger(ClientRequestLoggingInterceptor::class.java)

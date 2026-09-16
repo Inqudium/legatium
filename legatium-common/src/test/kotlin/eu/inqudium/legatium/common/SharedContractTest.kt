@@ -30,6 +30,7 @@ class SharedContractTest {
         assertThat(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).isEqualTo("adapter.response.body.read")
         assertThat(ClientLoggingMetrics.UNTEMPLATED_URI).isEqualTo("UNKNOWN")
         assertThat(ClientLoggingMetrics.UNKNOWN_HOST).isEqualTo("UNKNOWN")
+        assertThat(ClientLoggingMetrics.UNNAMED_ADAPTER).isEqualTo("UNNAMED")
         assertThat(ClientLoggingMetrics.CLIENT_TAG).isEqualTo("client")
     }
 
@@ -44,6 +45,23 @@ class SharedContractTest {
         assertThat(BodyReadState.PARTIAL.tagValue).isEqualTo("partial")
         assertThat(BodyReadState.COMPLETE.tagValue).isEqualTo("complete")
         assertThat(BodyReadState.entries).hasSize(3)
+    }
+
+    @Test
+    fun `should pin the adapter name attribute and its reading rule`() {
+        // What is tested: the request attribute both twins read a client's name from (ADR-0009), and
+        //   AdapterName.of - the one rule that turns an attribute value into a name or into nothing.
+        // Success criteria: the attribute is the literal `eu.inqudium.legatium.adapterName`; a string
+        //   passes through, a blank string, a non-string and null yield no name.
+        // Why it matters: the attribute is what a HOST writes in its own configuration - a rename here
+        //   would silently drop adapter_name from every client the host named; and a blank name would
+        //   be an empty bucket that only looks like a client.
+        // Given/When/Then
+        assertThat(AdapterName.ATTRIBUTE).isEqualTo("eu.inqudium.legatium.adapterName")
+        assertThat(AdapterName.of("billing")).isEqualTo("billing")
+        assertThat(AdapterName.of("  ")).isNull()
+        assertThat(AdapterName.of(42)).isNull()
+        assertThat(AdapterName.of(null)).isNull()
     }
 
     @Test

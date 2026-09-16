@@ -240,16 +240,16 @@ class ClientLoggingMetricsTest {
         val metrics = ClientLoggingMetrics.forRegistry(registry, ClientStack.RESTCLIENT)
 
         // When
-        metrics.requestBodySize("https://api.example.com/things/{id}", "api.example.com", 5)
-        metrics.requestBodySize("https://api.example.com/things/{id}", "api.example.com", 7)
-        metrics.responseBodySize(null, null, 3)
-        metrics.responseBodySize("https://api.example.com/other/{id}", "api.example.com", 0)
+        metrics.requestBodySize("https://api.example.com/things/{id}", "api.example.com", "things", 5)
+        metrics.requestBodySize("https://api.example.com/things/{id}", "api.example.com", "things", 7)
+        metrics.responseBodySize(null, null, null, 3)
+        metrics.responseBodySize("https://api.example.com/other/{id}", "api.example.com", "things", 0)
 
         // Then
         val request =
             registry
                 .get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER)
-                .tags("uri", "https://api.example.com/things/{id}", "host", "api.example.com")
+                .tags("uri", "https://api.example.com/things/{id}", "host", "api.example.com", "name", "things")
                 .summary()
         assertThat(request.count()).isEqualTo(2)
         assertThat(request.totalAmount()).isEqualTo(12.0)
@@ -257,7 +257,7 @@ class ClientLoggingMetricsTest {
         assertThat(
             registry
                 .get(ClientLoggingMetrics.RESPONSE_BODY_SIZE_METER)
-                .tags("uri", ClientLoggingMetrics.UNTEMPLATED_URI, "host", ClientLoggingMetrics.UNKNOWN_HOST)
+                .tags("uri", ClientLoggingMetrics.UNTEMPLATED_URI, "host", ClientLoggingMetrics.UNKNOWN_HOST, "name", ClientLoggingMetrics.UNNAMED_ADAPTER)
                 .summary()
                 .totalAmount(),
         ).isEqualTo(3.0)
@@ -265,29 +265,35 @@ class ClientLoggingMetricsTest {
     }
 
     @Test
-    fun `should count the response read state per template, host and state`() {
-        // What is tested: responseBodyRead - the lazily created counter and its three-tag id.
-        // Success criteria: two unread and one complete recording under one template/host give
-        //   counters of 2 and 1; no partial counter exists.
-        // Why it matters: the unread share per call site is the one place a discarded payload is visible.
+    fun `should count the response read state per template, host, name and state`() {
+        // What is tested: responseBodyRead - the lazily created counter and its four-tag id.
+        // Success criteria: two unread and one complete recording under one template/host/name give
+        //   counters of 2 and 1; no partial counter exists; a recording without a name lands under
+        //   name=UNNAMED, not under the named client.
+        // Why it matters: the unread share per call site is the one place a discarded payload is visible,
+        //   and behind a sidecar the name is the tag that keeps the call sites of several clients apart.
         // Given
         val registry = SimpleMeterRegistry()
         val metrics = ClientLoggingMetrics.forRegistry(registry, ClientStack.WEBCLIENT)
 
         // When
-        metrics.responseBodyRead("https://api.example.com/things/{id}", "api.example.com", BodyReadState.UNREAD)
-        metrics.responseBodyRead("https://api.example.com/things/{id}", "api.example.com", BodyReadState.UNREAD)
-        metrics.responseBodyRead("https://api.example.com/things/{id}", "api.example.com", BodyReadState.COMPLETE)
+        metrics.responseBodyRead("https://api.example.com/things/{id}", "api.example.com", "things", BodyReadState.UNREAD)
+        metrics.responseBodyRead("https://api.example.com/things/{id}", "api.example.com", "things", BodyReadState.UNREAD)
+        metrics.responseBodyRead("https://api.example.com/things/{id}", "api.example.com", "things", BodyReadState.COMPLETE)
+        metrics.responseBodyRead("https://api.example.com/things/{id}", "api.example.com", null, BodyReadState.COMPLETE)
 
         // Then
-        fun read(state: String) =
-            registry
-                .get(ClientLoggingMetrics.RESPONSE_BODY_READ_METER)
-                .tags("uri", "https://api.example.com/things/{id}", "host", "api.example.com", "state", state)
-                .counter()
-                .count()
-        assertThat(read("unread")).isEqualTo(2.0)
-        assertThat(read("complete")).isEqualTo(1.0)
+        fun read(
+            name: String,
+            state: String,
+        ) = registry
+            .get(ClientLoggingMetrics.RESPONSE_BODY_READ_METER)
+            .tags("uri", "https://api.example.com/things/{id}", "host", "api.example.com", "name", name, "state", state)
+            .counter()
+            .count()
+        assertThat(read("things", "unread")).isEqualTo(2.0)
+        assertThat(read("things", "complete")).isEqualTo(1.0)
+        assertThat(read(ClientLoggingMetrics.UNNAMED_ADAPTER, "complete")).isEqualTo(1.0)
         assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "partial").counter()).isNull()
     }
 
@@ -310,8 +316,8 @@ class ClientLoggingMetricsTest {
                     metrics.exchangeOpened()
                     metrics.requestId(RequestIdSource.TRACE)
                     metrics.eventEmitted(ClientOutcome.SUCCESS)
-                    metrics.requestBodySize("https://api.example.com/things/{id}", "api.example.com", 5)
-                    metrics.responseBodyRead("https://api.example.com/things/{id}", "api.example.com", BodyReadState.COMPLETE)
+                    metrics.requestBodySize("https://api.example.com/things/{id}", "api.example.com", null, 5)
+                    metrics.responseBodyRead("https://api.example.com/things/{id}", "api.example.com", null, BodyReadState.COMPLETE)
                     metrics.emissionFailure()
                     metrics.exchangeCompleted()
                 }

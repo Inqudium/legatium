@@ -155,6 +155,27 @@ reports the total across them ([Common guide §7.4](../docs/GUIDE.md#74-meters))
 the filter itself (a host-defined `ClientRequestLoggingFilter` bean) is a different thing: the
 automatic wiring still attaches the replacement ([Common guide §3](../docs/GUIDE.md#3-overriding-beans)).
 
+### Naming a client
+
+`adapter_url_host` is the host on the wire. Behind an egress sidecar or a forward proxy that is the
+same host for every dependency, so name the client — once, on its builder — and every call of it
+carries `adapter_name` and the `name` tag on the body meters:
+
+```kotlin
+@Bean
+fun billingClient(builder: WebClient.Builder): WebClient =
+    builder
+        .baseUrl("http://localhost:15001/billing")
+        .defaultRequest { it.attribute(ClientRequestLoggingFilter.ADAPTER_NAME_ATTRIBUTE, "billing") }
+        .build()
+```
+
+The attribute string is the same on both twins, a blank value counts as no name, and a client nobody
+named simply logs no `adapter_name`. The why and the alternatives are
+[ADR-0009](../docs/adr/ADR-0009-adapter-name-is-a-request-attribute.md); the long form, with the
+verification steps, is the guide's [§3.5](docs/GUIDE.md#35-naming-a-client), and the field itself is
+in the [Common guide §7.7](../docs/GUIDE.md#77-naming-a-client).
+
 ### The exchange line
 
 On the `adapter-http-exchange` logger a completed exchange is one event. In a plain-text appender only
@@ -184,6 +205,7 @@ fields next to the encoder's own envelope:
   "adapter_duration_ms": 17,
   "adapter_request_method": "POST",
   "adapter_response_status_code": 200,
+  "adapter_name": "things",
   "adapter_url_host": "api.example.com",
   "adapter_url_path": "/things/42",
   "adapter_url_template": "https://api.example.com/things/{id}",

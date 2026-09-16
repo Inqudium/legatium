@@ -210,13 +210,14 @@ class ClientRequestLoggingMetricsTest {
             val request =
                 request(method = org.springframework.http.HttpMethod.POST, uri = "https://api.example.com/things/7").apply {
                     attributes[ClientRequestLoggingInterceptor.URI_TEMPLATE_ATTRIBUTE] = "https://api.example.com/things/{id}"
+                    attributes[ClientRequestLoggingInterceptor.ADAPTER_NAME_ATTRIBUTE] = "things"
                 }
 
             // When
             measuring.intercept(request, "hello".toByteArray(), answering(body = "world!")).consumeAndClose()
 
-            // Then
-            val tags = arrayOf("uri", "https://api.example.com/things/{id}", "host", "api.example.com")
+            // Then: the three body meters share the uri/host/name tag set, the name from the attribute
+            val tags = arrayOf("uri", "https://api.example.com/things/{id}", "host", "api.example.com", "name", "things")
             assertThat(
                 registry
                     .get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER)

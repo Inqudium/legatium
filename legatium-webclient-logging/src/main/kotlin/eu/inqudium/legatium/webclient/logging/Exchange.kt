@@ -28,6 +28,8 @@ internal class Exchange(
     val requestHeaders: List<Pair<String, String>>,
     /** The URI template the client recorded for the request (`WebClient.uri(String, ...)`); null for an expanded URI. */
     val uriTemplate: String?,
+    /** The client's logical name from the `AdapterName.ATTRIBUTE` request attribute (ADR-0009); null for a client the host did not name. */
+    val name: String?,
     val requestCapture: BoundedBodyCapture?,
     val responseCapture: BoundedBodyCapture?,
     /** Charset of the request body for the logged value, resolved from the Content-Type at wiring time. */

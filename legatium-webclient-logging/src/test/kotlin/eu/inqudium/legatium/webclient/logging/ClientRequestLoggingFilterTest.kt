@@ -162,6 +162,40 @@ class ClientRequestLoggingFilterTest {
         }
 
         @Test
+        fun `should log the client's name from the request attribute and leave the field off otherwise`() {
+            // What is tested: adapter_name, read from the ADAPTER_NAME_ATTRIBUTE the host sets once per
+            //   client (ADR-0009) - present with the attribute, absent without it, absent for a blank one.
+            // Success criteria: "billing" lands in adapter_name and the URL host stays the sidecar's; a
+            //   request without the attribute and one with a blank name carry no adapter_name at all.
+            // Why it matters: behind an egress sidecar every dependency shares one adapter_url_host; the
+            //   name is the field that tells the clients apart, and an empty bucket would only look
+            //   like a client.
+            // Given: two clients calling through one sidecar host, one named, one not, one blank
+            val named =
+                request(uri = "http://localhost:15001/billing/invoices/7") {
+                    attribute(ClientRequestLoggingFilter.ADAPTER_NAME_ATTRIBUTE, "billing")
+                }
+            val unnamed = request(uri = "http://localhost:15001/geo/lookup")
+            val blank =
+                request(uri = "http://localhost:15001/geo/lookup") {
+                    attribute(ClientRequestLoggingFilter.ADAPTER_NAME_ATTRIBUTE, "  ")
+                }
+
+            // When
+            filter.call(named, answering())
+            filter.call(unnamed, answering())
+            filter.call(blank, answering())
+
+            // Then: the name beside the shared host; no field without a usable name
+            assertThat(log.events).hasSize(3)
+            assertThat(keyValues(log.events[0]))
+                .containsEntry("adapter_name", "billing")
+                .containsEntry("adapter_url_host", "localhost:15001")
+            assertThat(keyValues(log.events[1])).doesNotContainKey("adapter_name")
+            assertThat(keyValues(log.events[2])).doesNotContainKey("adapter_name")
+        }
+
+        @Test
         fun `should log the raw request target so percent-encoded control characters cannot forge log lines`() {
             // What is tested: the log-injection guard for the raw request target.
             // Success criteria: path and query appear percent-encoded as sent in every sink; no sink

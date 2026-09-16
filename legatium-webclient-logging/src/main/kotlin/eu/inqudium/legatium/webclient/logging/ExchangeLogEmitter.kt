@@ -192,6 +192,7 @@ internal class ExchangeLogEmitter(
             .addKeyValue(ClientLogField.DURATION_MS, durationMs)
             .addKeyValue(ClientLogField.REQUEST_METHOD, exchange.method)
             .addKeyValueIfPresent(ClientLogField.RESPONSE_STATUS_CODE, status)
+            .addKeyValueIfPresent(ClientLogField.NAME, exchange.name)
             .addKeyValueIfPresent(ClientLogField.URL_HOST, exchange.host)
             .addKeyValue(ClientLogField.URL_PATH, exchange.path)
             .setCauseIfPresent(classification.cause)
@@ -261,13 +262,13 @@ internal class ExchangeLogEmitter(
      */
     private fun recordBodySizes(exchange: Exchange) {
         if (properties.measureRequestBodySize) {
-            exchange.requestCapture?.let { metrics.requestBodySize(exchange.uriTemplate, exchange.host, it.totalBytes) }
+            exchange.requestCapture?.let { metrics.requestBodySize(exchange.uriTemplate, exchange.host, exchange.name, it.totalBytes) }
         }
         if (properties.measureResponseBodySize) {
             exchange.responseCapture?.let {
-                metrics.responseBodySize(exchange.uriTemplate, exchange.host, it.totalBytes)
+                metrics.responseBodySize(exchange.uriTemplate, exchange.host, exchange.name, it.totalBytes)
                 if (exchange.response != null) {
-                    metrics.responseBodyRead(exchange.uriTemplate, exchange.host, it.readState)
+                    metrics.responseBodyRead(exchange.uriTemplate, exchange.host, exchange.name, it.readState)
                 }
             }
         }

@@ -281,26 +281,29 @@ internal class ClientLoggingMetrics private constructor(
     fun requestBodySize(
         template: String?,
         host: String?,
+        name: String?,
         bytes: Long,
-    ) = recordBodySize(REQUEST_BODY_SIZE_METER, template, host, bytes)
+    ) = recordBodySize(REQUEST_BODY_SIZE_METER, template, host, name, bytes)
 
     fun responseBodySize(
         template: String?,
         host: String?,
+        name: String?,
         bytes: Long,
-    ) = recordBodySize(RESPONSE_BODY_SIZE_METER, template, host, bytes)
+    ) = recordBodySize(RESPONSE_BODY_SIZE_METER, template, host, name, bytes)
 
     /**
      * Counts one exchange under how far the application consumed the RESPONSE body, tagged by the
-     * URI template and the peer host - see [RESPONSE_BODY_READ_METER]. Created per `uri`/`host`/`state`
-     * on first use, like the body-size summaries (Micrometer deduplicates by id); recorded whenever a
-     * response capture exists in measuring mode and a response was received, INCLUDING answers the
-     * application released without reading - that is exactly the `unread` share the counter exists to
-     * show.
+     * URI template, the peer host and the client's name - see [RESPONSE_BODY_READ_METER]. Created per
+     * `uri`/`host`/`name`/`state` on first use, like the body-size summaries (Micrometer deduplicates by
+     * id); recorded whenever a response capture exists in measuring mode and a response was received,
+     * INCLUDING answers the application released without reading - that is exactly the `unread` share
+     * the counter exists to show.
      */
     fun responseBodyRead(
         template: String?,
         host: String?,
+        name: String?,
         state: BodyReadState,
     ) = registerOrFallback(RESPONSE_BODY_READ_METER) { registry ->
         Counter
@@ -308,22 +311,25 @@ internal class ClientLoggingMetrics private constructor(
             .description("Exchanges by how far the application consumed the response body: unread, partial, or complete")
             .tag("uri", uriTag(template))
             .tag("host", host ?: UNKNOWN_HOST)
+            .tag("name", name ?: UNNAMED_ADAPTER)
             .tag("state", state.tagValue)
             .register(registry)
     }.increment()
 
     /**
      * Bytes that ACTUALLY flowed, tagged by the URI template (low-cardinality by construction: a recorded
-     * value without a placeholder is folded to [UNTEMPLATED_URI], see [uriTag]) and the peer host - which
-     * is caller-controlled and therefore a documented precondition of the opt-in measuring properties. A
-     * zero-byte body records no sample - the distribution describes bodies that exist, and the sum stays
-     * exact either way. The summaries are created per tag set on first use; Micrometer's registry
+     * value without a placeholder is folded to [UNTEMPLATED_URI], see [uriTag]), the peer host - which
+     * is caller-controlled and therefore a documented precondition of the opt-in measuring properties -
+     * and the client's name ([AdapterName], `UNNAMED` for a client the host did not name). A zero-byte
+     * body records no sample - the distribution describes bodies that exist, and the sum stays exact
+     * either way. The summaries are created per tag set on first use; Micrometer's registry
      * deduplicates by id.
      */
     private fun recordBodySize(
         meterName: String,
         template: String?,
         host: String?,
+        name: String?,
         bytes: Long,
     ) {
         if (bytes == 0L) {
@@ -336,6 +342,7 @@ internal class ClientLoggingMetrics private constructor(
                 .description("Bytes of the body that actually flowed through the exchange")
                 .tag("uri", uriTag(template))
                 .tag("host", host ?: UNKNOWN_HOST)
+                .tag("name", name ?: UNNAMED_ADAPTER)
                 .register(registry)
         }.record(bytes.toDouble())
     }
@@ -380,14 +387,14 @@ internal class ClientLoggingMetrics private constructor(
          */
         const val EVENTS_METER = "adapter.logging.events"
 
-        /** Distribution of request body bytes that actually flowed, tagged `uri` (template) and `host`. */
+        /** Distribution of request body bytes that actually flowed, tagged `uri` (template), `host` and `name`. */
         const val REQUEST_BODY_SIZE_METER = "adapter.request.body.size"
 
-        /** Distribution of response body bytes that actually flowed, tagged `uri` (template) and `host`. */
+        /** Distribution of response body bytes that actually flowed, tagged `uri` (template), `host` and `name`. */
         const val RESPONSE_BODY_SIZE_METER = "adapter.response.body.size"
 
         /**
-         * Counter of exchanges by response-body consumption, tagged `uri` (template), `host` and `state`
+         * Counter of exchanges by response-body consumption, tagged `uri` (template), `host`, `name` and `state`
          * (`unread` | `partial` | `complete`, see [BodyReadState]). The body tee mirrors CONSUMPTION,
          * not transmission: the logged body and the size sample describe the bytes the application read,
          * so neither can tell a body the peer sent but the application ignored from one that was never
@@ -406,6 +413,13 @@ internal class ClientLoggingMetrics private constructor(
 
         /** The `host` tag value for exchanges whose request URI carries no host. */
         const val UNKNOWN_HOST = "UNKNOWN"
+
+        /**
+         * The `name` tag value of the body meters for a client the host did not name ([AdapterName]):
+         * `UNNAMED` rather than `UNKNOWN`, because the name is not unknown, it was never given - and the
+         * one word an operator filters out to see only the named clients.
+         */
+        const val UNNAMED_ADAPTER = "UNNAMED"
 
         /** The `client` tag of the open-exchanges gauge, distinguishing the two twins' gauges in one registry. */
         const val CLIENT_TAG = "client"

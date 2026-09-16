@@ -32,6 +32,7 @@ meters, the fail-open promise and the shared code — is written once, in the
    2. [Manual wiring](#32-manual-wiring)
    3. [Filter order and other filters](#33-filter-order-and-other-filters)
    4. [Verifying the integration](#34-verifying-the-integration)
+   5. [Naming a client](#35-naming-a-client)
 4. [Special characteristics](#4-special-characteristics)
    1. [Differences to the RestClient twin](#41-differences-to-the-restclient-twin)
    2. [Cancellation and the missing status](#42-cancellation-and-the-missing-status)
@@ -505,6 +506,137 @@ the RestClient twin.
    ```
 
    `events` should equal the number of logged lines; `exchanges.open` should be `0` when idle.
+
+### 3.5 Naming a client
+
+`adapter_url_host` is the host of the request URI. As long as every dependency has its own host that is
+the coordinate dashboards split by; once the application reaches its dependencies through an **egress
+sidecar** or a forward proxy, the URI names the sidecar for every call and every dependency lands in
+one bucket. The filter cannot tell the clients apart from the request alone — the application can, and
+it says so once per client through a request attribute the filter reads at wiring time
+(`ClientRequestLoggingFilter.ADAPTER_NAME_ATTRIBUTE`,
+[ADR-0009](../../docs/adr/ADR-0009-adapter-name-is-a-request-attribute.md)):
+
+```kotlin
+@Configuration(proxyBeanMethods = false)
+class ClientsConfiguration {
+    @Bean
+    fun billingClient(builder: WebClient.Builder): WebClient =
+        builder
+            .baseUrl("http://localhost:15001/billing")
+            .defaultRequest { it.attribute(ClientRequestLoggingFilter.ADAPTER_NAME_ATTRIBUTE, "billing") }
+            .build()
+
+    @Bean
+    fun geoClient(builder: WebClient.Builder): WebClient =
+        builder
+            .baseUrl("http://localhost:15001/geo")
+            .defaultRequest { it.attribute(ClientRequestLoggingFilter.ADAPTER_NAME_ATTRIBUTE, "geo-lookup") }
+            .build()
+}
+```
+
+`defaultRequest` runs for every request the client builds, so the attribute is on the `ClientRequest`
+before the filter chain starts; a per-call `attribute(...)` on the request spec overrides it. The
+attribute is read from the request as the filter receives it — a filter outside this one that rebuilds
+the request keeps the attributes (`ClientRequest.from(...)` copies them), so the usual authentication
+or retry filters do not lose the name. Every call of a named client then carries `adapter_name` on the
+completion event and on the arrival line, and the three body meters carry the name as their `name` tag
+(`UNNAMED` for a client nobody named). A blank value counts as no name; the value is otherwise the
+host's vocabulary and is neither folded nor validated.
+
+**Verifying it:** make one call through a named client and expect `adapter_name=billing` beside
+`adapter_url_host=localhost:15001` on the exchange line; a call through an unnamed client carries no
+`adapter_name` at all. With `measure-response-body-size` on,
+`curl -s localhost:8080/actuator/metrics/adapter.response.body.read` lists `name` among the available
+tags.
+
+The attribute string is the same on the RestClient twin, so a host carrying both jars names its
+clients with one literal. The field itself and the meter tag are documented once, in the
+[Common guide §7.7](../../docs/GUIDE.md#77-naming-a-client).
+
+### 3.6 Joining the server line: what the host provides
+
+The exchange line is written on the thread that completes the body — an event-loop thread that never
+ran the inbound request. The module restores the caller's context there from the Reactor Context
+([§2.6](#26-mdc-and-the-reactive-call),
+[ADR-0010](../../docs/adr/ADR-0010-reactive-twin-restores-the-callers-context.md)), but it can only
+restore what the host made restorable. Three things, the first two per key:
+
+**1. The identity in the Reactor Context.** The value must be in the context the caller subscribes
+with — Reactor's own cross-thread carrier — under the name the MDC will use. A `WebFilter` puts it
+there for every handler of the request:
+
+```kotlin
+@Component
+class InboundIdentityFilter : WebFilter {
+    override fun filter(exchange: ServerWebExchange, chain: WebFilterChain): Mono<Void> {
+        val tenant = exchange.request.headers.getFirst("X-Tenant") ?: "unknown"
+        return chain.filter(exchange).contextWrite { it.put("tenant", tenant) }
+    }
+}
+```
+
+A caller that is not a WebFlux handler writes the same way on its own chain: `client.get()…
+.bodyToMono(String::class.java).contextWrite { it.put("tenant", tenant) }`.
+
+**2. A `ThreadLocalAccessor` for the key.** Micrometer's context propagation turns context entries
+into thread-locals only through an accessor registered for the key; without one the entry stays in the
+context and never reaches the MDC. Register one per key with the JVM-global `ContextRegistry`, once,
+idempotently — a context refresh must not register it twice:
+
+```kotlin
+@Configuration(proxyBeanMethods = false)
+class MdcContextPropagationConfiguration {
+    @Bean
+    fun tenantMdcAccessor(): InitializingBean =
+        InitializingBean {
+            val registry = ContextRegistry.getInstance()
+            if (registry.threadLocalAccessors.none { it.key() == "tenant" }) {
+                registry.registerThreadLocalAccessor(
+                    "tenant",
+                    { MDC.get("tenant") },
+                    { value -> MDC.put("tenant", value) },
+                    { MDC.remove("tenant") },
+                )
+            }
+        }
+}
+```
+
+The four-argument overload takes the getter, the setter and the reset; the key is both the context key
+and the MDC key, so one name serves all three places.
+
+**3. The library on the classpath.** `io.micrometer:context-propagation` — a dependency of Micrometer
+Tracing, so a host with a tracing bridge already has it; a host without one adds it explicitly:
+
+```xml
+<dependency>
+    <groupId>io.micrometer</groupId>
+    <artifactId>context-propagation</artifactId>
+</dependency>
+```
+
+Without it the module restores nothing and the exchange line carries the module's own identity alone,
+as before ADR-0010.
+
+**Limesium does steps 1 and 2 for its keys.** A host running the sibling's reactive twin gets
+`endpoint_request_id`, `endpoint_method` and `endpoint_route` joined onto every client line with nothing
+to add beyond step 3 — Limesium writes them with `contextWrite` under the MDC key names and registers
+an accessor per key when the library is present.
+
+**Not needed:** `spring.reactor.context-propagation=auto`. The module restores around its own emission,
+so Boot's default `limited` suffices for the join. `auto` remains what a host wants for its *own* log
+statements inside reactive operators; with it, the restoration around the exchange line is redundant
+and harmless.
+
+**Verifying it:** make one call from inside a request that carries the key, and expect the key in the
+exchange line's MDC (`%X{tenant}` in a pattern, a top-level field with structured logging) beside
+`adapter_request_id` — on a `reactor-http-*` thread. If the key is missing: the value is not in the
+context (step 1), no accessor is registered (step 2, check `ContextRegistry.getInstance().threadLocalAccessors`),
+or the library is absent (step 3). A restorer that throws is reported once per exchange on
+`eu.inqudium.legatium.webclient.logging.ExchangeLogEmitter` and counted as `stage=wiring` on
+`adapter.logging.failopen`.
 
 ---
 

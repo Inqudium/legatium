@@ -1,5 +1,6 @@
 package eu.inqudium.legatium.webclient.logging
 
+import eu.inqudium.legatium.common.AdapterName
 import eu.inqudium.legatium.common.ClientActivation
 import eu.inqudium.legatium.common.ClientIdentity
 import eu.inqudium.legatium.common.ClientLoggingMetrics
@@ -286,6 +287,7 @@ class ClientRequestLoggingFilter
                             outgoingHeaders[name]?.takeIf { it.isNotEmpty() }?.joinToString(", ")
                         },
                     uriTemplate = request.attribute(URI_TEMPLATE_ATTRIBUTE).orElse(null) as? String,
+                    name = AdapterName.of(request.attribute(ADAPTER_NAME_ATTRIBUTE).orElse(null)),
                     requestCapture = captures.request,
                     responseCapture = captures.response,
                     requestCharset = headers.declaredCharsetOrUtf8(),
@@ -328,6 +330,20 @@ class ClientRequestLoggingFilter
              * stays absent for an expanded `URI`.
              */
             const val URI_TEMPLATE_ATTRIBUTE = "org.springframework.web.reactive.function.client.WebClient.uriTemplate"
+
+            /**
+             * Request attribute the host sets to NAME a client - the value of `adapter_name` and the
+             * `name` tag of the body meters (ADR-0009). Set once per client, and every call of that client
+             * carries it:
+             *
+             * ```kotlin
+             * WebClient.builder().defaultRequest { it.attribute(ADAPTER_NAME_ATTRIBUTE, "billing") }
+             * ```
+             *
+             * The same string on both twins, so a host carrying both jars names its clients with one
+             * constant. A blank or non-string value counts as no name.
+             */
+            const val ADAPTER_NAME_ATTRIBUTE = AdapterName.ATTRIBUTE
 
             /** The cause attached to an exchange whose connector completed empty - WebClient's own message for the caller. */
             const val NO_RESPONSE_MESSAGE = "The underlying HTTP client completed without emitting a response"

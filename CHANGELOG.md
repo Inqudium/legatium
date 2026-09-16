@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `adapter_name`: the logical name of the client that made the call, for the hosts whose
+  dependencies all sit behind one egress sidecar or proxy and therefore share one
+  `adapter_url_host`. The host names a client once, on its builder, through the request
+  attribute `ClientRequestLoggingInterceptor.ADAPTER_NAME_ATTRIBUTE` resp.
+  `ClientRequestLoggingFilter.ADAPTER_NAME_ATTRIBUTE` (one string,
+  `eu.inqudium.legatium.adapterName`, on both twins); every call of that client then carries
+  the field on the completion event and the arrival line, and the three body meters tag it as
+  `name` (`UNNAMED` for a client nobody named). The component template maps the field, the
+  lockstep test pins it; why an attribute and not a header, a property or a path rule is
+  [ADR-0009](docs/adr/ADR-0009-adapter-name-is-a-request-attribute.md).
+
 ### Changed
 
 - The shared guide (`docs/GUIDE.md`) is now the **Common guide** (site nav, READMEs, module
