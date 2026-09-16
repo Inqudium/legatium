@@ -3,9 +3,7 @@ package eu.inqudium.legatium.restclient.logging
 import ch.qos.logback.classic.Level
 import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
-import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.MdcKeys
-import eu.inqudium.legatium.common.NanoTimeSource
 import eu.inqudium.legatium.common.RequestIdSource
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
@@ -17,11 +15,13 @@ import org.junit.jupiter.api.Test
 import org.slf4j.MDC
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
+import org.springframework.http.HttpStatusCode
 import org.springframework.http.client.ClientHttpRequestExecution
 import org.springframework.mock.http.client.MockClientHttpResponse
 import org.springframework.web.util.pattern.PatternParseException
 import java.io.IOException
 import java.io.InputStream
+import java.io.UncheckedIOException
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicLong
@@ -40,27 +40,17 @@ class ClientRequestLoggingInterceptorTest {
             loggerName = "adapter-http-exchange-core-test",
             slowRequestThreshold = Duration.ofMillis(200),
         )
-    private val interceptor =
-        ClientRequestLoggingInterceptor(
-            properties,
-            NanoTimeSource { ticker.get() },
-            CorrelationIdGenerator { "generated-42" },
-            meterRegistry,
-        )
-
-    private lateinit var log: CapturedLogger
-
-    @BeforeEach
-    fun setUp() {
-        log = CapturedLogger(properties.loggerName)
-    }
+    private val interceptor = interceptorWith(properties, ticker, meterRegistry)
+    private val log = CapturedLogger(properties.loggerName)
 
     @AfterEach
     fun tearDown() {
         log.detach()
     }
 
-    private fun interceptorWith(properties: ClientLoggingProperties) = ClientRequestLoggingInterceptor(properties, { ticker.get() }, { "generated-42" }, SimpleMeterRegistry())
+    /** The tests that seed the calling thread's MDC leave it clean for the next one. */
+    @AfterEach
+    fun clearMdc() = MDC.clear()
 
     @Nested
     inner class `The exchange line` {
@@ -218,10 +208,10 @@ class ClientRequestLoggingInterceptorTest {
             //   adapter_url_path is "/".
             // Why it matters: the engine sends "GET / HTTP/1.1" for such a URI; an empty path field
             //   would break grouping by path and make the target look truncated.
-            // Given: a bare authority
+            // Given/When: a call to a bare authority
             interceptor.intercept(request(uri = "https://api.example.com"), ByteArray(0), answering()).consumeAndClose()
 
-            // When/Then: the wire request line asks for "/", and so does the log
+            // Then: the wire request line asks for "/", and so does the log
             val event = log.events.single()
             assertThat(event.formattedMessage).startsWith("Adapter http exchange GET https://api.example.com/ -> 200")
             assertThat(keyValues(event)).containsEntry("adapter_url_path", "/")
@@ -243,32 +233,26 @@ class ClientRequestLoggingInterceptorTest {
                     seenDuringCall = MDC.getCopyOfContextMap()
                     MockClientHttpResponse(ByteArray(0), HttpStatus.OK)
                 }
-            try {
-                // When
-                interceptor.intercept(request(), ByteArray(0), execution).consumeAndClose()
 
-                // Then
-                assertThat(seenDuringCall)
-                    .containsEntry(MdcKeys.REQUEST_ID, "generated-42")
-                    .containsEntry(MdcKeys.REQUEST_METHOD, "GET")
-                    .containsEntry(MdcKeys.ROUTE, "https://api.example.com/things")
-                    .containsEntry("endpoint_request_id", "inbound-7")
-                assertThat(MDC.get(MdcKeys.REQUEST_ID)).isNull()
-                assertThat(MDC.get("endpoint_request_id")).isEqualTo("inbound-7")
-                // And: the emitted event inherited the ambient key beside its own
-                assertThat(log.events.single().mdcPropertyMap).containsEntry("endpoint_request_id", "inbound-7")
-            } finally {
-                MDC.clear()
-            }
+            // When
+            interceptor.intercept(request(), ByteArray(0), execution).consumeAndClose()
+
+            // Then
+            assertThat(seenDuringCall)
+                .containsEntry(MdcKeys.REQUEST_ID, "generated-42")
+                .containsEntry(MdcKeys.REQUEST_METHOD, "GET")
+                .containsEntry(MdcKeys.ROUTE, "https://api.example.com/things")
+                .containsEntry("endpoint_request_id", "inbound-7")
+            assertThat(MDC.get(MdcKeys.REQUEST_ID)).isNull()
+            assertThat(MDC.get("endpoint_request_id")).isEqualTo("inbound-7")
+            // And: the emitted event inherited the ambient key beside its own
+            assertThat(log.events.single().mdcPropertyMap).containsEntry("endpoint_request_id", "inbound-7")
         }
     }
 
     @Nested
     inner class `The caller's context on another thread` {
         private val key = "endpoint_request_id"
-        private val executor =
-            java.util.concurrent.Executors
-                .newSingleThreadExecutor()
         private val pinned = PinnedMdcAppender().apply { start() }
 
         @BeforeEach
@@ -281,11 +265,7 @@ class ClientRequestLoggingInterceptorTest {
         fun detach() {
             log.logger.detachAppender(pinned)
             pinned.stop()
-            executor.shutdownNow()
-            MDC.clear()
         }
-
-        private fun <T> onAnotherThread(block: () -> T): T = executor.submit(block).get()
 
         @Test
         fun `should restore the caller's MDC around the exchange line when the response is closed on another thread`() {
@@ -473,16 +453,13 @@ class ClientRequestLoggingInterceptorTest {
             // Why it matters: a stale id would join the client event to a trace the call was not part of.
             // Given: an ambient trace id on the thread
             MDC.put("traceId", "ffffffffffffffffffffffffffffffff")
-            try {
-                // When
-                interceptor.intercept(request(), ByteArray(0), answering()).consumeAndClose()
 
-                // Then
-                assertThat(log.events.single().mdcPropertyMap).doesNotContainKey("traceId")
-                assertThat(MDC.get("traceId")).isEqualTo("ffffffffffffffffffffffffffffffff")
-            } finally {
-                MDC.clear()
-            }
+            // When
+            interceptor.intercept(request(), ByteArray(0), answering()).consumeAndClose()
+
+            // Then
+            assertThat(log.events.single().mdcPropertyMap).doesNotContainKey("traceId")
+            assertThat(MDC.get("traceId")).isEqualTo("ffffffffffffffffffffffffffffffff")
         }
     }
 
@@ -497,10 +474,10 @@ class ClientRequestLoggingInterceptorTest {
             // Why it matters: a 5xx is the peer's failure, not a broken call - WARN keeps it
             //   visible without paging on every upstream hiccup while the outcome tag still counts it
             //   as failed.
-            // Given: the peer answers 503
+            // Given/When: the peer answers 503
             interceptor.intercept(request(), ByteArray(0), answering(status = HttpStatus.SERVICE_UNAVAILABLE)).consumeAndClose()
 
-            // When/Then: WARN, outcome failure - severity and semantic decoupled
+            // Then: WARN, outcome failure - severity and semantic decoupled
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.WARN)
             assertThat(event.formattedMessage).contains("-> 503 [")
@@ -583,12 +560,12 @@ class ClientRequestLoggingInterceptorTest {
             //   adapter_outcome success.
             // Why it matters: severity and outcome are decoupled on purpose - a slow peer must show
             //   up on the level without being counted as a failure.
-            // Given: a call that consumes the configured threshold before it is closed
+            // Given/When: a call that consumes the configured threshold before it is closed
             interceptor
                 .intercept(request(), ByteArray(0), answering { ticker.addAndGet(200_000_000) })
                 .consumeAndClose()
 
-            // When/Then: WARN + adapter_slow, outcome stays success
+            // Then: WARN + adapter_slow, outcome stays success
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.WARN)
             assertThat(keyValues(event)).containsEntry("adapter_slow", true).containsEntry("adapter_outcome", "success")
@@ -619,7 +596,7 @@ class ClientRequestLoggingInterceptorTest {
             // Why it matters: truncating both sides inflates WARN logs for every threshold with
             //   sub-millisecond precision.
             // Given: a 1.5 ms threshold
-            val precise = interceptorWith(properties.copy(slowRequestThreshold = Duration.ofNanos(1_500_000)))
+            val precise = interceptorWith(properties.copy(slowRequestThreshold = Duration.ofNanos(1_500_000)), ticker)
 
             fun slowFlagAfter(elapsedNanos: Long): Boolean {
                 log.appender.list.clear()
@@ -641,8 +618,8 @@ class ClientRequestLoggingInterceptorTest {
             //   exception's toString and the request id; the exchange logger still has exactly one
             //   event.
             // Why it matters: the exchange log stream keeps its one-event-per-exchange contract for
-            //   parsers, while the module logger shows the failure with its cause where the twins'
-            //   streams look alike.
+            //   parsers, while the module logger shows the failure with its cause the moment it happens
+            //   - a deliberate difference from the reactive twin, which has no breadcrumb.
             // Given: the module's own logger captured
             val internal = CapturedLogger(ClientRequestLoggingInterceptor::class.java.name)
             try {
@@ -671,7 +648,7 @@ class ClientRequestLoggingInterceptorTest {
             // Why it matters: calls to a metrics gateway or a config server must be silenceable without
             //   knowing their paths.
             // Given
-            val excluding = interceptorWith(properties.copy(excludeHosts = listOf("PushGateway.monitoring.svc")))
+            val excluding = interceptorWith(properties.copy(excludeHosts = listOf("PushGateway.monitoring.svc")), ticker)
             val request = request(uri = "http://pushgateway.monitoring.svc:9091/metrics/job/x")
 
             // When
@@ -692,7 +669,7 @@ class ClientRequestLoggingInterceptorTest {
             // Why it matters: activation scoping is how an operator keeps noisy or sensitive routes
             //   out of the log, and an include that could override an exclude would be a silent leak.
             // Given: /api/** included, /api/internal excluded
-            val scoped = interceptorWith(properties.copy(includePathPatterns = listOf("/api/**"), excludePathPrefixes = listOf("/api/internal")))
+            val scoped = interceptorWith(properties.copy(includePathPatterns = listOf("/api/**"), excludePathPrefixes = listOf("/api/internal")), ticker)
 
             // When: three calls
             scoped.intercept(request(uri = "https://h/api/things"), ByteArray(0), answering()).consumeAndClose()
@@ -712,7 +689,7 @@ class ClientRequestLoggingInterceptorTest {
             //   `/api%2Fthings` is NOT (one segment "api/things"); `/%61ctuator/health` is excluded.
             // Why it matters: an exclude that an encoded spelling bypasses is not an exclude.
             // Given
-            val scoped = interceptorWith(properties.copy(includePathPatterns = listOf("/api/**"), excludePathPrefixes = listOf("/actuator/health")))
+            val scoped = interceptorWith(properties.copy(includePathPatterns = listOf("/api/**"), excludePathPrefixes = listOf("/actuator/health")), ticker)
 
             // When
             scoped.intercept(request(uri = "https://h/%61pi/things"), ByteArray(0), answering()).consumeAndClose()
@@ -733,11 +710,10 @@ class ClientRequestLoggingInterceptorTest {
             // Why it matters: a configuration error must fail the context start with a readable
             //   message instead of failing, or silently skipping, every call at runtime.
             // Given/When
-            val thrown = catchThrowable { interceptorWith(properties.copy(includePathPatterns = listOf("/api/{unclosed"))) }
+            val thrown = catchThrowable { interceptorWith(properties.copy(includePathPatterns = listOf("/api/{unclosed")), ticker) }
 
             // Then: the PARSER's exception, naming the malformed pattern
-            assertThat(thrown).isInstanceOf(PatternParseException::class.java)
-            assertThat((thrown as PatternParseException).toDetailedString()).contains("/api/{unclosed")
+            assertThat(thrown).isInstanceOfSatisfying(PatternParseException::class.java) { assertThat(it.toDetailedString()).contains("/api/{unclosed") }
         }
 
         @Test
@@ -751,7 +727,7 @@ class ClientRequestLoggingInterceptorTest {
             // Why it matters: an operator watching a hung call needs the line before the answer,
             //   and the arrival line must stay invisible to outcome-keyed dashboards.
             // Given: start-line logging and an execution that observes the log stream mid-flight
-            val startLogging = interceptorWith(properties.copy(logRequestStart = true))
+            val startLogging = interceptorWith(properties.copy(logRequestStart = true), ticker)
             var eventsAtCallTime = listOf<String>()
             val execution =
                 ClientHttpRequestExecution { _, _ ->
@@ -801,7 +777,7 @@ class ClientRequestLoggingInterceptorTest {
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.ERROR)
             assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").containsEntry("adapter_response_status_code", 200)
-            assertThat(event.throwableProxy.message).contains("before the body")
+            assertThat(event.throwableProxy?.message).contains("before the body")
         }
 
         @Test
@@ -817,7 +793,7 @@ class ClientRequestLoggingInterceptorTest {
                     object : MockClientHttpResponse("x".toByteArray(), HttpStatus.OK) {
                         override fun getBody(): InputStream =
                             object : InputStream() {
-                                override fun read(): Int = throw java.io.UncheckedIOException(IOException("reset"))
+                                override fun read(): Int = throw UncheckedIOException(IOException("reset"))
                             }
                     }
                 }
@@ -828,7 +804,7 @@ class ClientRequestLoggingInterceptorTest {
             response.close()
 
             // Then
-            assertThat(thrown).isInstanceOf(java.io.UncheckedIOException::class.java)
+            assertThat(thrown).isInstanceOf(UncheckedIOException::class.java)
             assertThat(keyValues(log.events.single())).containsEntry("adapter_outcome", "failure")
         }
 
@@ -845,7 +821,7 @@ class ClientRequestLoggingInterceptorTest {
             val refusing =
                 ClientHttpRequestExecution { _, _ ->
                     object : MockClientHttpResponse("x".toByteArray(), HttpStatus.OK) {
-                        override fun getStatusCode(): org.springframework.http.HttpStatusCode = throw IOException("status line garbled")
+                        override fun getStatusCode(): HttpStatusCode = throw IOException("status line garbled")
                     }
                 }
             val response = interceptor.intercept(request(), ByteArray(0), refusing)
@@ -859,7 +835,7 @@ class ClientRequestLoggingInterceptorTest {
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.ERROR)
             assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").doesNotContainKey("adapter_response_status_code")
-            assertThat(event.throwableProxy.message).isEqualTo("status line garbled")
+            assertThat(event.throwableProxy?.message).isEqualTo("status line garbled")
         }
 
         @Test
@@ -876,7 +852,7 @@ class ClientRequestLoggingInterceptorTest {
             val unclosable =
                 ClientHttpRequestExecution { _, _ ->
                     object : MockClientHttpResponse("ok".toByteArray(), HttpStatus.OK) {
-                        override fun close() = throw java.io.UncheckedIOException(IOException("release failed"))
+                        override fun close() = throw UncheckedIOException(IOException("release failed"))
                     }
                 }
             val response = interceptor.intercept(request(), ByteArray(0), unclosable)
@@ -887,11 +863,11 @@ class ClientRequestLoggingInterceptorTest {
             catchThrowable { response.close() }
 
             // Then
-            assertThat(thrown).isInstanceOf(java.io.UncheckedIOException::class.java)
+            assertThat(thrown).isInstanceOf(UncheckedIOException::class.java)
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.ERROR)
             assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").containsEntry("adapter_response_status_code", 200)
-            assertThat(event.throwableProxy.message).contains("release failed")
+            assertThat(event.throwableProxy?.message).contains("release failed")
         }
 
         @Test
@@ -947,13 +923,13 @@ class ClientRequestLoggingInterceptorTest {
             // Why it matters: the value lands verbatim in the message and the MDC of every line of the
             //   call - a CR/LF in it forges lines in every plain-text sink.
             // Given: a request carrying a forged correlation id
-            val request = request().apply { headers.set("X-Correlation-Id", "abc\r\nforged=line") }
+            val request = request().apply { headers.set(properties.correlationIdHeader, "abc\r\nforged=line") }
 
             // When
             interceptor.intercept(request, ByteArray(0), answering()).consumeAndClose()
 
             // Then
-            assertThat(request.headers.getFirst("X-Correlation-Id")).isEqualTo("generated-42")
+            assertThat(request.headers.getFirst(properties.correlationIdHeader)).isEqualTo("generated-42")
             val event = log.events.single()
             assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42")
             assertThat(event.formattedMessage).doesNotContain("forged")

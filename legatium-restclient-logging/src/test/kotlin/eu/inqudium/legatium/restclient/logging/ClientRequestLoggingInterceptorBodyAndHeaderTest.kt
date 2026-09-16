@@ -13,7 +13,6 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.springframework.http.HttpMethod
@@ -38,19 +37,12 @@ import java.util.concurrent.atomic.AtomicLong
 class ClientRequestLoggingInterceptorBodyAndHeaderTest {
     private val ticker = AtomicLong(0)
     private val base = ClientLoggingProperties(loggerName = "adapter-http-exchange-body-header-test")
-    private lateinit var log: CapturedLogger
-
-    @BeforeEach
-    fun setUp() {
-        log = CapturedLogger(base.loggerName)
-    }
+    private val log = CapturedLogger(base.loggerName)
 
     @AfterEach
     fun tearDown() {
         log.detach()
     }
-
-    private fun interceptorWith(properties: ClientLoggingProperties) = ClientRequestLoggingInterceptor(properties, NanoTimeSource { ticker.get() }, CorrelationIdGenerator { "generated-42" }, SimpleMeterRegistry())
 
     @Nested
     inner class `Header selection and masking` {
@@ -71,6 +63,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
                                 masked = listOf("authorization"),
                             ),
                     ),
+                    ticker,
                 )
             val request =
                 request().apply {
@@ -166,6 +159,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
                     base.copy(
                         responseHeaders = HeaderLogProperties(includes = listOf("*"), excludes = listOf("Set-Cookie"), unmasked = listOf("Content-Type")),
                     ),
+                    ticker,
                 )
             val execution =
                 answering(body = "ok") { response ->
@@ -191,7 +185,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Why it matters: with masking as a second, empty list the same configuration logged
             //   everything in plaintext - the unsafe combination was the convenient one.
             // Given
-            val interceptor = interceptorWith(base.copy(requestHeaders = HeaderLogProperties(includes = listOf("*"))))
+            val interceptor = interceptorWith(base.copy(requestHeaders = HeaderLogProperties(includes = listOf("*"))), ticker)
             val request = request().apply { headers.set("Authorization", "Bearer secret-token") }
 
             // When
@@ -211,10 +205,10 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             //   the event although the request carried an Accept header.
             // Why it matters: the default must log no header at all, and an empty "[]" field would
             //   look like a selection that found nothing rather than none configured.
-            // Given: the default sections
-            interceptorWith(base).intercept(request().apply { headers.set("Accept", "*/*") }, ByteArray(0), answering()).consumeAndClose()
+            // Given/When: the default sections
+            interceptorWith(base, ticker).intercept(request().apply { headers.set("Accept", "*/*") }, ByteArray(0), answering()).consumeAndClose()
 
-            // When/Then
+            // Then
             assertThat(keyValues(log.events.single())).doesNotContainKeys("adapter_request_headers", "adapter_response_headers")
         }
     }
@@ -230,7 +224,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Why it matters: the blocking clients hand the interceptor the complete, final body -
             //   the line must show what actually went out, not what the caller intended to send.
             // Given
-            val interceptor = interceptorWith(base.copy(logRequestBody = BodyLogMode.ALWAYS))
+            val interceptor = interceptorWith(base.copy(logRequestBody = BodyLogMode.ALWAYS), ticker)
             val request = request(method = HttpMethod.POST).apply { headers.contentType = MediaType.APPLICATION_JSON }
 
             // When
@@ -250,7 +244,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Why it matters: a large upload must never land in the log line in full, and the
             //   reader must see that the value is cut and how large the body really was.
             // Given: a 4-byte cap over a 10-byte body
-            val interceptor = interceptorWith(base.copy(logRequestBody = BodyLogMode.ALWAYS, maxBodyBytes = 4))
+            val interceptor = interceptorWith(base.copy(logRequestBody = BodyLogMode.ALWAYS, maxBodyBytes = 4), ticker)
 
             // When
             interceptor.intercept(request(method = HttpMethod.POST), "0123456789".toByteArray(), answering()).consumeAndClose()
@@ -268,7 +262,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Why it matters: a body decoded with the wrong charset shows mojibake for every
             //   non-ASCII character, which reads like corrupt data on the wire.
             // Given: an ISO-8859-1 body declared as such
-            val interceptor = interceptorWith(base.copy(logRequestBody = BodyLogMode.ALWAYS))
+            val interceptor = interceptorWith(base.copy(logRequestBody = BodyLogMode.ALWAYS), ticker)
             val request =
                 request(method = HttpMethod.POST).apply {
                     headers.contentType = MediaType.parseMediaType("text/plain; charset=ISO-8859-1")
@@ -289,7 +283,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Why it matters: a GET without a body must not show an empty body field, which a
             //   dashboard would count as a body that was sent.
             // Given/When
-            interceptorWith(base.copy(logRequestBody = BodyLogMode.ALWAYS)).intercept(request(), ByteArray(0), answering()).consumeAndClose()
+            interceptorWith(base.copy(logRequestBody = BodyLogMode.ALWAYS), ticker).intercept(request(), ByteArray(0), answering()).consumeAndClose()
 
             // Then
             assertThat(keyValues(log.events.single())).doesNotContainKey("adapter_request_body")
@@ -308,7 +302,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Why it matters: the tee is a passive copy - it must neither alter what the converters
             //   see nor log anything the converters did not read.
             // Given
-            val interceptor = interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS))
+            val interceptor = interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS), ticker)
 
             // When: the client reads the whole body, as its converters would
             val body = interceptor.intercept(request(), ByteArray(0), answering(body = "hello")).consumeAndClose()
@@ -324,7 +318,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Success criteria: no adapter_response_body key, rather than an empty or fabricated value.
             // Why it matters: 'logged' must mean 'actually flowed'.
             // Given/When: a bodiless consumption (toBodilessEntity-style: close without reading)
-            interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS)).intercept(request(), ByteArray(0), answering(body = "unread")).close()
+            interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS), ticker).intercept(request(), ByteArray(0), answering(body = "unread")).close()
 
             // Then
             assertThat(keyValues(log.events.single())).doesNotContainKey("adapter_response_body")
@@ -338,13 +332,13 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             //   capture saw no more bytes than it buffered.
             // Why it matters: an early-exiting parser leaves bytes on the wire the log must not
             //   invent; the truthful count is what the size summary records as well.
-            // Given: the application reads 3 bytes and closes
-            val response = interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS)).intercept(request(), ByteArray(0), answering(body = "abcdef"))
+            // Given/When: the application reads 3 bytes and closes
+            val response = interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS), ticker).intercept(request(), ByteArray(0), answering(body = "abcdef"))
             val prefix = ByteArray(3)
             response.body.read(prefix)
             response.close()
 
-            // When/Then: what flowed, with the truthful count - not Content-Length
+            // Then: what flowed, with the truthful count - not Content-Length
             assertThat(keyValues(log.events.single())).containsEntry("adapter_response_body", "abc")
         }
 
@@ -357,7 +351,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Why it matters: a large download must cost at most max-body-bytes of log line and
             //   memory, and the note must state the real size the application consumed.
             // Given
-            val interceptor = interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS, maxBodyBytes = 4))
+            val interceptor = interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS, maxBodyBytes = 4), ticker)
 
             // When
             interceptor.intercept(request(), ByteArray(0), answering(body = "0123456789")).consumeAndClose()
@@ -375,7 +369,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Why it matters: peers do declare legacy charsets; decoding them as UTF-8 would render
             //   every accented character as a replacement and hide the real payload.
             // Given: a Latin-1 answer declared as such
-            val interceptor = interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS))
+            val interceptor = interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS), ticker)
             val latin = "caf\u00e9".toByteArray(StandardCharsets.ISO_8859_1)
             val latinExecution =
                 ClientHttpRequestExecution { _, _ ->
@@ -427,13 +421,13 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Why it matters: an absent key alone cannot observe this (a capture with logging off also
             //   yields no key) - the seam is what proves no capture was installed.
             // Given: the defaults
-            val response = interceptorWith(base).intercept(request(), ByteArray(0), answering(body = "raw"))
+            val response = interceptorWith(base, ticker).intercept(request(), ByteArray(0), answering(body = "raw"))
 
             // When
             val body = response.consumeAndClose()
 
             // Then
-            assertThat((response as CapturingClientHttpResponse).capturing).isFalse()
+            assertThat(response).isInstanceOfSatisfying(CapturingClientHttpResponse::class.java) { assertThat(it.capturing).isFalse() }
             assertThat(body).isEqualTo("raw")
             assertThat(keyValues(log.events.single())).doesNotContainKey("adapter_response_body")
         }
@@ -476,7 +470,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Given/When
             val thrown =
                 catchThrowable {
-                    clientAnsweringUnmappableJson(interceptorWith(onFailure))
+                    clientAnsweringUnmappableJson(interceptorWith(onFailure, ticker))
                         .get()
                         .uri("https://peer.example/things/1")
                         .retrieve()
@@ -504,7 +498,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Given/When
             val thrown =
                 catchThrowable {
-                    clientAnsweringUnmappableJson(interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS)))
+                    clientAnsweringUnmappableJson(interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS), ticker))
                         .get()
                         .uri("https://peer.example/things/1")
                         .retrieve()
@@ -525,7 +519,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Success criteria: the application receives the response body; the line carries neither body.
             // Why it matters: this is the mode that keeps body logging affordable outside a debug session.
             // Given/When
-            val body = interceptorWith(onFailure).intercept(request(method = HttpMethod.POST), "sent".toByteArray(), answering(body = "received")).consumeAndClose()
+            val body = interceptorWith(onFailure, ticker).intercept(request(method = HttpMethod.POST), "sent".toByteArray(), answering(body = "received")).consumeAndClose()
 
             // Then
             assertThat(body).isEqualTo("received")
@@ -544,7 +538,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Why it matters: a 5xx is exactly the line an operator opens to see what was sent and
             //   what the peer answered; on-failure must not withhold either side there.
             // Given/When: a failure outcome without an exception
-            interceptorWith(onFailure)
+            interceptorWith(onFailure, ticker)
                 .intercept(request(method = HttpMethod.POST), "sent".toByteArray(), answering(status = HttpStatus.BAD_GATEWAY, body = "upstream down"))
                 .consumeAndClose()
 
@@ -570,7 +564,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             val refused = ClientHttpRequestExecution { _, _ -> throw IOException("Connection refused") }
 
             // When
-            val thrown = catchThrowable { interceptorWith(onFailure).intercept(request(method = HttpMethod.POST), "sent".toByteArray(), refused) }
+            val thrown = catchThrowable { interceptorWith(onFailure, ticker).intercept(request(method = HttpMethod.POST), "sent".toByteArray(), refused) }
 
             // Then: the request body that was captured before the outcome was known is on the line
             assertThat(thrown).isInstanceOf(IOException::class.java)
@@ -588,7 +582,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Why it matters: a validation error\'s response body is the most wanted body of all; hiding it
             //   behind the outcome vocabulary would make on-failure useless for client errors.
             // Given/When: a 404 with a body
-            interceptorWith(onFailure)
+            interceptorWith(onFailure, ticker)
                 .intercept(request(method = HttpMethod.POST), "sent".toByteArray(), answering(status = HttpStatus.NOT_FOUND, body = "no such thing"))
                 .consumeAndClose()
 
@@ -610,7 +604,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             //   an operator can measure payloads without paying for their log volume.
             // Given: on-failure plus measuring, on an own registry
             val registry = SimpleMeterRegistry()
-            val interceptor = ClientRequestLoggingInterceptor(onFailure.copy(measureRequestBodySize = true), { ticker.get() }, { "g" }, registry)
+            val interceptor = interceptorWith(onFailure.copy(measureRequestBodySize = true), ticker, registry)
 
             // When: a successful call with a 4-byte request body
             interceptor.intercept(request(method = HttpMethod.POST), "four".toByteArray(), answering()).consumeAndClose()

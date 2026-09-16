@@ -24,7 +24,7 @@ class TwinContractTest {
         // Why it matters: alerts on adapter.logging.events{outcome="cancelled"} must find the value at
         //   zero from the start; a lost cancelled would silently empty the abandoned-call signal.
         // Given/When/Then
-        assertThat(ClientStack.WEBCLIENT.tag).isEqualTo("webclient")
+        assertThat(ClientStack.WEBCLIENT.tagValue).isEqualTo("webclient")
         assertThat(ClientStack.WEBCLIENT.outcomes.map { it.tagValue }).containsExactly("success", "failure", "timeout", "cancelled")
     }
 

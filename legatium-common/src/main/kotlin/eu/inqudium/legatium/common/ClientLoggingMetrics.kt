@@ -58,7 +58,7 @@ internal enum class RequestIdSource(
  */
 internal enum class ClientStack(
     /** The `client` tag value of the open-exchanges gauge. */
-    val tag: String,
+    val tagValue: String,
     /** The closed outcome vocabulary of this stack, pre-registered on the events counter. */
     val outcomes: List<ClientOutcome>,
     /** The stack's own wording of what an open exchange is. */
@@ -123,36 +123,6 @@ internal class ClientLoggingMetrics private constructor(
     private val reportedConflicts: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val reportedUpdateFailures: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-    /**
-     * Registers through [register] against the host registry; on rejection - Micrometer refusing the id,
-     * or [taken] reporting that the host registry already holds a meter under it whose state would not be
-     * this instance's - the meter lands in the private fallback registry instead, with one warning per
-     * meter name.
-     */
-    private fun <M : Meter> registerOrFallback(
-        meterName: String,
-        taken: (MeterRegistry) -> Boolean = { false },
-        register: (MeterRegistry) -> M,
-    ): M {
-        val rejection =
-            try {
-                if (!taken(meterRegistry)) {
-                    return register(meterRegistry)
-                }
-                "a meter with this id is already registered and would keep its own state"
-            } catch (e: Exception) {
-                e.toString()
-            }
-        if (reportedConflicts.add(meterName)) {
-            internalLog.warn(
-                "Meter {} could not be registered in the host registry and is kept private (not exported): {}",
-                meterName,
-                rejection,
-            )
-        }
-        return register(fallbackRegistry)
-    }
-
     // One counter per fail-open site. The metric exists because the failure it counts is the one state
     // logs cannot reliably show: when the emission breaks, the missing exchange line IS the symptom, and
     // the report about it is itself only a log line in the same possibly-broken pipeline. A counter
@@ -196,14 +166,14 @@ internal class ClientLoggingMetrics private constructor(
             registerOrFallback(
                 OPEN_EXCHANGES_METER,
                 // The same-type collision case of the class KDoc: a gauge already under this id would keep its own state.
-                taken = { registry -> registry.find(OPEN_EXCHANGES_METER).tag(CLIENT_TAG, stack.tag).meter() != null },
+                taken = { registry -> registry.find(OPEN_EXCHANGES_METER).tag(CLIENT_TAG, stack.tagValue).meter() != null },
             ) { registry ->
                 Gauge
                     .builder(OPEN_EXCHANGES_METER, open) { it.get().toDouble() }
                     // Tagged per twin: Micrometer deduplicates by id and would silently keep the FIRST
                     // gauge registered under a bare name, so in a host carrying both twins the second
                     // twin's open exchanges would vanish. Two ids, two gauges; sum over the tag for the total.
-                    .tag(CLIENT_TAG, stack.tag)
+                    .tag(CLIENT_TAG, stack.tagValue)
                     .description(stack.openExchangesDescription)
                     .register(registry)
             }
@@ -239,7 +209,7 @@ internal class ClientLoggingMetrics private constructor(
      */
     fun eventEmitted(outcome: ClientOutcome) =
         updateQuietly(EVENTS_METER) {
-            checkNotNull(eventCounters[outcome]) { "outcome ${outcome.tagValue} is not in the ${stack.tag} vocabulary" }.increment()
+            checkNotNull(eventCounters[outcome]) { "outcome ${outcome.tagValue} is not in the ${stack.tagValue} vocabulary" }.increment()
         }
 
     fun exchangeOpened() {
@@ -258,35 +228,6 @@ internal class ClientLoggingMetrics private constructor(
         updateQuietly(CORRELATION_METER) {
             requestIdSourceCounters.getValue(source).increment()
         }
-
-    /**
-     * Isolates an OPERATIONAL counter update from the exchange it observes: registration succeeded, but
-     * a host `Counter` may still throw on increment. The failure is counted `stage=wiring` on EVERY call
-     * (bookkeeping lost, event unaffected - the count is the measure of the loss) but warned ONCE per
-     * meter name, like a registration conflict: a permanently broken host counter is hit twice per
-     * exchange, and a warning per hit would drown the module's curated one-time warnings under load.
-     * The fail-open counter itself is reported through [reportQuietly], so a registry broken as a whole
-     * is silently dropped rather than escaping.
-     */
-    private inline fun updateQuietly(
-        meterName: String,
-        update: () -> Unit,
-    ) {
-        try {
-            update()
-        } catch (e: Exception) {
-            reportQuietly {
-                wiringFailure()
-                if (reportedUpdateFailures.add(meterName)) {
-                    internalLog.warn(
-                        "Meter {} could not be updated - the exchange is logged without it; further failures of this meter are counted, not logged: {}",
-                        meterName,
-                        e.toString(),
-                    )
-                }
-            }
-        }
-    }
 
     fun requestBodySize(
         template: String?,
@@ -325,6 +266,65 @@ internal class ClientLoggingMetrics private constructor(
             .tag("state", state.tagValue)
             .register(registry)
     }.increment()
+
+    /**
+     * Registers through [register] against the host registry; on rejection - Micrometer refusing the id,
+     * or [taken] reporting that the host registry already holds a meter under it whose state would not be
+     * this instance's - the meter lands in the private fallback registry instead, with one warning per
+     * meter name.
+     */
+    private fun <M : Meter> registerOrFallback(
+        meterName: String,
+        taken: (MeterRegistry) -> Boolean = { false },
+        register: (MeterRegistry) -> M,
+    ): M {
+        val rejection =
+            try {
+                if (!taken(meterRegistry)) {
+                    return register(meterRegistry)
+                }
+                "a meter with this id is already registered and would keep its own state"
+            } catch (e: Exception) {
+                e.toString()
+            }
+        if (reportedConflicts.add(meterName)) {
+            internalLog.warn(
+                "Meter {} could not be registered in the host registry and is kept private (not exported): {}",
+                meterName,
+                rejection,
+            )
+        }
+        return register(fallbackRegistry)
+    }
+
+    /**
+     * Isolates an OPERATIONAL counter update from the exchange it observes: registration succeeded, but
+     * a host `Counter` may still throw on increment. The failure is counted `stage=wiring` on EVERY call
+     * (bookkeeping lost, event unaffected - the count is the measure of the loss) but warned ONCE per
+     * meter name, like a registration conflict: a permanently broken host counter is hit twice per
+     * exchange, and a warning per hit would drown the module's curated one-time warnings under load.
+     * The fail-open counter itself is reported through [reportQuietly], so a registry broken as a whole
+     * is silently dropped rather than escaping.
+     */
+    private inline fun updateQuietly(
+        meterName: String,
+        update: () -> Unit,
+    ) {
+        try {
+            update()
+        } catch (e: Exception) {
+            reportQuietly {
+                wiringFailure()
+                if (reportedUpdateFailures.add(meterName)) {
+                    internalLog.warn(
+                        "Meter {} could not be updated - the exchange is logged without it; further failures of this meter are counted, not logged: {}",
+                        meterName,
+                        e.toString(),
+                    )
+                }
+            }
+        }
+    }
 
     /**
      * Bytes that ACTUALLY flowed, tagged by the URI template (low-cardinality by construction: a recorded
@@ -380,6 +380,9 @@ internal class ClientLoggingMetrics private constructor(
                 owners[stack]?.get() ?: ClientLoggingMetrics(registry, stack).also { owners[stack] = WeakReference(it) }
             }
 
+        /** The `uri` tag for a recorded template: the template itself when it carries a placeholder, [UNTEMPLATED_URI] otherwise. */
+        fun uriTag(template: String?): String = template?.takeIf { '{' in it } ?: UNTEMPLATED_URI
+
         /**
          * Meter counting logging failures the fail-open path swallowed, tagged `stage=emission` (the
          * exchange event was LOST), `stage=arrival` (the optional start line was lost) or `stage=wiring`
@@ -415,6 +418,22 @@ internal class ClientLoggingMetrics private constructor(
         const val RESPONSE_BODY_READ_METER = "adapter.response.body.read"
 
         /**
+         * Gauge of exchanges between entry (wiring) and the exactly-once completion, tagged `client`
+         * (`restclient` | `webclient`). Hovers near the in-flight call count in health; a monotonically
+         * growing baseline means exchanges never end and exchange events are being lost SILENTLY - the
+         * one failure mode neither the fail-open counter (nothing throws) nor the events counter (no
+         * baseline) can see.
+         */
+        const val OPEN_EXCHANGES_METER = "adapter.logging.exchanges.open"
+
+        /**
+         * Counter of request-id origins, tagged `source=trace|header|generated` (ADR-0002). A rising
+         * `generated` share means the application stopped propagating `traceparent` or a correlation
+         * header onto its outbound calls.
+         */
+        const val CORRELATION_METER = "adapter.logging.correlation.id"
+
+        /**
          * The `uri` tag value for exchanges the client recorded no URI template for - and for a recorded
          * "template" without a placeholder: the client records whatever string `uri(String, ...)` was
          * given, so `uri("/things/" + id)` would otherwise put one tag value per id on the meter.
@@ -433,24 +452,5 @@ internal class ClientLoggingMetrics private constructor(
 
         /** The `client` tag of the open-exchanges gauge, distinguishing the two twins' gauges in one registry. */
         const val CLIENT_TAG = "client"
-
-        /** The `uri` tag for a recorded template: the template itself when it carries a placeholder, [UNTEMPLATED_URI] otherwise. */
-        fun uriTag(template: String?): String = template?.takeIf { '{' in it } ?: UNTEMPLATED_URI
-
-        /**
-         * Gauge of exchanges between entry (wiring) and the exactly-once completion, tagged `client`
-         * (`restclient` | `webclient`). Hovers near the in-flight call count in health; a monotonically
-         * growing baseline means exchanges never end and exchange events are being lost SILENTLY - the
-         * one failure mode neither the fail-open counter (nothing throws) nor the events counter (no
-         * baseline) can see.
-         */
-        const val OPEN_EXCHANGES_METER = "adapter.logging.exchanges.open"
-
-        /**
-         * Counter of request-id origins, tagged `source=trace|header|generated` (ADR-0002). A rising
-         * `generated` share means the application stopped propagating `traceparent` or a correlation
-         * header onto its outbound calls.
-         */
-        const val CORRELATION_METER = "adapter.logging.correlation.id"
     }
 }

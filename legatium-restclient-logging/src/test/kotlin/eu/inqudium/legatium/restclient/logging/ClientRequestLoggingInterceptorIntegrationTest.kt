@@ -7,10 +7,6 @@ import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
-import org.junit.jupiter.api.AfterAll
-import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeAll
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.SpringBootConfiguration
@@ -24,6 +20,7 @@ import org.springframework.web.client.HttpServerErrorException
 import org.springframework.web.client.ResourceAccessException
 import org.springframework.web.client.RestClient
 import org.springframework.web.util.DefaultUriBuilderFactory
+import java.net.http.HttpClient
 import java.time.Duration
 
 /**
@@ -56,7 +53,7 @@ import java.time.Duration
             "org.springframework.boot.micrometer.tracing.autoconfigure.MicrometerTracingAutoConfiguration",
     ],
 )
-class ClientRequestLoggingInterceptorIntegrationTest {
+class ClientRequestLoggingInterceptorIntegrationTest : PeerIntegrationSuite() {
     @Autowired
     private lateinit var restClientBuilder: RestClient.Builder
 
@@ -66,18 +63,15 @@ class ClientRequestLoggingInterceptorIntegrationTest {
     @Autowired
     private lateinit var registry: MeterRegistry
 
-    private lateinit var log: CapturedLogger
-
-    @BeforeEach
-    fun setUp() {
-        log = CapturedLogger("adapter-http-exchange")
-        peer.received.clear()
-    }
-
-    @AfterEach
-    fun tearDown() {
-        log.detach()
-    }
+    /**
+     * A client on the explicitly pinned JDK engine against a port nobody listens on - with a connect
+     * timeout, so a host that DROPs instead of refusing cannot hang the test.
+     */
+    private fun clientAgainstClosedPort(): RestClient =
+        restClientBuilder
+            .baseUrl("http://127.0.0.1:1")
+            .requestFactory(JdkClientHttpRequestFactory(HttpClient.newBuilder().connectTimeout(CONNECT_GUARD).build()))
+            .build()
 
     @Test
     fun `should log one complete event for a real call including template, headers and bodies`() {
@@ -183,18 +177,8 @@ class ClientRequestLoggingInterceptorIntegrationTest {
         // Why it matters: a size sample for a body the peer never saw would inflate payload
         //   distributions with every outage; the field, by contrast, is the only payload evidence a
         //   failed call leaves.
-        // Given: a port nobody listens on, with a connect timeout so a DROPping host cannot hang the test
-        val client =
-            restClientBuilder
-                .baseUrl("http://127.0.0.1:1")
-                .requestFactory(
-                    JdkClientHttpRequestFactory(
-                        java.net.http.HttpClient
-                            .newBuilder()
-                            .connectTimeout(Duration.ofSeconds(2))
-                            .build(),
-                    ),
-                ).build()
+        // Given: a port nobody listens on
+        val client = clientAgainstClosedPort()
 
         // When
         val thrown =
@@ -258,19 +242,8 @@ class ClientRequestLoggingInterceptorIntegrationTest {
         //   cause attached.
         // Why it matters: a peer that is down produces no response object at all - the event must
         //   still exist, carry the cause, and not pretend a status it never received.
-        // Given: a port nobody listens on - with a connect timeout, so a host that DROPs instead of
-        //   refusing cannot hang the test
-        val client =
-            restClientBuilder
-                .baseUrl("http://127.0.0.1:1")
-                .requestFactory(
-                    JdkClientHttpRequestFactory(
-                        java.net.http.HttpClient
-                            .newBuilder()
-                            .connectTimeout(Duration.ofSeconds(2))
-                            .build(),
-                    ),
-                ).build()
+        // Given: a port nobody listens on
+        val client = clientAgainstClosedPort()
 
         // When
         val thrown =
@@ -302,7 +275,7 @@ class ClientRequestLoggingInterceptorIntegrationTest {
         val client =
             restClientBuilder
                 .baseUrl(peer.baseUrl)
-                .requestFactory(JdkClientHttpRequestFactory().apply { setReadTimeout(Duration.ofMillis(200)) })
+                .requestFactory(JdkClientHttpRequestFactory().apply { setReadTimeout(SHORT) })
                 .build()
 
         // When
@@ -389,19 +362,11 @@ class ClientRequestLoggingInterceptorIntegrationTest {
     }
 
     companion object {
-        private lateinit var peer: PeerServer
+        /** The read timeout that IS the subject of the timeout scenario: well below the peer's `/slow` delay. */
+        private val SHORT: Duration = Duration.ofMillis(200)
 
-        @JvmStatic
-        @BeforeAll
-        fun startPeer() {
-            peer = PeerServer()
-        }
-
-        @JvmStatic
-        @AfterAll
-        fun stopPeer() {
-            peer.close()
-        }
+        /** The connect timeout of a call that must fail, never hang: generous against a refusal that arrives at once. */
+        private val CONNECT_GUARD: Duration = Duration.ofSeconds(2)
     }
 }
 

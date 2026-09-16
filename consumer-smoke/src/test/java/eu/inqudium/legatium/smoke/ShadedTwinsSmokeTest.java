@@ -12,7 +12,6 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -98,11 +97,10 @@ class ShadedTwinsSmokeTest {
         // Why it matters: a broken artifactSet or a dependency-reduced POM that still names the
         //   unpublished module surfaces here, not at the first consumer's NoClassDefFoundError.
         // Given/When
-        List<URL> locations = Collections.list(getClass().getClassLoader().getResources(SHARED_CLASS));
-        List<String> jars = new ArrayList<>();
-        for (URL location : locations) {
-            jars.add(location.toString());
-        }
+        List<String> jars =
+                Collections.list(getClass().getClassLoader().getResources(SHARED_CLASS)).stream()
+                        .map(URL::toString)
+                        .toList();
 
         // Then
         assertThat(jars).hasSize(2);
@@ -177,11 +175,10 @@ class ShadedTwinsSmokeTest {
     }
 
     private static Object outcomeOf(ILoggingEvent event) {
-        for (KeyValuePair pair : event.getKeyValuePairs()) {
-            if ("adapter_outcome".equals(pair.key)) {
-                return pair.value;
-            }
-        }
-        return null;
+        return event.getKeyValuePairs().stream()
+                .filter(pair -> "adapter_outcome".equals(pair.key))
+                .map(pair -> pair.value)
+                .findFirst()
+                .orElse(null);
     }
 }

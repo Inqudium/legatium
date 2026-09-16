@@ -17,7 +17,7 @@ import java.util.zip.GZIPOutputStream
  * wire.
  */
 internal class PeerServer : AutoCloseable {
-    class Received(
+    data class Received(
         val method: String,
         val path: String,
         val headers: Map<String, List<String>>,

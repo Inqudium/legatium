@@ -1,6 +1,7 @@
 package eu.inqudium.legatium.webclient.logging
 
 import eu.inqudium.legatium.common.AdapterName
+import eu.inqudium.legatium.common.BodyLogMode
 import eu.inqudium.legatium.common.ClientActivation
 import eu.inqudium.legatium.common.ClientIdentity
 import eu.inqudium.legatium.common.ClientLoggingMetrics
@@ -8,6 +9,7 @@ import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.ClientStack
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.HeaderValueMasker
+import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.NanoTimeSource
 import eu.inqudium.legatium.common.RequestTarget
 import eu.inqudium.legatium.common.declaredCharsetOrUtf8
@@ -99,8 +101,8 @@ class ClientRequestLoggingFilter
          */
         private val masker: HeaderValueMasker = HeaderValueMasker.forKey(properties.maskingKey),
     ) : ExchangeFilterFunction {
-        /** Shared with the emitter and exposed for the tests; one owner per registry. */
-        internal val metrics = ClientLoggingMetrics.forRegistry(meterRegistry, ClientStack.WEBCLIENT)
+        /** Shared with the emitter; one owner per registry (see the class KDoc). */
+        private val metrics = ClientLoggingMetrics.forRegistry(meterRegistry, ClientStack.WEBCLIENT)
 
         /** Exposed for the tests, which swap the emitter's ambient restorer to drive its fail-open path. */
         internal val emitter = ExchangeLogEmitter(properties, nanoTime, metrics, masker)
@@ -196,7 +198,7 @@ class ClientRequestLoggingFilter
             }
             reportQuietly {
                 metrics.exchangeCompleted()
-                internalLog.warn("Adapter http exchange abandoned: {} {} - {}", exchange.method, exchange.target, error.toString())
+                internalLog.warn("Adapter http exchange abandoned: {} {} - {} [{}={}]", exchange.method, exchange.target, error.toString(), MdcKeys.REQUEST_ID, exchange.requestId)
             }
         }
 
@@ -278,8 +280,6 @@ class ClientRequestLoggingFilter
         ): Wiring {
             val headers = request.headers()
             val identity = ClientIdentity.resolve(headers, properties, correlationIds)
-            // Guarded in [ClientLoggingMetrics.requestId]: a throwing host counter never fails the call.
-            metrics.requestId(identity.source)
             val captures = newCaptures()
             // The request the connector gets: the caller's, plus the correlation header on a traceless call
             // without one, plus the body tee when the request body is captured. ClientRequest is immutable,
@@ -314,6 +314,10 @@ class ClientRequestLoggingFilter
                     spanId = identity.spanId,
                     ambient = ambient,
                 )
+            // The origin count LAST, right before the gauge: a wiring that fails above leaves the
+            // correlation sum equal to the sum of exchanges that were actually opened. Guarded in
+            // [ClientLoggingMetrics.requestId]: a throwing host counter never fails the call.
+            metrics.requestId(identity.source)
             metrics.exchangeOpened()
             return Wiring(exchange, outgoing)
         }
@@ -325,9 +329,20 @@ class ClientRequestLoggingFilter
          */
         private fun newCaptures(): Captures =
             Captures(
-                request = if (properties.logRequestBody.captures || properties.measureRequestBodySize) BoundedBodyCapture(if (properties.logRequestBody.captures) properties.maxBodyBytes else 0) else null,
-                response = if (properties.logResponseBody.captures || properties.measureResponseBodySize) BoundedBodyCapture(if (properties.logResponseBody.captures) properties.maxBodyBytes else 0) else null,
+                request = captureFor(properties.logRequestBody, properties.measureRequestBodySize),
+                response = captureFor(properties.logResponseBody, properties.measureResponseBodySize),
             )
+
+        /** One direction's capture by the rule of [newCaptures], or null when the body is neither logged nor measured. */
+        private fun captureFor(
+            mode: BodyLogMode,
+            measured: Boolean,
+        ): BoundedBodyCapture? =
+            when {
+                mode.captures -> BoundedBodyCapture(properties.maxBodyBytes)
+                measured -> BoundedBodyCapture(0)
+                else -> null
+            }
 
         private class Captures(
             val request: BoundedBodyCapture?,

@@ -10,14 +10,12 @@ import org.slf4j.spi.MDCAdapter
 import java.util.Deque
 
 /**
- * Partial-install rollback and best-effort restoration of [MdcScope] against a FAILING MDC
- * adapter. SLF4J exposes no public adapter setter, so the
- * package-private `MDC.setMDCAdapter` is invoked reflectively and the original adapter is restored
- * after every test; the failing adapter delegates everything else to the original, so MDC state stays
- * real.
+ * Partial-install rollback and best-effort restoration of [MdcScope] against a FAILING MDC adapter,
+ * swapped in through [installMdcAdapter] and restored after every test; the failing adapter delegates
+ * everything else to the original, so MDC state stays real.
  */
 class MdcScopeTest {
-    private lateinit var original: MDCAdapter
+    private val original: MDCAdapter = MDC.getMDCAdapter()
 
     /** Delegates to [delegate]; throws on `put` of the keys in [failPut] and on `remove` of those in [failRemove]. */
     private class FailingAdapter(
@@ -29,12 +27,12 @@ class MdcScopeTest {
             key: String,
             value: String?,
         ) {
-            if (key in failPut) throw IllegalStateException("adapter put failed for $key")
+            if (key in failPut) error("adapter put failed for $key")
             delegate.put(key, value)
         }
 
         override fun remove(key: String) {
-            if (key in failRemove) throw IllegalStateException("adapter remove failed for $key")
+            if (key in failRemove) error("adapter remove failed for $key")
             delegate.remove(key)
         }
 
@@ -52,7 +50,6 @@ class MdcScopeTest {
 
     @BeforeEach
     fun setUp() {
-        original = MDC.getMDCAdapter()
         MDC.clear()
     }
 
@@ -120,7 +117,8 @@ class MdcScopeTest {
         MDC.put(MdcKeys.ROUTE, "https://outer/route")
         MDC.put(TraceMdcKeys.SPAN_ID, "bridge-span")
 
-        // When: an inner scope with a parsed trace id but no span id, owning the trace keys
+        // When/Then: inside an inner scope with a parsed trace id but no span id, owning the trace keys,
+        //   the inner values are visible
         MdcScope("inner-id", "GET", "https://inner/route", traceId = "4bf92f3577b34da6a3ce929d0e0e4736", ownsTraceKeys = true).use {
             assertThat(MDC.get(MdcKeys.REQUEST_ID)).isEqualTo("inner-id")
             assertThat(MDC.get(MdcKeys.REQUEST_METHOD)).isEqualTo("GET")
@@ -128,7 +126,7 @@ class MdcScopeTest {
             assertThat(MDC.get(TraceMdcKeys.SPAN_ID)).isNull()
         }
 
-        // Then: every previous value is back
+        // And: after close, every previous value is back
         assertThat(MDC.get(MdcKeys.REQUEST_ID)).isEqualTo("outer-id")
         assertThat(MDC.get(MdcKeys.REQUEST_METHOD)).isEqualTo("POST")
         assertThat(MDC.get(MdcKeys.ROUTE)).isEqualTo("https://outer/route")

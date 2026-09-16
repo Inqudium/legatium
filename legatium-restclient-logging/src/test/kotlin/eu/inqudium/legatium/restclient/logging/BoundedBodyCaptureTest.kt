@@ -154,11 +154,11 @@ class BoundedBodyCaptureTest {
             //   COMPLETE in place.
             // Why it matters: the state becomes the state tag of adapter.response.body.read - a
             //   fully consumed body reported as partial would show payload discarded that was not.
-            // Given
+            // Given: a fresh capture
             val capture = BoundedBodyCapture(8)
-            assertThat(capture.readState).isEqualTo(BodyReadState.UNREAD)
 
-            // When/Then
+            // When/Then: UNREAD at construction, then one observation per transition
+            assertThat(capture.readState).isEqualTo(BodyReadState.UNREAD)
             capture.markStarted()
             assertThat(capture.readState).isEqualTo(BodyReadState.PARTIAL)
             capture.markCompleted()

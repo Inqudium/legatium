@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
+import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -15,7 +16,7 @@ import java.util.concurrent.Executors
  * wire.
  */
 internal class PeerServer : AutoCloseable {
-    class Received(
+    data class Received(
         val method: String,
         val path: String,
         val headers: Map<String, List<String>>,
@@ -63,7 +64,7 @@ internal class PeerServer : AutoCloseable {
             }
 
             path == "/slow" -> {
-                Thread.sleep(1_500)
+                Thread.sleep(SLOW_ROUTE_DELAY)
                 respond(exchange, 200, "text/plain", "late")
             }
 
@@ -93,5 +94,10 @@ internal class PeerServer : AutoCloseable {
     override fun close() {
         server.stop(0)
         handlers.shutdownNow()
+    }
+
+    companion object {
+        /** How long `/slow` holds its answer - the peer the timeout tests set a much shorter timeout against. */
+        val SLOW_ROUTE_DELAY: Duration = Duration.ofMillis(1_500)
     }
 }

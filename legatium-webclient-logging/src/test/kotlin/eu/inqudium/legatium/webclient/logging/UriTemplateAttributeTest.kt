@@ -2,11 +2,7 @@ package eu.inqudium.legatium.webclient.logging
 
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
-import org.springframework.http.HttpStatus
-import org.springframework.web.reactive.function.client.ClientResponse
-import org.springframework.web.reactive.function.client.ExchangeFunction
 import org.springframework.web.reactive.function.client.WebClient
-import reactor.core.publisher.Mono
 import java.net.URI
 
 /**
@@ -14,29 +10,23 @@ import java.net.URI
  * client with a stub exchange function, and through the private constant itself.
  */
 class UriTemplateAttributeTest {
+    /** A real client whose exchange function records the request it is handed. */
+    private val exchange = RecordingExchange()
+    private val client =
+        WebClient
+            .builder()
+            .baseUrl("https://api.example.com")
+            .exchangeFunction(exchange)
+            .build()
+
     @Test
     fun `should see the URI template WebClient records for the template form of uri`() {
         // What is tested: the mirrored attribute name - DefaultWebClient's constant is private, so the
         //   module derives it the same way and this test proves the derivation against the real client.
         // Success criteria: a call through `uri("/things/{id}", 7)` shows the expanded URL on the
-        //   request and the template under the mirrored attribute; an expanded URI shows no attribute.
+        //   request and the template under the mirrored attribute.
         // Why it matters: a renamed attribute upstream would silently drop adapter_url_template.
-        // Given: a client whose exchange function records what it is handed
-        var seen: Map<String, Any>? = null
-        var seenUrl: URI? = null
-        val client =
-            WebClient
-                .builder()
-                .baseUrl("https://api.example.com")
-                .exchangeFunction(
-                    ExchangeFunction { request ->
-                        seen = request.attributes().toMap()
-                        seenUrl = request.url()
-                        Mono.just(ClientResponse.create(HttpStatus.OK).build())
-                    },
-                ).build()
-
-        // When
+        // Given/When
         client
             .get()
             .uri("/things/{id}", 7)
@@ -45,10 +35,20 @@ class UriTemplateAttributeTest {
             .block()
 
         // Then
-        assertThat(seenUrl).isEqualTo(URI.create("https://api.example.com/things/7"))
-        assertThat(seen).containsEntry(ClientRequestLoggingFilter.URI_TEMPLATE_ATTRIBUTE, "https://api.example.com/things/{id}")
+        val sent = requireNotNull(exchange.sent)
+        assertThat(sent.url()).isEqualTo(URI.create("https://api.example.com/things/7"))
+        assertThat(sent.attributes()).containsEntry(ClientRequestLoggingFilter.URI_TEMPLATE_ATTRIBUTE, "https://api.example.com/things/{id}")
+    }
 
-        // When: an expanded URI
+    @Test
+    fun `should see no URI template for the expanded form of uri`() {
+        // What is tested: the absence side of the mirrored attribute - a call through `uri(URI)`
+        //   records no template.
+        // Success criteria: the request WebClient hands the exchange function carries no attribute
+        //   under the mirrored name.
+        // Why it matters: adapter_url_template must stay absent for an expanded URI, never repeat the
+        //   expanded path as a "template".
+        // Given/When
         client
             .get()
             .uri(URI.create("https://api.example.com/things/8"))
@@ -57,7 +57,7 @@ class UriTemplateAttributeTest {
             .block()
 
         // Then
-        assertThat(seen).doesNotContainKey(ClientRequestLoggingFilter.URI_TEMPLATE_ATTRIBUTE)
+        assertThat(requireNotNull(exchange.sent).attributes()).doesNotContainKey(ClientRequestLoggingFilter.URI_TEMPLATE_ATTRIBUTE)
     }
 
     @Test

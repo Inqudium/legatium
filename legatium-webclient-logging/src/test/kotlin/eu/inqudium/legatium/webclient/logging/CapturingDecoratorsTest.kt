@@ -2,9 +2,9 @@ package eu.inqudium.legatium.webclient.logging
 
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.reactivestreams.Publisher
 import org.springframework.core.io.FileSystemResource
 import org.springframework.core.io.buffer.DataBuffer
-import org.springframework.core.io.buffer.DefaultDataBufferFactory
 import org.springframework.http.HttpMethod
 import org.springframework.http.ZeroCopyHttpOutputMessage
 import org.springframework.mock.http.client.reactive.MockClientHttpRequest
@@ -26,8 +26,6 @@ import java.nio.file.Path
  * paths are only reachable here.
  */
 class CapturingDecoratorsTest {
-    private fun buffer(text: String): DataBuffer = DefaultDataBufferFactory.sharedInstance.wrap(text.toByteArray())
-
     private fun connectorRequest() = MockClientHttpRequest(HttpMethod.POST, URI.create("https://api.example.com/things"))
 
     @Test
@@ -182,7 +180,7 @@ class CapturingDecoratorsTest {
             count: Long,
         ): Mono<Void> = Mono.fromRunnable { zeroCopied = Triple(file, position, count) }
 
-        override fun writeWith(body: org.reactivestreams.Publisher<out DataBuffer>): Mono<Void> {
+        override fun writeWith(body: Publisher<out DataBuffer>): Mono<Void> {
             bufferedWrites++
             return super<MockClientHttpRequest>.writeWith(body)
         }

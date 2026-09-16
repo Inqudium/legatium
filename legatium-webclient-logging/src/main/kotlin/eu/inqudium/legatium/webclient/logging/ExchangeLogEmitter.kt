@@ -9,6 +9,7 @@ import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.MdcScope
 import eu.inqudium.legatium.common.NanoTimeSource
+import eu.inqudium.legatium.common.NoOpScope
 import eu.inqudium.legatium.common.Timeouts
 import eu.inqudium.legatium.common.TraceMdcKeys
 import eu.inqudium.legatium.common.addKeyValue
@@ -81,31 +82,22 @@ internal class ExchangeLogEmitter(
             if (!exchangeLog.isInfoEnabled) {
                 return
             }
-            // The caller's context first, the module's own scope inside it - same layering as the
-            // completion event, so both lines of one exchange carry the same ambient keys; torn down
-            // through [restoreQuietly] like the completion event's scopes.
-            val ambientScope = restoreAmbientQuietly(exchange)
-            try {
-                val mdcScope = MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true)
-                try {
-                    exchangeLog
-                        .atInfo()
-                        .setMessage(
-                            "Adapter http exchange started ${exchange.method} ${exchange.target} " +
-                                "[${MdcKeys.REQUEST_ID}=${exchange.requestId}]",
-                        ).addKeyValue(ClientLogField.REQUEST_METHOD, exchange.method)
-                        .addKeyValueIfPresent(ClientLogField.NAME, exchange.name)
-                        .addKeyValueIfPresent(ClientLogField.URL_HOST, exchange.host)
-                        .addKeyValue(ClientLogField.URL_PATH, exchange.path)
-                        .addKeyValueIfPresent(ClientLogField.URL_TEMPLATE, exchange.uriTemplate)
-                        .addKeyValueIfPresent(ClientLogField.URL_QUERY, exchange.query)
-                        .addKeyValueIfPresent(ClientLogField.REQUEST_HEADERS, renderHeaders(exchange.requestHeaders))
-                        .log()
-                } finally {
-                    restoreQuietly(mdcScope, exchange)
-                }
-            } finally {
-                restoreQuietly(ambientScope, exchange)
+            // The same scopes as the completion event's ([withEmissionScopes]), so both lines of one
+            // exchange carry the same ambient keys.
+            withEmissionScopes(exchange) {
+                exchangeLog
+                    .atInfo()
+                    .setMessage(
+                        "Adapter http exchange started ${exchange.method} ${exchange.target} " +
+                            "[${MdcKeys.REQUEST_ID}=${exchange.requestId}]",
+                    ).addKeyValue(ClientLogField.REQUEST_METHOD, exchange.method)
+                    .addKeyValueIfPresent(ClientLogField.NAME, exchange.name)
+                    .addKeyValueIfPresent(ClientLogField.URL_HOST, exchange.host)
+                    .addKeyValue(ClientLogField.URL_PATH, exchange.path)
+                    .addKeyValueIfPresent(ClientLogField.URL_TEMPLATE, exchange.uriTemplate)
+                    .addKeyValueIfPresent(ClientLogField.URL_QUERY, exchange.query)
+                    .addKeyValueIfPresent(ClientLogField.REQUEST_HEADERS, renderHeaders(exchange.requestHeaders))
+                    .log()
             }
         }
     }
@@ -157,17 +149,29 @@ internal class ExchangeLogEmitter(
         if (!exchangeLog.isEnabledForLevel(level)) {
             return
         }
-        // The caller's thread-locals from the Reactor Context FIRST (ADR-0010) - the join to the server
-        // line on an event-loop thread that carries none of them - and the emission scope inside, which
-        // OWNS the trace keys ([MdcScope]) exactly like the RestClient twin, so a bridge id the accessors
-        // restored never outranks the header's. Both scopes are torn down through [restoreQuietly]: a
-        // teardown that fails AFTER the event is on the logger (and counted) is bookkeeping, never a
-        // lost emission, and never masks an emission failure propagating out of the try.
+        withEmissionScopes(exchange) {
+            logEvent(exchange, classification, level, status, elapsedNanos / NANOS_PER_MS, slow, response?.headers()?.asHttpHeaders())
+        }
+    }
+
+    /**
+     * Runs [block] - one log statement - inside the two scopes every emission of an exchange opens, and
+     * tears them down in reverse order. The caller's thread-locals from the Reactor Context FIRST
+     * (ADR-0010) - the join to the server line on an event-loop thread that carries none of them - and
+     * the emission scope inside, which OWNS the trace keys ([MdcScope]) exactly like the RestClient
+     * twin, so a bridge id the accessors restored never outranks the header's. Both scopes are torn down
+     * through [restoreQuietly]: a teardown that fails AFTER the event is on the logger (and counted) is
+     * bookkeeping, never a lost emission, and never masks an emission failure propagating out of the try.
+     */
+    private inline fun withEmissionScopes(
+        exchange: Exchange,
+        block: () -> Unit,
+    ) {
         val ambientScope = restoreAmbientQuietly(exchange)
         try {
             val mdcScope = MdcScope(exchange.requestId, exchange.method, exchange.target, exchange.traceId, exchange.spanId, ownsTraceKeys = true)
             try {
-                logEvent(exchange, classification, level, status, elapsedNanos / NANOS_PER_MS, slow, response?.headers()?.asHttpHeaders())
+                block()
             } finally {
                 restoreQuietly(mdcScope, exchange)
             }
@@ -220,7 +224,7 @@ internal class ExchangeLogEmitter(
                     e.toString(),
                 )
             }
-            AutoCloseable {}
+            NoOpScope
         }
 
     /**

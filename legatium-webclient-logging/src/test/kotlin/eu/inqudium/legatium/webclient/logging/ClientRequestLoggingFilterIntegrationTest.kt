@@ -1,28 +1,17 @@
 package eu.inqudium.legatium.webclient.logging
 
 import ch.qos.logback.classic.Level
-import ch.qos.logback.classic.Logger
 import eu.inqudium.legatium.common.MdcKeys
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
-import org.junit.jupiter.api.AfterAll
-import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeAll
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.SpringBootConfiguration
-import org.springframework.boot.autoconfigure.EnableAutoConfiguration
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.http.MediaType
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
-import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.WebClientRequestException
 import org.springframework.web.reactive.function.client.WebClientResponseException
 import reactor.core.Exceptions
 import reactor.netty.http.client.HttpClient
-import java.time.Duration
 import java.util.concurrent.TimeoutException
 
 /**
@@ -49,32 +38,7 @@ import java.util.concurrent.TimeoutException
             "org.springframework.boot.micrometer.tracing.autoconfigure.MicrometerTracingAutoConfiguration",
     ],
 )
-class ClientRequestLoggingFilterIntegrationTest {
-    @Autowired
-    private lateinit var webClientBuilder: WebClient.Builder
-
-    private val logger = LoggerFactory.getLogger("adapter-http-exchange") as Logger
-    private lateinit var appender: AwaitingAppender
-
-    /** The production logger's level before the test raised it to INFO; restored so the raise does not outlive the test. */
-    private var previousLevel: Level? = null
-
-    @BeforeEach
-    fun setUp() {
-        appender = AwaitingAppender().apply { start() }
-        logger.addAppender(appender)
-        previousLevel = logger.level
-        logger.level = Level.INFO
-        peer.received.clear()
-    }
-
-    @AfterEach
-    fun tearDown() {
-        logger.detachAppender(appender)
-        appender.stop()
-        logger.level = previousLevel
-    }
-
+class ClientRequestLoggingFilterIntegrationTest : IntegrationFixture() {
     @Test
     fun `should join the caller's Reactor Context on the Reactor Netty thread that completes the call`() {
         // What is tested: ADR-0010 end to end - a key the caller put into the Reactor Context, an
@@ -97,7 +61,7 @@ class ClientRequestLoggingFilterIntegrationTest {
                 .block()
 
             // Then
-            val event = appender.awaitEvents(1).single()
+            val event = log.awaitEvents(1).single()
             assertThat(event.threadName).startsWith("reactor-http")
             assertThat(event.mdcPropertyMap)
                 .containsEntry("endpoint_request_id", "inbound-42")
@@ -132,7 +96,7 @@ class ClientRequestLoggingFilterIntegrationTest {
         assertThat(body).isEqualTo("""{"id":7,"echo":"hello"}""")
         val received = peer.received.single()
         assertThat(received.header("X-Correlation-Id")).isNotBlank()
-        val event = appender.awaitEvents(1).single()
+        val event = log.awaitEvents(1).single()
         assertThat(event.level).isEqualTo(Level.INFO)
         assertThat(event.formattedMessage)
             .isEqualTo("Adapter http exchange POST ${peer.baseUrl}/things/7 -> 200 [adapter_request_id=${received.header("X-Correlation-Id")}]")
@@ -173,7 +137,7 @@ class ClientRequestLoggingFilterIntegrationTest {
 
         // Then
         assertThat(thrown).isInstanceOf(WebClientResponseException::class.java)
-        val event = appender.awaitEvents(1).single()
+        val event = log.awaitEvents(1).single()
         assertThat(event.level).isEqualTo(Level.WARN)
         assertThat(keyValues(event))
             .containsEntry("adapter_outcome", "failure")
@@ -205,7 +169,7 @@ class ClientRequestLoggingFilterIntegrationTest {
 
         // Then
         assertThat(thrown).isInstanceOf(WebClientRequestException::class.java)
-        val event = appender.awaitEvents(1).single()
+        val event = log.awaitEvents(1).single()
         assertThat(event.level).isEqualTo(Level.ERROR)
         assertThat(event.formattedMessage).startsWith("Adapter http exchange GET http://127.0.0.1:1/things/1 -> - [")
         assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").doesNotContainKey("adapter_response_status_code")
@@ -222,7 +186,7 @@ class ClientRequestLoggingFilterIntegrationTest {
         val client =
             webClientBuilder
                 .baseUrl(peer.baseUrl)
-                .clientConnector(ReactorClientHttpConnector(HttpClient.create().responseTimeout(Duration.ofMillis(200))))
+                .clientConnector(ReactorClientHttpConnector(HttpClient.create().responseTimeout(SHORT)))
                 .build()
 
         // When
@@ -238,7 +202,7 @@ class ClientRequestLoggingFilterIntegrationTest {
 
         // Then
         assertThat(thrown).isInstanceOf(WebClientRequestException::class.java)
-        val event = appender.awaitEvents(1).single()
+        val event = log.awaitEvents(1).single()
         assertThat(event.level).isEqualTo(Level.WARN)
         assertThat(keyValues(event)).containsEntry("adapter_outcome", "timeout").doesNotContainKey("adapter_response_status_code")
     }
@@ -261,13 +225,13 @@ class ClientRequestLoggingFilterIntegrationTest {
                     .uri("/slow")
                     .retrieve()
                     .bodyToMono(String::class.java)
-                    .timeout(Duration.ofMillis(200))
+                    .timeout(SHORT)
                     .block()
             }
 
         // Then: block() wraps the checked TimeoutException; the exchange itself was cancelled
         assertThat(Exceptions.unwrap(thrown)).isInstanceOf(TimeoutException::class.java)
-        val event = appender.awaitEvents(1).single()
+        val event = log.awaitEvents(1).single()
         assertThat(event.level).isEqualTo(Level.WARN)
         assertThat(keyValues(event)).containsEntry("adapter_outcome", "cancelled").doesNotContainKey("adapter_response_status_code")
     }
@@ -296,30 +260,9 @@ class ClientRequestLoggingFilterIntegrationTest {
 
         // Then
         assertThat(entity.statusCode.value()).isEqualTo(204)
-        val event = appender.awaitEvents(1).single()
+        val event = log.awaitEvents(1).single()
         assertThat(keyValues(event))
             .containsEntry("adapter_response_status_code", 204)
             .doesNotContainKeys("adapter_request_body", "adapter_response_body")
     }
-
-    companion object {
-        private lateinit var peer: PeerServer
-
-        @JvmStatic
-        @BeforeAll
-        fun startPeer() {
-            peer = PeerServer()
-        }
-
-        @JvmStatic
-        @AfterAll
-        fun stopPeer() {
-            peer.close()
-        }
-    }
 }
-
-/** The smallest Boot application that auto-configures the client and this module. */
-@SpringBootConfiguration
-@EnableAutoConfiguration
-internal class IntegrationApp

@@ -19,6 +19,7 @@ import org.springframework.boot.test.context.FilteredClassLoader
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.core.annotation.Order
 import org.springframework.http.client.ClientHttpRequestInterceptor
 import org.springframework.web.client.RestClient
 
@@ -70,8 +71,7 @@ class ClientLoggingAutoConfigurationTest {
         // Given/When
         contextRunner.run { context ->
             val interceptor = context.getBean(ClientRequestLoggingInterceptor::class.java)
-            var interceptors: List<ClientHttpRequestInterceptor> = emptyList()
-            context.getBean(RestClient.Builder::class.java).requestInterceptors { interceptors = it.toList() }
+            val interceptors = interceptorsOf(context.getBean(RestClient.Builder::class.java))
             val restTemplate = context.getBean(RestTemplateBuilder::class.java).build()
 
             // Then
@@ -96,8 +96,7 @@ class ClientLoggingAutoConfigurationTest {
         // Given/When
         contextRunner.withUserConfiguration(CompetingCustomizersConfig::class.java).run { context ->
             val interceptor = context.getBean(ClientRequestLoggingInterceptor::class.java)
-            var interceptors: List<ClientHttpRequestInterceptor> = emptyList()
-            context.getBean(RestClient.Builder::class.java).requestInterceptors { interceptors = it.toList() }
+            val interceptors = interceptorsOf(context.getBean(RestClient.Builder::class.java))
             val restTemplate = context.getBean(RestTemplateBuilder::class.java).build()
 
             // Then
@@ -122,7 +121,7 @@ class ClientLoggingAutoConfigurationTest {
 
     @Test
     fun `should back off entirely when disabled by the property`() {
-        // What is tested: the class-level @ConditionalOnProperty on adapter-logging.enabled - with
+        // What is tested: the class-level @ConditionalOnBooleanProperty on adapter-logging.enabled - with
         //   it false the whole configuration, including @EnableConfigurationProperties and the nested
         //   customizer classes, is skipped.
         // Success criteria: neither the interceptor, the defaults, the bound properties nor the
@@ -182,9 +181,7 @@ class ClientLoggingAutoConfigurationTest {
             // Then: the host's bean alone, wired into Boot's builder; the meters in the host registry
             assertThat(context).hasSingleBean(ClientRequestLoggingInterceptor::class.java)
             assertThat(context.getBean(ClientRequestLoggingInterceptor::class.java)).isSameAs(context.getBean("hostInterceptor"))
-            var interceptors: List<ClientHttpRequestInterceptor> = emptyList()
-            context.getBean(RestClient.Builder::class.java).requestInterceptors { interceptors = it.toList() }
-            assertThat(interceptors.last()).isSameAs(context.getBean("hostInterceptor"))
+            assertThat(interceptorsOf(context.getBean(RestClient.Builder::class.java)).last()).isSameAs(context.getBean("hostInterceptor"))
             val registry = context.getBean(MeterRegistry::class.java)
             assertThat(registry.find(ClientLoggingMetrics.FAIL_OPEN_METER).counters()).hasSize(3)
             // And: the host's masker backed the default off
@@ -259,6 +256,9 @@ class ClientLoggingAutoConfigurationTest {
         // Then
         assertThat(lines).contains(ClientLoggingAutoConfiguration::class.java.name)
     }
+
+    /** The interceptors a builder carries, read through the builder's inspection callback. */
+    private fun interceptorsOf(builder: RestClient.Builder): List<ClientHttpRequestInterceptor> = buildList { builder.requestInterceptors { addAll(it) } }
 }
 
 // Host configuration at file level: a @Configuration class local to a test method holds a hidden
@@ -283,14 +283,14 @@ private class HostConfig {
 @Configuration(proxyBeanMethods = false)
 private class CompetingCustomizersConfig {
     @Bean
-    @org.springframework.core.annotation.Order(0)
+    @Order(0)
     fun earlierRestClientCustomizer(): RestClientCustomizer = RestClientCustomizer { it.requestInterceptor(EARLIER) }
 
     @Bean
     fun unorderedRestClientCustomizer(): RestClientCustomizer = RestClientCustomizer { it.requestInterceptor(UNORDERED) }
 
     @Bean
-    @org.springframework.core.annotation.Order(0)
+    @Order(0)
     fun earlierRestTemplateCustomizer(): RestTemplateCustomizer = RestTemplateCustomizer { it.interceptors = it.interceptors + EARLIER }
 
     @Bean

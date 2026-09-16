@@ -3,10 +3,6 @@ package eu.inqudium.legatium.restclient.logging
 import eu.inqudium.legatium.common.MdcKeys
 import io.micrometer.tracing.Tracer
 import org.assertj.core.api.Assertions.assertThat
-import org.junit.jupiter.api.AfterAll
-import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeAll
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -24,25 +20,12 @@ import org.springframework.web.client.RestClient
     webEnvironment = SpringBootTest.WebEnvironment.NONE,
     properties = ["management.tracing.sampling.probability=1.0"],
 )
-class ClientRequestLoggingTracingIntegrationTest {
+class ClientRequestLoggingTracingIntegrationTest : PeerIntegrationSuite() {
     @Autowired
     private lateinit var restClientBuilder: RestClient.Builder
 
     @Autowired
     private lateinit var tracer: Tracer
-
-    private lateinit var log: CapturedLogger
-
-    @BeforeEach
-    fun setUp() {
-        log = CapturedLogger("adapter-http-exchange")
-        peer.received.clear()
-    }
-
-    @AfterEach
-    fun tearDown() {
-        log.detach()
-    }
 
     @Test
     fun `should join the event with the caller trace and add no correlation header on a traced call`() {
@@ -101,21 +84,5 @@ class ClientRequestLoggingTracingIntegrationTest {
         assertThat(received.header("traceparent")).isNotNull()
         assertThat(received.header("X-Correlation-Id")).isNull()
         assertThat(log.events.single().mdcPropertyMap).containsKeys("traceId", "spanId")
-    }
-
-    companion object {
-        private lateinit var peer: PeerServer
-
-        @JvmStatic
-        @BeforeAll
-        fun startPeer() {
-            peer = PeerServer()
-        }
-
-        @JvmStatic
-        @AfterAll
-        fun stopPeer() {
-            peer.close()
-        }
     }
 }

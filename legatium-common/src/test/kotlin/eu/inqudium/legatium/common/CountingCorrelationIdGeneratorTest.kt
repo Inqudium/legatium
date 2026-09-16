@@ -15,11 +15,6 @@ import java.util.concurrent.TimeUnit
  * unseeded test covers the production constructor path.
  */
 class CountingCorrelationIdGeneratorTest {
-    private companion object {
-        /** 36^8 - the number of counter values the production counter width can render. */
-        private const val COUNTER_CAPACITY = 2_821_109_907_456L
-    }
-
     @Nested
     inner class `Id format` {
         @Test
@@ -63,8 +58,7 @@ class CountingCorrelationIdGeneratorTest {
             // Success criteria: the id starts with twelve zeros followed by `z`.
             // Why it matters: pins that the radix is 36 and the digits are lowercase; a radix of 32 or 62 or
             //   an uppercase alphabet would change the character set the index sees.
-            // Given: 35 is the largest value that still occupies a single base-36 digit,
-            // so this pins the digit alphabet at its upper end.
+            // Given: 35 is the largest value that still occupies a single base-36 digit
             val generator = CountingCorrelationIdGenerator(prefixSeed = 35L)
 
             // When
@@ -239,8 +233,7 @@ class CountingCorrelationIdGeneratorTest {
             // Success criteria: the first five ids of both instances are identical.
             // Why it matters: the seed is the test seam the other twins' tests rely on to pin ids without a
             //   mocking library; hidden per-instance randomness would make those tests flaky.
-            // Given: the seed is the injection point that makes the generator testable
-            // without any mocking library.
+            // Given: two instances under the same seed
             val first = CountingCorrelationIdGenerator(prefixSeed = 4711L)
             val second = CountingCorrelationIdGenerator(prefixSeed = 4711L)
 
@@ -356,3 +349,6 @@ class CountingCorrelationIdGeneratorTest {
         }
     }
 }
+
+/** 36^8 - the number of counter values the production counter width can render. */
+private const val COUNTER_CAPACITY = 2_821_109_907_456L

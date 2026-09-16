@@ -92,4 +92,16 @@ internal class Exchange(
  * that was never read as complete. [DELIVERING] is the window between the response's arrival and the
  * downstream's return from `onNext`, in which a concurrent cancel still completes the exchange itself.
  */
-internal enum class ExchangeState { OPEN, DELIVERING, RESPONDED, COMPLETED }
+internal enum class ExchangeState {
+    /** From wiring: the request is sent, no response yet. */
+    OPEN,
+
+    /** The response is being handed to the downstream subscriber - a concurrent cancel still completes the exchange itself. */
+    DELIVERING,
+
+    /** The downstream has taken the response; the emission waits for the body's terminal signal. */
+    RESPONDED,
+
+    /** Exactly once, by whichever terminal callback wins the transition - gauge-close and emission ride it. */
+    COMPLETED,
+}

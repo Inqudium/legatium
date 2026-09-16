@@ -13,6 +13,7 @@ class BodyLogModeTest {
         //   up front.
         // Why it matters: the request body flows before the outcome is known; a mode that logs but does not
         //   capture would have nothing to write when the exchange fails.
+        // Given/When/Then
         assertThat(BodyLogMode.NEVER.captures).isFalse()
         assertThat(BodyLogMode.ON_FAILURE.captures).isTrue()
         assertThat(BodyLogMode.ALWAYS.captures).isTrue()
@@ -23,6 +24,7 @@ class BodyLogModeTest {
         // What is tested: the one decision the emitters delegate - on-failure discards a success.
         // Success criteria: true for a failed exchange (outcome not success, or a 4xx), false otherwise.
         // Why it matters: this single predicate is the volume switch of ADR-0006.
+        // Given/When/Then
         assertThat(BodyLogMode.ON_FAILURE.logs(failed = false)).isFalse()
         assertThat(BodyLogMode.ON_FAILURE.logs(failed = true)).isTrue()
     }
@@ -33,6 +35,7 @@ class BodyLogModeTest {
         // Success criteria: ALWAYS is true and NEVER is false for both a failed and a successful exchange.
         // Why it matters: NEVER is the default; a body appearing on a failed exchange under it would be a
         //   leak, and ALWAYS dropping a success would silently halve the volume an operator asked for.
+        // Given/When/Then
         assertThat(BodyLogMode.ALWAYS.logs(failed = false)).isTrue()
         assertThat(BodyLogMode.ALWAYS.logs(failed = true)).isTrue()
         assertThat(BodyLogMode.NEVER.logs(failed = false)).isFalse()

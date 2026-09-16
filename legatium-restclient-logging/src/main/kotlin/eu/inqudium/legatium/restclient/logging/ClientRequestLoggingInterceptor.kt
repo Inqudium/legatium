@@ -1,6 +1,7 @@
 package eu.inqudium.legatium.restclient.logging
 
 import eu.inqudium.legatium.common.AdapterName
+import eu.inqudium.legatium.common.BodyLogMode
 import eu.inqudium.legatium.common.ClientActivation
 import eu.inqudium.legatium.common.ClientIdentity
 import eu.inqudium.legatium.common.ClientLoggingMetrics
@@ -53,9 +54,10 @@ import org.springframework.http.client.ClientHttpResponse
  * UNCHANGED - this interceptor adds visibility only, error semantics belong to the client.
  *
  * When the call throws, a short WARN breadcrumb is additionally logged on the module's OWN logger, so
- * the failure is visible with its cause the moment it happens (the full ERROR event follows in the same
- * breath here, but the breadcrumb keeps the two twins' log streams alike, and the exchange logger keeps
- * its one-event-per-exchange contract).
+ * the failure is visible with its cause the moment it happens, while the exchange logger keeps its
+ * one-event-per-exchange contract (the full ERROR event follows in the same breath). This is a
+ * deliberate difference from the reactive twin, which reports a failed call through the exchange event
+ * alone.
  *
  * ## MDC coverage
  *
@@ -130,14 +132,14 @@ class ClientRequestLoggingInterceptor
                     delegate = response,
                     capture = exchange.responseCapture,
                     onFailure = { e -> exchange.failure = e },
-                    onClose = { completeExchange(exchange) },
+                    onClose = { complete(exchange) },
                 )
             } catch (e: Exception) {
                 // No response: the exchange ends here. Breadcrumb first, then the event, then the
                 // unchanged rethrow - IOException for the client to map, or whatever else the engine threw.
                 exchange.failure = e
                 breadcrumb(exchange, e)
-                completeExchange(exchange)
+                complete(exchange)
                 throw e
             } catch (t: Throwable) {
                 // An Error (LinkageError, VirtualMachineError, AssertionError from an inner interceptor,
@@ -405,9 +407,20 @@ class ClientRequestLoggingInterceptor
          */
         private fun newCaptures(): Captures =
             Captures(
-                request = if (properties.logRequestBody.captures || properties.measureRequestBodySize) BoundedBodyCapture(if (properties.logRequestBody.captures) properties.maxBodyBytes else 0) else null,
-                response = if (properties.logResponseBody.captures || properties.measureResponseBodySize) BoundedBodyCapture(if (properties.logResponseBody.captures) properties.maxBodyBytes else 0) else null,
+                request = captureFor(properties.logRequestBody, properties.measureRequestBodySize),
+                response = captureFor(properties.logResponseBody, properties.measureResponseBodySize),
             )
+
+        /** One side's capture by the rule above: buffering up to the limit when logged, count-only when merely measured, none otherwise. */
+        private fun captureFor(
+            mode: BodyLogMode,
+            measured: Boolean,
+        ): BoundedBodyCapture? =
+            when {
+                mode.captures -> BoundedBodyCapture(properties.maxBodyBytes)
+                measured -> BoundedBodyCapture(0)
+                else -> null
+            }
 
         private class Captures(
             val request: BoundedBodyCapture?,
@@ -419,7 +432,7 @@ class ClientRequestLoggingInterceptor
          * the response close (possibly twice) and the no-response failure path all arrive here; whichever
          * wins the CAS completes, the rest are no-ops.
          */
-        private fun completeExchange(exchange: Exchange) {
+        private fun complete(exchange: Exchange) {
             if (!exchange.completed.compareAndSet(false, true)) {
                 return
             }

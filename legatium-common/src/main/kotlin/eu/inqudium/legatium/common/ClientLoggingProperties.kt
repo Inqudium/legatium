@@ -136,16 +136,19 @@ data class ClientLoggingProperties(
         }
     }
 
-    /** The data-class rendering minus the secret: a properties dump must never print the masking key. */
-    override fun toString(): String = copy(maskingKey = if (maskingKey.isEmpty()) "" else "<redacted>").dataClassToString()
-
-    private fun dataClassToString(): String =
+    /**
+     * The data-class rendering minus the secret: a properties dump must never print the masking key. The
+     * renderer deliberately mirrors the constructor parameter list - the generated data-class `toString`
+     * cannot be reused once overridden - so a new property is added here as well.
+     */
+    override fun toString(): String =
         "ClientLoggingProperties(enabled=$enabled, loggerName=$loggerName, correlationIdHeader=$correlationIdHeader, " +
             "includeQueryString=$includeQueryString, logRequestStart=$logRequestStart, includePathPatterns=$includePathPatterns, " +
             "excludePathPrefixes=$excludePathPrefixes, excludeHosts=$excludeHosts, slowRequestThreshold=$slowRequestThreshold, " +
             "requestHeaders=$requestHeaders, responseHeaders=$responseHeaders, logRequestBody=$logRequestBody, " +
             "logResponseBody=$logResponseBody, measureRequestBodySize=$measureRequestBodySize, " +
-            "measureResponseBodySize=$measureResponseBodySize, maxBodyBytes=$maxBodyBytes, maskingKey=$maskingKey)"
+            "measureResponseBodySize=$measureResponseBodySize, maxBodyBytes=$maxBodyBytes, " +
+            "maskingKey=${if (maskingKey.isEmpty()) "" else "<redacted>"})"
 
     companion object {
         /**

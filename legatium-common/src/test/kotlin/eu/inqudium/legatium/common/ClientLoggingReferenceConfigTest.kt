@@ -28,14 +28,6 @@ class ClientLoggingReferenceConfigTest {
         YamlPropertySourceLoader()
             .load("shared-reference", ClassPathResource("adapter-logging-reference.yml"))
 
-    private fun documentedKeys(sources: List<PropertySource<*>>): Set<String> =
-        sources
-            .filterIsInstance<EnumerablePropertySource<*>>()
-            .flatMap { it.propertyNames.asList() }
-            .filter { it.startsWith("adapter-logging.") }
-            .map { it.removePrefix("adapter-logging.").replace(Regex("\\[\\d+]"), "") }
-            .toSet()
-
     @Test
     fun `should bind the reference configuration to exactly the built-in defaults`() {
         // What is tested: that every VALUE in the reference YAML is the built-in default.
@@ -77,22 +69,33 @@ class ClientLoggingReferenceConfigTest {
         // Success criteria: the two modes bound; `true` raises a BindException.
         // Why it matters: a silently ignored `true` would switch body logging OFF for an operator who
         //   believed it on - the migration must be visible at startup.
-        // Given
-        fun bind(vararg pairs: Pair<String, String>) =
-            Binder(ConfigurationPropertySources.from(listOf(MapPropertySource("test", pairs.toMap()))))
-                .bind("adapter-logging", ClientLoggingProperties::class.java)
-                .get()
-
-        // When
-        val bound = bind("adapter-logging.log-request-body" to "on-failure", "adapter-logging.log-response-body" to "always")
+        // Given/When: the documented spellings, bound the way Boot binds them
+        val bound = bindProperties("adapter-logging.log-request-body" to "on-failure", "adapter-logging.log-response-body" to "always")
 
         // Then
         assertThat(bound.logRequestBody).isEqualTo(BodyLogMode.ON_FAILURE)
         assertThat(bound.logResponseBody).isEqualTo(BodyLogMode.ALWAYS)
-        val rejected = catchThrowable { bind("adapter-logging.log-response-body" to "true") }
+
+        // And: a leftover boolean is refused loudly
+        val rejected = catchThrowable { bindProperties("adapter-logging.log-response-body" to "true") }
         assertThat(rejected).isInstanceOf(BindException::class.java)
     }
 }
+
+/** The `adapter-logging.*` keys the loaded [sources] document, prefix and list indices stripped. */
+private fun documentedKeys(sources: List<PropertySource<*>>): Set<String> =
+    sources
+        .filterIsInstance<EnumerablePropertySource<*>>()
+        .flatMap { it.propertyNames.asList() }
+        .filter { it.startsWith("adapter-logging.") }
+        .map { it.removePrefix("adapter-logging.").replace(Regex("\\[\\d+]"), "") }
+        .toSet()
+
+/** Binds [pairs] as an `adapter-logging` property source the way Boot binds an application.yml. */
+private fun bindProperties(vararg pairs: Pair<String, String>): ClientLoggingProperties =
+    Binder(ConfigurationPropertySources.from(listOf(MapPropertySource("test", pairs.toMap()))))
+        .bind("adapter-logging", ClientLoggingProperties::class.java)
+        .get()
 
 /** The `kebab-case` configuration keys of a properties data class, nested sections recursed with a dotted prefix. */
 private fun configurationKeysOf(

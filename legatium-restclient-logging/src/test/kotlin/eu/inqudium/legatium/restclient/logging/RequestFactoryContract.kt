@@ -6,10 +6,7 @@ import eu.inqudium.legatium.common.MdcKeys
 import io.micrometer.core.instrument.MeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
-import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeAll
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -51,7 +48,7 @@ import java.time.Duration
             "org.springframework.boot.micrometer.tracing.autoconfigure.MicrometerTracingAutoConfiguration",
     ],
 )
-abstract class RequestFactoryContract {
+abstract class RequestFactoryContract : PeerIntegrationSuite() {
     /** The engine under test, built with the given connect and read timeouts. */
     protected abstract fun requestFactory(
         connectTimeout: Duration,
@@ -70,21 +67,13 @@ abstract class RequestFactoryContract {
     @Autowired
     private lateinit var registry: MeterRegistry
 
-    private lateinit var log: CapturedLogger
     private val closeables = mutableListOf<AutoCloseable>()
 
     /** Registers an engine resource to be released after the test. */
     protected fun <T : AutoCloseable> closing(resource: T): T = resource.also { closeables += it }
 
-    @BeforeEach
-    fun setUp() {
-        log = CapturedLogger("adapter-http-exchange")
-        peer.received.clear()
-    }
-
     @AfterEach
-    fun tearDown() {
-        log.detach()
+    fun releaseEngineResources() {
         closeables.reversed().forEach { runCatching { it.close() } }
         closeables.clear()
     }
@@ -296,18 +285,5 @@ abstract class RequestFactoryContract {
 
         /** For every scenario whose subject is not the timeout: a loaded runner must not turn a tee test into a timeout test. */
         private val GENEROUS: Duration = Duration.ofSeconds(10)
-        private lateinit var peer: PeerServer
-
-        @JvmStatic
-        @BeforeAll
-        fun startPeer() {
-            peer = PeerServer()
-        }
-
-        @JvmStatic
-        @AfterAll
-        fun stopPeer() {
-            peer.close()
-        }
     }
 }
