@@ -158,6 +158,28 @@ class BoundedByteBufferTest {
         }
 
         @Test
+        fun `should cap what a hint allocates and double from there`() {
+            // What is tested: a hint of Long.MAX_VALUE under a cap of four times MAX_HINTED_CAPACITY,
+            //   then one byte, then enough bytes to outgrow the hinted array.
+            // Success criteria: the first byte allocates MAX_HINTED_CAPACITY, not the cap; the array
+            //   doubles once the hinted length is exceeded.
+            // Why it matters: Content-Length is the peer's word - without the ceiling one byte of a
+            //   body declared huge reserved the whole cap, and many such exchanges at once would have
+            //   held the cap each.
+            // Given
+            val ceiling = BoundedByteBuffer.MAX_HINTED_CAPACITY
+            val buffer = BoundedByteBuffer(4 * ceiling)
+            buffer.expect(Long.MAX_VALUE)
+
+            // When/Then
+            buffer.write('a'.code)
+            assertThat(buffer.capacity).isEqualTo(ceiling)
+            buffer.write("b".repeat(ceiling))
+            assertThat(buffer.capacity).isEqualTo(2 * ceiling)
+            assertThat(buffer.size).isEqualTo(ceiling + 1)
+        }
+
+        @Test
         fun `should size the first array by the hint even below the floor`() {
             // What is tested: a hint of an eighth of the floor (MIN_CAPACITY) under a cap of twice
             //   the floor, then exactly that many bytes.

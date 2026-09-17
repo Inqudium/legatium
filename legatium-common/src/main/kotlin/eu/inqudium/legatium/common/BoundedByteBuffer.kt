@@ -16,7 +16,8 @@ import java.util.Objects
  * A bare array rather than a `ByteArrayOutputStream`: the blocking twin's tee stream forwards `reset`,
  * so the buffer must be able to CUT BACK ([truncate]), and the array is sized once by the length the
  * peer or the caller declared ([expect]), so a body within its declaration lands in one allocation
- * without growth. Allocated on the first buffered byte - a buffer nothing is written to (count-only
+ * without growth - up to [MAX_HINTED_CAPACITY]: the declaration is the peer's word, and a byte must
+ * not be able to reserve a large cap in one go. Allocated on the first buffered byte - a buffer nothing is written to (count-only
  * mode, a body never read) costs no memory. Without a hint the first array has [MIN_CAPACITY] bytes
  * (or the cap, when that is smaller), so a byte-wise reader does not pay an allocation and a copy for
  * each of the first doublings. Beyond that the array doubles, never past [maxBytes].
@@ -45,8 +46,9 @@ internal class BoundedByteBuffer(
 
     /**
      * A SIZING hint: the length the peer or the caller declared. Taken only before the first buffered
-     * byte; a value that is not positive means unknown, one beyond the cap sizes to the cap. A wrong
-     * hint costs allocation, never bytes - the cap and the twin's count are unaffected.
+     * byte; a value that is not positive means unknown, one beyond the cap or [MAX_HINTED_CAPACITY]
+     * sizes to the smaller of the two. A wrong hint costs allocation, never bytes - the cap and the
+     * twin's count are unaffected.
      */
     fun expect(length: Long) {
         if (bytes == null) {
@@ -90,9 +92,10 @@ internal class BoundedByteBuffer(
         get() = bytes?.size ?: 0
 
     /**
-     * The array with room for [n] more bytes: sized on first use by the hint, or by [MIN_CAPACITY] and
-     * the write when there is none; doubled from then on, never past [maxBytes]. A hint is taken as is,
-     * even below the floor: a declared length is the one allocation a body needs.
+     * The array with room for [n] more bytes: sized on first use by the hint (at most
+     * [MAX_HINTED_CAPACITY]), or by [MIN_CAPACITY] and the write when there is none; doubled from then
+     * on, never past [maxBytes]. A hint is taken as is, even below the floor: a declared length is the
+     * one allocation a body needs.
      */
     private fun room(n: Int): ByteArray {
         val needed = size + n
@@ -100,7 +103,7 @@ internal class BoundedByteBuffer(
         if (current != null && current.size >= needed) {
             return current
         }
-        val hint = if (expected > 0) minOf(expected, maxBytes.toLong()).toInt() else MIN_CAPACITY
+        val hint = if (expected > 0) minOf(expected, maxBytes.toLong(), MAX_HINTED_CAPACITY.toLong()).toInt() else MIN_CAPACITY
         val grown = ByteArray(minOf(maxBytes, maxOf(needed, hint, (current?.size ?: 0) * 2)))
         if (current != null) {
             System.arraycopy(current, 0, grown, 0, size)
@@ -188,6 +191,13 @@ internal class BoundedByteBuffer(
 
         /** The first array without a sizing hint: a byte-wise reader reaches it in one allocation instead of eight. */
         internal const val MIN_CAPACITY = 256
+
+        /**
+         * The most a sizing hint allocates in one go - four times the default capture limit, so a hint
+         * sizes the array exactly for every cap up to here; a larger cap costs a truthful body the
+         * doublings from here (a copy of about the cap in total), a lying declaration at most this much.
+         */
+        internal const val MAX_HINTED_CAPACITY = 64 * 1024
 
         /** The scratch `CharBuffer` [renderTruncated] decodes through - 2 KiB, whatever the cap. Exposed for the tests. */
         internal const val SCRATCH_CHARS = 1024
