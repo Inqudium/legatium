@@ -10,6 +10,7 @@ import java.nio.charset.Charset
 import java.nio.charset.CharsetDecoder
 import java.nio.charset.CharsetEncoder
 import java.nio.charset.CoderResult
+import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 
 /**
@@ -312,50 +313,118 @@ class BoundedByteBufferTest {
 
     @Nested
     inner class `Truncated rendering` {
+        private fun utf16(text: String) = text.toByteArray(StandardCharsets.UTF_16BE)
+
+        private fun note(total: Long) = "... [truncated, $total bytes total]"
+
         @Test
-        fun `should decode a prefix beyond the scratch size and leave a cut multi-byte sequence out`() {
-            // What is tested: a cap of 3000 bytes filled with "aä😀" units of 7 bytes - the cut falls after
-            //   the first byte of an emoji - and a body that flows beyond the cap.
-            // Success criteria: the text is 428 whole units plus "aä", then the note; the incomplete
-            //   emoji is left out rather than rendered as a replacement character.
-            // Why it matters: the scratch buffer holds 1024 chars, so this prefix crosses it several
-            //   times; a decoder round that dropped or doubled chars at the refill, or that decoded the
-            //   cut sequence as malformed, would corrupt every logged body larger than the scratch.
+        fun `should cut a UTF-8 prefix before an incomplete sequence and keep a complete one`() {
+            // What is tested: the UTF-8 fast path against every cut through "aä€😀": after each byte
+            //   of the four-byte emoji, after the first byte of the two- and three-byte characters, and
+            //   at every character boundary.
+            // Success criteria: a cut inside a character renders the characters before it; a cut at a
+            //   boundary renders every character up to it.
+            // Why it matters: the fast path finds the cut itself instead of asking the decoder for the
+            //   whole prefix - a cut one byte off would drop a complete character or show a broken one.
             // Given
-            val unit = "aä😀"
-            val cap = 3000
-            val buffer = BoundedByteBuffer(cap)
-            val body = unit.repeat(500)
+            val text = "aä€😀"
+            val body = bytes(text) + bytes("!")
+            val boundaries = mapOf(0 to "", 1 to "a", 3 to "aä", 6 to "aä€", 10 to "aä€😀")
+
+            // When/Then
+            (1 until body.size).forEach { cap ->
+                val buffer = BoundedByteBuffer(cap)
+                buffer.write(body, 0, body.size)
+                val expected = boundaries.filterKeys { it <= cap }.maxBy { it.key }.value
+                assertThat(buffer.render(StandardCharsets.UTF_8, body.size.toLong())).describedAs("cap $cap").isEqualTo(expected + note(body.size.toLong()))
+            }
+        }
+
+        @Test
+        fun `should cut a UTF-8 prefix exactly where the decoder would stop`() {
+            // What is tested: utf8Cut against the JDK decoder over every prefix length of a sample that
+            //   mixes one- to four-byte characters, a malformed lead with a bad second byte (E0 80),
+            //   stray continuation bytes and a byte that is no UTF-8 at all.
+            // Success criteria: for every length the cut equals the input position the decoder leaves
+            //   with endOfInput = false over the whole prefix.
+            // Why it matters: the fast path and the generic path must render the same text for the same
+            //   bytes; this pins the fast path to the decoder's own rules, malformed tails included.
+            // Given
+            val sample = bytes("aä€😀") + byteArrayOf(0xE0.toByte(), 0x80.toByte(), 0x80.toByte(), 0xFF.toByte()) + bytes("z😀ä")
+
+            // When/Then
+            (1..sample.size).forEach { length ->
+                val input = ByteBuffer.wrap(sample, 0, length)
+                StandardCharsets.UTF_8
+                    .newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPLACE)
+                    .onUnmappableCharacter(CodingErrorAction.REPLACE)
+                    .decode(input, CharBuffer.allocate(length), false)
+                assertThat(BoundedByteBuffer.utf8Cut(sample, length)).describedAs("length $length").isEqualTo(input.position())
+            }
+        }
+
+        @Test
+        fun `should replace a malformed UTF-8 tail instead of leaving it out`() {
+            // What is tested: "ab" followed by E0 80 - a three-byte lead whose second byte is invalid -
+            //   and "ab" followed by two stray continuation bytes, each cut right there.
+            // Success criteria: both render "ab" and two replacement characters before the note.
+            // Why it matters: only a WELL-FORMED incomplete tail is left out; a malformed one is not the
+            //   capture's cut but the peer's bytes, and must show as the decoder shows it.
+            listOf(byteArrayOf(0xE0.toByte(), 0x80.toByte()), byteArrayOf(0x80.toByte(), 0x80.toByte())).forEach { tail ->
+                // Given
+                val body = bytes("ab") + tail
+                val buffer = BoundedByteBuffer(body.size)
+
+                // When
+                buffer.write(body, 0, body.size)
+
+                // Then
+                assertThat(buffer.render(StandardCharsets.UTF_8, body.size + 1L)).isEqualTo("ab\uFFFD\uFFFD" + note(body.size + 1L))
+            }
+        }
+
+        @Test
+        fun `should decode a prefix beyond the scratch size and leave a cut code unit out`() {
+            // What is tested: the generic path - UTF-16BE, which has no fast path - with a prefix of 1500
+            //   chars, so it crosses the 1024-char scratch, cut after the high surrogate of an emoji.
+            // Success criteria: the 1500 chars and the note; the pending surrogate is left out.
+            // Why it matters: a decoder round that dropped or doubled chars at the refill, or that
+            //   decoded the cut unit as malformed, would corrupt every logged body larger than the scratch.
+            // Given
+            val head = "a".repeat(1500)
+            val body = utf16(head + "😀b")
+            val cap = utf16(head).size + 2
 
             // When
-            buffer.write(body)
+            val buffer = BoundedByteBuffer(cap)
+            buffer.write(body, 0, body.size)
 
             // Then
             assertThat(buffer.size).isEqualTo(cap)
-            val total = bytes(body).size.toLong()
-            assertThat(buffer.render(StandardCharsets.UTF_8, total))
-                .isEqualTo(unit.repeat(428) + "aä" + "... [truncated, $total bytes total]")
+            assertThat(buffer.render(StandardCharsets.UTF_16BE, body.size.toLong())).isEqualTo(head + note(body.size.toLong()))
         }
 
         @Test
         fun `should keep a surrogate pair whole across the scratch boundary`() {
-            // What is tested: 1023 ASCII bytes followed by an emoji, so its surrogate pair would start
-            //   at the LAST char of the 1024-char scratch, then more bytes than the cap takes.
-            // Success criteria: the emoji and the byte after it render intact before the note.
-            // Why it matters: the decoder must refuse the pair when only one char is left, report
+            // What is tested: the generic path (UTF-16BE) with 1023 chars followed by an emoji, so its
+            //   surrogate pair would start at the LAST slot of the 1024-char scratch, then more bytes than
+            //   the cap takes.
+            // Success criteria: the emoji and the char after it render intact before the note.
+            // Why it matters: the decoder must refuse the pair when only one slot is left, report
             //   overflow WITH progress, and place the pair whole after the refill; splitting it would log
             //   two lone surrogates.
             // Given
             val head = "a".repeat(BoundedByteBuffer.SCRATCH_CHARS - 1) + "😀b"
-            val buffer = BoundedByteBuffer(bytes(head).size)
+            val buffer = BoundedByteBuffer(utf16(head).size)
 
             // When
-            buffer.write(head)
-            buffer.write("b".repeat(10))
+            buffer.write(utf16(head), 0, utf16(head).size)
+            buffer.write(utf16("bbbbb"), 0, 10)
 
             // Then
-            val total = bytes(head).size + 10L
-            assertThat(buffer.render(StandardCharsets.UTF_8, total)).isEqualTo(head + "... [truncated, $total bytes total]")
+            val total = utf16(head).size + 10L
+            assertThat(buffer.render(StandardCharsets.UTF_16BE, total)).isEqualTo(head + note(total))
         }
 
         @Test
@@ -367,31 +436,34 @@ class BoundedByteBufferTest {
             //   decoder finishing with endOfInput = true would render the pending surrogate as a
             //   replacement character.
             // Given
-            val body = "a😀b".toByteArray(StandardCharsets.UTF_16BE)
+            val body = utf16("a😀b")
             val buffer = BoundedByteBuffer(4)
 
             // When
             buffer.write(body, 0, body.size)
 
             // Then
-            assertThat(buffer.render(StandardCharsets.UTF_16BE, body.size.toLong())).isEqualTo("a... [truncated, ${body.size} bytes total]")
+            assertThat(buffer.render(StandardCharsets.UTF_16BE, body.size.toLong())).isEqualTo("a" + note(body.size.toLong()))
         }
 
         @Test
-        fun `should replace malformed bytes inside the prefix`() {
-            // What is tested: "ab", a byte that is no UTF-8 at all, "cd", and one flowed byte beyond.
-            // Success criteria: the malformed byte renders as U+FFFD; the text around it is intact.
-            // Why it matters: only an INCOMPLETE sequence at the cut is left out - a malformed byte in
-            //   the middle must show as such, as String(bytes, charset) would render it.
+        fun `should replace malformed bytes inside the prefix on both paths`() {
+            // What is tested: a byte that is no UTF-8 between "ab" and "cd" on the fast path, and a lone
+            //   low surrogate between "a" and "b" in UTF-16BE on the generic path, one flowed byte beyond.
+            // Success criteria: the malformed unit renders as U+FFFD; the text around it is intact.
+            // Why it matters: only an INCOMPLETE unit at the cut is left out - a malformed one in the
+            //   middle must show as such, as String(bytes, charset) would render it.
             // Given
-            val body = byteArrayOf('a'.code.toByte(), 'b'.code.toByte(), 0xFF.toByte(), 'c'.code.toByte(), 'd'.code.toByte())
-            val buffer = BoundedByteBuffer(body.size)
+            val utf8 = bytes("ab") + byteArrayOf(0xFF.toByte()) + bytes("cd")
+            val utf16 = utf16("a") + byteArrayOf(0xDC.toByte(), 0x00) + utf16("b")
 
             // When
-            buffer.write(body, 0, body.size)
+            val fast = BoundedByteBuffer(utf8.size).apply { write(utf8, 0, utf8.size) }
+            val generic = BoundedByteBuffer(utf16.size).apply { write(utf16, 0, utf16.size) }
 
             // Then
-            assertThat(buffer.render(StandardCharsets.UTF_8, body.size + 1L)).isEqualTo("ab\uFFFDcd... [truncated, 6 bytes total]")
+            assertThat(fast.render(StandardCharsets.UTF_8, utf8.size + 1L)).isEqualTo("ab\uFFFDcd" + note(utf8.size + 1L))
+            assertThat(generic.render(StandardCharsets.UTF_16BE, utf16.size + 1L)).isEqualTo("a\uFFFDb" + note(utf16.size + 1L))
         }
 
         @Test
@@ -409,7 +481,7 @@ class BoundedByteBufferTest {
             buffer.write("xy")
 
             // Then
-            assertThat(buffer.render(TripletCharset, 3)).isEqualTo("abcabc... [truncated, 3 bytes total]")
+            assertThat(buffer.render(TripletCharset, 3)).isEqualTo("abcabc" + note(3))
         }
     }
 
