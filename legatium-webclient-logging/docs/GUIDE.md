@@ -250,11 +250,14 @@ Bodies are never pre-read, buffered or replayed. The module installs **passive m
 - The **response body**: `response.mutate().body(transformer)` transforms the body flux lazily — nothing
   is read until the application subscribes. The transformer marks the subscription, tees every buffer,
   marks completion, and completes the exchange at the terminal signal.
-- `tee` reads at most `capture.remainingCapacity()` bytes out of each `DataBuffer` with a
-  **non-advancing** read (the read position is untouched), counts the full length, and returns the
-  original buffer. Ownership, pooling and release are exactly those of an undecorated exchange.
+- `tee` counts the full length of each `DataBuffer` **first**, then reads at most
+  `capture.remainingCapacity()` bytes out of it with a **non-advancing** read (the read position is
+  untouched), and returns the original buffer. Counting cannot throw, the copy can (an exotic
+  `DataBuffer`) — in that order a copy that throws costs the logged text of that chunk, never the size
+  sample. Ownership, pooling and release are exactly those of an undecorated exchange.
 
-`BoundedBodyCapture` is the target: a `ByteArrayOutputStream` of at most `max-body-bytes`, a total byte
+`BoundedBodyCapture` is the target: the shared byte-bounded buffer of at most `max-body-bytes`
+([Common guide §9](../../docs/GUIDE.md#9-shared-code-legatium-common-inlined-by-shade)), a total byte
 counter, and a `frozen` flag — all under one uncontended `ReentrantLock`. With limit `0` it runs in
 **count-only** mode for the body-size meters: nothing is buffered, every byte is counted, `tee` copies
 nothing.
@@ -939,6 +942,19 @@ attempt is a crossing and gets its own line, with the same `adapter_request_id` 
 immutable `ClientRequest`, which never carries the correlation header the filter adds to its rebuilt
 copy — a documented difference from the blocking twin, whose mutable request keeps the header of attempt
 1 (the filter's class documentation lists it).
+
+**The connector's own retry is not an attempt.** Reactor Netty retries a request once, below the filter,
+when a pooled connection turns out to be stale — but only while **no headers have been sent** (its
+`HttpClientConnect` sets `shouldRetry = false` and warns "cannot be retried as the headers/body were
+sent" otherwise). The request tee runs when the body emits inside `writeWith`, which is never before the
+headers go out: a `bodyValue` body is marked and written together with its headers on the event-loop
+thread, a streamed or asynchronous body sends its headers first. So the connector's retry can only fire
+before the tee has run at all, and the body is counted and logged once per attempt of the filter,
+never twice. Probed on 2026-09-17 against Reactor Netty 1.3.7 (`docs/assessment/RETRY_PROBE-2026-09-17T19-11-37.md`
+in the repository; the assessment trail is not part of the site): a pooled
+connection the peer closes after receiving the request is one line — `failure` with
+`PrematureCloseException`, the body counted once — and an asynchronous body whose connection dies before
+it emits is refused the retry because the headers were already out.
 
 Tracing making every call traced, the one-metrics-owner-per-registry rule and the masking fingerprint are
 one behaviour for both twins — [Common guide §7.6](../../docs/GUIDE.md#76-trace-correlation),
