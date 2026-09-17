@@ -18,10 +18,11 @@ import java.util.Objects
  * so the buffer must be able to CUT BACK ([truncate]), and the array is sized once by the length the
  * peer or the caller declared ([expect]), so a body within its declaration lands in one allocation
  * without growth - up to [MAX_HINTED_CAPACITY]: the declaration is the peer's word, and a byte must
- * not be able to reserve a large cap in one go. Allocated on the first buffered byte - a buffer nothing is written to (count-only
- * mode, a body never read) costs no memory. Without a hint the first array has [MIN_CAPACITY] bytes
- * (or the cap, when that is smaller), so a byte-wise reader does not pay an allocation and a copy for
- * each of the first doublings. Beyond that the array doubles, never past [maxBytes].
+ * not be able to reserve a large cap in one go. Allocated on the first buffered byte - a buffer nothing
+ * is written to (count-only mode, a body never read) costs no memory. Without a hint the first array
+ * has at least [MIN_CAPACITY] bytes (or the cap, when that is smaller) and at least the first write's
+ * length, so a byte-wise reader does not pay an allocation and a copy for each of the first doublings.
+ * Beyond that the array doubles, never past [maxBytes].
  */
 internal class BoundedByteBuffer(
     private val maxBytes: Int,
@@ -148,14 +149,12 @@ internal class BoundedByteBuffer(
      * is deliberately not finalized or flushed.
      *
      * The builder reserves one char per buffered byte plus the note. This avoids capacity growth for
-     * decoders with `maxCharsPerByte <= 1` (every HTTP charset); larger output is accommodated by the
-     * builder's normal growth. Stored compactly, the transient footprint is the buffered bytes plus the
-     * builder plus the result, not a char array of twice the buffered bytes plus the result.
+     * decoders with `maxCharsPerByte <= 1`; larger output is accommodated by the builder's normal
+     * growth. Stored compactly, the transient footprint is the buffered bytes plus the builder plus the
+     * result, not a char array of twice the buffered bytes plus the result.
      *
-     * UTF-8 - the charset of nearly every logged body - skips the decoder loop: only the cut has to be
-     * found ([utf8Cut]), and the prefix goes through `String(bytes, charset)`, whose UTF-8 path is an
-     * intrinsified ASCII check and an exact copy. The footprint is the same (bytes, prefix, result);
-     * the time per rendered MiB drops by about a third for ASCII and by a fifth for two-byte text.
+     * UTF-8 uses a bounded tail check ([utf8Cut]) followed by the JDK's `String` decoding path,
+     * avoiding the full-prefix scratch-buffer loop. The footprint is the same (bytes, prefix, result).
      */
     private fun renderTruncated(
         charset: Charset,
@@ -205,7 +204,7 @@ internal class BoundedByteBuffer(
         /** No trustworthy declared length. */
         const val UNKNOWN_LENGTH = -1L
 
-        /** The first array without a sizing hint: a byte-wise reader reaches it in one allocation instead of eight. */
+        /** The least a first array without a sizing hint has: a byte-wise reader skips the eight doublings below it. */
         internal const val MIN_CAPACITY = 256
 
         /**
@@ -262,7 +261,10 @@ internal class BoundedByteBuffer(
         /** Room for what at most three tail bytes decode to: three replacement characters. */
         private const val TAIL_CHARS = 4
 
-        /** The scratch `CharBuffer` [renderTruncated] decodes through - 2 KiB, whatever the cap. Exposed for the tests. */
+        /**
+         * Default scratch capacity of [renderTruncated]: at most 2 KiB of character storage, unless a
+         * decoder requires a larger output buffer to make progress. Exposed for the tests.
+         */
         internal const val SCRATCH_CHARS = 1024
     }
 }
