@@ -16,7 +16,9 @@ import java.nio.charset.CodingErrorAction
  * so the buffer must be able to CUT BACK ([truncate]), and the array is sized once by the length the
  * peer or the caller declared ([expect]), so a body within its declaration lands in one allocation
  * without growth. Allocated on the first buffered byte - a buffer nothing is written to (count-only
- * mode, a body never read) costs no memory. Beyond the hint the array doubles, never past [maxBytes].
+ * mode, a body never read) costs no memory. Without a hint the first array has [MIN_CAPACITY] bytes
+ * (or the cap, when that is smaller), so a byte-wise reader does not pay an allocation and a copy for
+ * each of the first doublings. Beyond that the array doubles, never past [maxBytes].
  */
 internal class BoundedByteBuffer(
     private val maxBytes: Int,
@@ -77,9 +79,14 @@ internal class BoundedByteBuffer(
         size = length
     }
 
+    /** The allocated array's length, 0 before the first buffered byte - exposed for the tests. */
+    internal val capacity: Int
+        get() = bytes?.size ?: 0
+
     /**
-     * The array with room for [n] more bytes: sized on first use by the hint, or the write when there
-     * is none; doubled from then on, never past [maxBytes].
+     * The array with room for [n] more bytes: sized on first use by the hint, or by [MIN_CAPACITY] and
+     * the write when there is none; doubled from then on, never past [maxBytes]. A hint is taken as is,
+     * even below the floor: a declared length is the one allocation a body needs.
      */
     private fun room(n: Int): ByteArray {
         val needed = size + n
@@ -87,7 +94,7 @@ internal class BoundedByteBuffer(
         if (current != null && current.size >= needed) {
             return current
         }
-        val hint = if (expected > 0) minOf(expected, maxBytes.toLong()).toInt() else 0
+        val hint = if (expected > 0) minOf(expected, maxBytes.toLong()).toInt() else MIN_CAPACITY
         val grown = ByteArray(minOf(maxBytes, maxOf(needed, hint, (current?.size ?: 0) * 2)))
         if (current != null) {
             System.arraycopy(current, 0, grown, 0, size)
@@ -172,6 +179,9 @@ internal class BoundedByteBuffer(
     companion object {
         /** No trustworthy declared length. */
         const val UNKNOWN_LENGTH = -1L
+
+        /** The first array without a sizing hint: a byte-wise reader reaches it in one allocation instead of eight. */
+        internal const val MIN_CAPACITY = 256
 
         /** The scratch `CharBuffer` [renderTruncated] decodes through - 2 KiB, whatever the cap. Exposed for the tests. */
         internal const val SCRATCH_CHARS = 1024

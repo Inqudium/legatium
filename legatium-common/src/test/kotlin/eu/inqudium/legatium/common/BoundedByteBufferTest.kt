@@ -25,13 +25,13 @@ class BoundedByteBufferTest {
     @Nested
     inner class `Cap and growth` {
         @Test
-        fun `should keep the first bytes up to the cap through both write paths and grow in between`() {
-            // What is tested: writes in chunks that cross every doubling step of a 16-byte cap, single
-            //   bytes among them, and a chunk that is clipped at the cap.
+        fun `should keep the first bytes up to the cap through both write paths`() {
+            // What is tested: writes in chunks and single bytes against a 16-byte cap, the last chunk
+            //   clipped at the cap.
             // Success criteria: size and remaining follow the writes exactly; rendering 18 flowed
             //   bytes shows the first 16 in order with the note.
-            // Why it matters: the bytes the twins log come out of this array; a growth step that
-            //   dropped or reordered a byte would corrupt every logged body above the first chunk.
+            // Why it matters: the bytes the twins log come out of this array; a write path that
+            //   dropped or reordered a byte would corrupt every logged body.
             // Given
             val buffer = BoundedByteBuffer(16)
 
@@ -48,6 +48,41 @@ class BoundedByteBufferTest {
             assertThat(buffer.size).isEqualTo(16)
             assertThat(buffer.remaining).isZero()
             assertThat(buffer.render(StandardCharsets.UTF_8, 18)).isEqualTo("abcdefghijklmnop... [truncated, 18 bytes total]")
+        }
+
+        @Test
+        fun `should start at the floor without a hint and double from there, never past the cap`() {
+            // What is tested: the array's growth without a hint, every number derived from the floor
+            //   (MIN_CAPACITY): single bytes up to the floor, one more across the first doubling, a
+            //   chunk that needs more than the doubled array under a cap below the next doubling - and
+            //   the floor clipped by a cap below it.
+            // Success criteria: nothing allocated before the first byte; the floor after it and still
+            //   at the floor's last byte; twice the floor one byte later; the cap (not four times the
+            //   floor) once a chunk needs more than twice the floor; the bytes survive every step in
+            //   order; a cap of a quarter of the floor allocates that quarter on the first byte.
+            // Why it matters: a byte-wise reader without Content-Length doubled up from a 1-byte
+            //   array before the floor - an allocation and a copy per doubling; the floor must not cost
+            //   a byte of the logged body or exceed the cap.
+            // Given
+            val floor = BoundedByteBuffer.MIN_CAPACITY
+            val cap = 3 * floor + 8
+            val buffer = BoundedByteBuffer(cap)
+            assertThat(buffer.capacity).isZero()
+
+            // When/Then
+            repeat(floor) { buffer.write('a'.code + it % 26) }
+            assertThat(buffer.capacity).isEqualTo(floor)
+            buffer.write('!'.code)
+            assertThat(buffer.capacity).isEqualTo(2 * floor)
+            buffer.write("x".repeat(floor + 1))
+            assertThat(buffer.capacity).isEqualTo(cap)
+            assertThat(buffer.size).isEqualTo(2 * floor + 2)
+            assertThat(buffer.render(StandardCharsets.UTF_8, buffer.size.toLong()))
+                .isEqualTo(String(CharArray(floor) { 'a' + it % 26 }) + "!" + "x".repeat(floor + 1))
+
+            val small = BoundedByteBuffer(floor / 4)
+            small.write('a'.code)
+            assertThat(small.capacity).isEqualTo(floor / 4)
         }
 
         @Test
@@ -91,6 +126,26 @@ class BoundedByteBufferTest {
             buffer.write('a'.code)
             buffer.expect(9)
             assertThat(buffer.expectedBytes).isEqualTo(BoundedByteBuffer.UNKNOWN_LENGTH)
+        }
+
+        @Test
+        fun `should size the first array by the hint even below the floor`() {
+            // What is tested: a hint of an eighth of the floor (MIN_CAPACITY) under a cap of twice
+            //   the floor, then exactly that many bytes.
+            // Success criteria: the array has the hinted length, not the floor's.
+            // Why it matters: a declared length is exact for a well-behaved peer; rounding it up to
+            //   the floor would waste the one allocation the hint exists to make right.
+            // Given
+            val hint = BoundedByteBuffer.MIN_CAPACITY / 8
+            val buffer = BoundedByteBuffer(2 * BoundedByteBuffer.MIN_CAPACITY)
+            buffer.expect(hint.toLong())
+
+            // When
+            buffer.write("h".repeat(hint))
+
+            // Then
+            assertThat(buffer.capacity).isEqualTo(hint)
+            assertThat(buffer.size).isEqualTo(hint)
         }
 
         @Test
