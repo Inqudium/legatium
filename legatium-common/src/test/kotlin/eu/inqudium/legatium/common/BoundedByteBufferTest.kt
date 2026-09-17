@@ -14,7 +14,7 @@ import java.nio.charset.StandardCharsets
 class BoundedByteBufferTest {
     private fun bytes(text: String) = text.toByteArray(StandardCharsets.UTF_8)
 
-    private fun BoundedByteBuffer.write(text: String) = write(bytes(text), 0, text.length)
+    private fun BoundedByteBuffer.write(text: String) = bytes(text).let { write(it, 0, it.size) }
 
     @Nested
     inner class `Cap and growth` {
@@ -153,6 +153,55 @@ class BoundedByteBufferTest {
             assertThat(empty.render(StandardCharsets.UTF_8, 3)).isEqualTo("... [truncated, 3 bytes total]")
             assertThat(full.render(StandardCharsets.UTF_8, 5)).isEqualTo("hello")
             assertThat(full.render(StandardCharsets.UTF_8, 7)).isEqualTo("hello... [truncated, 7 bytes total]")
+        }
+    }
+
+    @Nested
+    inner class `Truncated rendering` {
+        @Test
+        fun `should decode a prefix beyond the scratch size and leave a cut multi-byte sequence out`() {
+            // What is tested: a cap of 3000 bytes filled with "aä😀" units of 7 bytes - the cut falls after
+            //   the first byte of an emoji - and a body that flows beyond the cap.
+            // Success criteria: the text is 428 whole units plus "aä", then the note; the incomplete
+            //   emoji is left out rather than rendered as a replacement character.
+            // Why it matters: the scratch buffer holds 1024 chars, so this prefix crosses it several
+            //   times; a decoder round that dropped or doubled chars at the refill, or that decoded the
+            //   cut sequence as malformed, would corrupt every logged body larger than the scratch.
+            // Given
+            val unit = "aä😀"
+            val cap = 3000
+            val buffer = BoundedByteBuffer(cap)
+            val body = unit.repeat(500)
+
+            // When
+            buffer.write(body)
+
+            // Then
+            assertThat(buffer.size).isEqualTo(cap)
+            val total = bytes(body).size.toLong()
+            assertThat(buffer.render(StandardCharsets.UTF_8, total))
+                .isEqualTo(unit.repeat(428) + "aä" + "... [truncated, $total bytes total]")
+        }
+
+        @Test
+        fun `should keep a surrogate pair whole across the scratch boundary`() {
+            // What is tested: 1023 ASCII bytes followed by an emoji, so its surrogate pair would start
+            //   at the LAST char of the 1024-char scratch, then more bytes than the cap takes.
+            // Success criteria: the emoji and the byte after it render intact before the note.
+            // Why it matters: the decoder must refuse the pair when only one char is left, report
+            //   overflow WITH progress, and place the pair whole after the refill; splitting it would log
+            //   two lone surrogates.
+            // Given
+            val head = "a".repeat(BoundedByteBuffer.SCRATCH_CHARS - 1) + "😀b"
+            val buffer = BoundedByteBuffer(bytes(head).size)
+
+            // When
+            buffer.write(head)
+            buffer.write("b".repeat(10))
+
+            // Then
+            val total = bytes(head).size + 10L
+            assertThat(buffer.render(StandardCharsets.UTF_8, total)).isEqualTo(head + "... [truncated, $total bytes total]")
         }
     }
 }

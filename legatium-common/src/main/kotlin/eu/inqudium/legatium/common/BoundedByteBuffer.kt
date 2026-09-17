@@ -4,7 +4,6 @@ import java.nio.ByteBuffer
 import java.nio.CharBuffer
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
-import kotlin.math.ceil
 
 /**
  * The byte-bounded buffer beneath both twins' `BoundedBodyCapture` (ADR-0003): keeps the first [maxBytes]
@@ -122,43 +121,61 @@ internal class BoundedByteBuffer(
      * that incomplete tail would render as a replacement character and corrupt the logged prefix.
      * Decoding with `endOfInput = false` leaves an incomplete trailing sequence undecoded (underflow)
      * instead of reporting it as malformed; malformed bytes INSIDE the prefix are still replaced, as
-     * `String(bytes, charset)` would. The note is written into the same `CharBuffer` behind the decoded
-     * characters, so the result is materialized once, not decoded into a string and copied again by a
-     * template.
+     * `String(bytes, charset)` would.
+     *
+     * Decoded through a small scratch `CharBuffer` into a `StringBuilder` rather than into a `CharBuffer`
+     * sized by the cap: the builder stores Latin1 text in one byte per char, so the transient footprint
+     * is the buffered bytes plus the builder plus the final string, not the buffered bytes plus a char
+     * array of twice their size plus the string. The builder is sized once by `size + note.length` - an
+     * upper bound for every charset whose `maxCharsPerByte` is 1 (all the HTTP ones); a decoder that
+     * expands further only grows it. The note is appended behind the decoded characters, so the one copy
+     * of the text is the builder's `toString()`.
      */
     private fun renderTruncated(
         charset: Charset,
         total: Long,
     ): String {
         val note = "... [truncated, $total bytes total]"
+        val length = size
+        if (length == 0) {
+            return note
+        }
+        val buffered = checkNotNull(bytes)
         val decoder =
             charset
                 .newDecoder()
                 .onMalformedInput(CodingErrorAction.REPLACE)
                 .onUnmappableCharacter(CodingErrorAction.REPLACE)
-        // Sized in double precision and rounded UP: maxCharsPerByte is a float, and a float product
-        // truncated to Int can undershoot for large captures - the OVERFLOW result below is the guard
-        // against a decoder whose declared maximum is wrong, not the normal path.
-        var capacity = ceil(size.toDouble() * decoder.maxCharsPerByte()).toInt() + 1
-        val input = ByteBuffer.wrap(bytes ?: ByteArray(0), 0, size)
+        val input = ByteBuffer.wrap(buffered, 0, length)
+        // At least two chars: a supplementary character decodes to a surrogate pair in one step.
+        var scratch = CharBuffer.allocate(minOf(SCRATCH_CHARS, maxOf(2, length)))
+        val output = StringBuilder(Math.addExact(length, note.length))
         while (true) {
-            // The note's room is reserved behind the limit the decoder may fill.
-            val chars = CharBuffer.allocate(capacity + note.length)
-            chars.limit(capacity)
-            input.rewind()
-            val result = decoder.reset().decode(input, chars, false)
-            if (!result.isOverflow) {
-                chars.limit(chars.capacity())
-                chars.put(note)
-                chars.flip()
-                return chars.toString()
+            val inputBefore = input.position()
+            val result = decoder.decode(input, scratch, false)
+            val produced = scratch.position()
+            // With REPLACE on both actions a conforming decoder never reports an error.
+            check(!result.isError) { "decoder returned $result despite REPLACE" }
+            output.append(scratch.array(), scratch.arrayOffset(), produced)
+            if (result.isUnderflow) {
+                break
             }
-            capacity *= 2
+            // OVERFLOW without progress: the EMPTY scratch is too small for the decoder's next step
+            // (no JDK decoder needs more than a surrogate pair, but the contract allows it). Retry larger.
+            if (input.position() == inputBefore && produced == 0) {
+                scratch = CharBuffer.allocate(Math.multiplyExact(scratch.capacity(), 2))
+            } else {
+                scratch.clear()
+            }
         }
+        return output.append(note).toString()
     }
 
     companion object {
         /** No trustworthy declared length. */
         const val UNKNOWN_LENGTH = -1L
+
+        /** The scratch `CharBuffer` [renderTruncated] decodes through - 2 KiB, whatever the cap. Exposed for the tests. */
+        internal const val SCRATCH_CHARS = 1024
     }
 }
