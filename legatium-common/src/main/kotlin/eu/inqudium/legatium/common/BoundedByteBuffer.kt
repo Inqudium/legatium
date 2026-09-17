@@ -4,6 +4,7 @@ import java.nio.ByteBuffer
 import java.nio.CharBuffer
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
+import java.nio.charset.StandardCharsets
 import java.util.Objects
 
 /**
@@ -17,10 +18,11 @@ import java.util.Objects
  * so the buffer must be able to CUT BACK ([truncate]), and the array is sized once by the length the
  * peer or the caller declared ([expect]), so a body within its declaration lands in one allocation
  * without growth - up to [MAX_HINTED_CAPACITY]: the declaration is the peer's word, and a byte must
- * not be able to reserve a large cap in one go. Allocated on the first buffered byte - a buffer nothing is written to (count-only
- * mode, a body never read) costs no memory. Without a hint the first array has [MIN_CAPACITY] bytes
- * (or the cap, when that is smaller), so a byte-wise reader does not pay an allocation and a copy for
- * each of the first doublings. Beyond that the array doubles, never past [maxBytes].
+ * not be able to reserve a large cap in one go. Allocated on the first buffered byte - a buffer nothing
+ * is written to (count-only mode, a body never read) costs no memory. Without a hint the first array
+ * has at least [MIN_CAPACITY] bytes (or the cap, when that is smaller) and at least the first write's
+ * length, so a byte-wise reader does not pay an allocation and a copy for each of the first doublings.
+ * Beyond that the array doubles, never past [maxBytes].
  */
 internal class BoundedByteBuffer(
     private val maxBytes: Int,
@@ -147,9 +149,12 @@ internal class BoundedByteBuffer(
      * is deliberately not finalized or flushed.
      *
      * The builder reserves one char per buffered byte plus the note. This avoids capacity growth for
-     * decoders with `maxCharsPerByte <= 1` (every HTTP charset); larger output is accommodated by the
-     * builder's normal growth. Stored compactly, the transient footprint is the buffered bytes plus the
-     * builder plus the result, not a char array of twice the buffered bytes plus the result.
+     * decoders with `maxCharsPerByte <= 1`; larger output is accommodated by the builder's normal
+     * growth. Stored compactly, the transient footprint is the buffered bytes plus the builder plus the
+     * result, not a char array of twice the buffered bytes plus the result.
+     *
+     * UTF-8 uses a bounded tail check ([utf8Cut]) followed by the JDK's `String` decoding path,
+     * avoiding the full-prefix scratch-buffer loop. The footprint is the same (bytes, prefix, result).
      */
     private fun renderTruncated(
         charset: Charset,
@@ -161,6 +166,9 @@ internal class BoundedByteBuffer(
             return note
         }
         val buffered = checkNotNull(bytes)
+        if (charset == StandardCharsets.UTF_8) {
+            return String(buffered, 0, utf8Cut(buffered, length), StandardCharsets.UTF_8) + note
+        }
         val decoder =
             charset
                 .newDecoder()
@@ -196,7 +204,7 @@ internal class BoundedByteBuffer(
         /** No trustworthy declared length. */
         const val UNKNOWN_LENGTH = -1L
 
-        /** The first array without a sizing hint: a byte-wise reader reaches it in one allocation instead of eight. */
+        /** The least a first array without a sizing hint has: a byte-wise reader skips the eight doublings below it. */
         internal const val MIN_CAPACITY = 256
 
         /**
@@ -219,7 +227,44 @@ internal class BoundedByteBuffer(
             hint: Int,
         ): Int = minOf(maxBytes.toLong(), maxOf(needed.toLong(), hint.toLong(), current.toLong() * 2)).toInt()
 
-        /** The scratch `CharBuffer` [renderTruncated] decodes through - 2 KiB, whatever the cap. Exposed for the tests. */
+        /**
+         * The end of the last complete UTF-8 sequence within the first [length] bytes of [bytes]: [length]
+         * unless the tail is the well-formed beginning of a longer sequence, which is left out for the
+         * note to account for. The lead byte of such a tail lies at most three bytes back; the JDK decoder
+         * decides over those bytes with `endOfInput = false`, exactly as the generic path decides over the
+         * whole prefix, so a MALFORMED tail - which the decoder replaces rather than holds back - renders
+         * the same either way. Exposed for the parity test.
+         */
+        internal fun utf8Cut(
+            bytes: ByteArray,
+            length: Int,
+        ): Int {
+            val floor = maxOf(0, length - 3)
+            var lead = length - 1
+            while (lead >= floor && (bytes[lead].toInt() and 0xC0) == 0x80) {
+                lead--
+            }
+            if (lead < floor || bytes[lead] >= 0) {
+                // No lead within reach (a complete four-byte sequence, or stray continuation bytes the
+                // string constructor replaces) or an ASCII byte: nothing can be pending.
+                return length
+            }
+            val tail = ByteBuffer.wrap(bytes, lead, length - lead)
+            StandardCharsets.UTF_8
+                .newDecoder()
+                .onMalformedInput(CodingErrorAction.REPLACE)
+                .onUnmappableCharacter(CodingErrorAction.REPLACE)
+                .decode(tail, CharBuffer.allocate(TAIL_CHARS), false)
+            return tail.position()
+        }
+
+        /** Room for what at most three tail bytes decode to: three replacement characters. */
+        private const val TAIL_CHARS = 4
+
+        /**
+         * Default scratch capacity of [renderTruncated]: at most 2 KiB of character storage, unless a
+         * decoder requires a larger output buffer to make progress. Exposed for the tests.
+         */
         internal const val SCRATCH_CHARS = 1024
     }
 }
