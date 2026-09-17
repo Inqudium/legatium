@@ -104,18 +104,22 @@ class BoundedByteBufferTest {
 
         @Test
         fun `should buffer nothing in count-only mode and reject a negative cap`() {
-            // What is tested: cap 0 - the measure-only mode - never has room; below 0 is no mode.
-            // Success criteria: size stays 0 after writes, remaining is 0, rendering 5 flowed bytes is
-            //   the bare note; construction with -1 fails naming the argument.
-            // Why it matters: a measure-only capture sits on every exchange and must cost no memory.
+            // What is tested: cap 0 - the measure-only mode - never has room, whatever the hint; below
+            //   0 is no mode.
+            // Success criteria: size stays 0 after writes, remaining is 0, NO array is allocated,
+            //   rendering 5 flowed bytes is the bare note; construction with -1 fails naming the argument.
+            // Why it matters: a measure-only capture sits on every exchange and must cost no memory -
+            //   neither for the bytes nor, should it ever be rendered, for a decoder.
             // Given/When
             val buffer = BoundedByteBuffer(0)
+            buffer.expect(5)
             buffer.write("hello")
             buffer.write('!'.code)
 
             // Then
             assertThat(buffer.size).isZero()
             assertThat(buffer.remaining).isZero()
+            assertThat(buffer.capacity).isZero()
             assertThat(buffer.render(StandardCharsets.UTF_8, 5)).isEqualTo("... [truncated, 5 bytes total]")
             assertThat(catchThrowable { BoundedByteBuffer(-1) }).isInstanceOf(IllegalArgumentException::class.java).hasMessageContaining("maxBytes")
         }
