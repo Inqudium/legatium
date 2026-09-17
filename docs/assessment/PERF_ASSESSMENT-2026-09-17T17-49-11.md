@@ -116,15 +116,47 @@ The benchmark measured both streams under the same operations as the buffer (BEN
 
 ### 5.1 At 500 calls per second
 
-Per-exchange costs on the same model as section 2 (both bodies, bodies at the cap, `toString(UTF_8)` as the rendering; the streams have no truncated rendering of their own, so the truncated rows use the naive `String(bytes) + note` over the stream's array, which for `ByteArrayOutputStream` needs a subclass to reach `buf` without the copy of `toByteArray()`, and for `FastByteArrayOutputStream` is `toByteArrayUnsafe()`).
+Same model as section 2: both bodies captured, bodies at the cap, one exchange = two captures plus two renderings; the per-exchange figure is `2 × capture + 2 × rendering` from BENCH_REPORT §3.1, §3.2, §3.3 and §6. "Length known" means the buffer's hint or the stream's presize. The streams have no truncated rendering of their own, so every row renders complete (`toString(UTF_8)`). One aspect per table.
 
-| Scenario, default cap (16 KiB) | `BoundedByteBuffer` | `ByteArrayOutputStream` | `FastByteArrayOutputStream` |
+**CPU per exchange (µs)**
+
+| Scenario | `BoundedByteBuffer` | `ByteArrayOutputStream` | `FastByteArrayOutputStream` |
 |---|---|---|---|
-| Bulk, length known (hint / presized), complete | 2.6 µs, 66 KB - 0.13 %, 33 MB/s | 2 × 0.67 + 2 × 0.70 = 2.7 µs, 66 KB - 0.14 %, 33 MB/s | 2 × 0.68 + 2 × 0.63 = 2.6 µs, 66 KB - 0.13 %, 33 MB/s |
-| Bulk, length unknown, complete | 2 × 1.09 + 2 × 0.62 = 3.4 µs, 82 KB | 2 × 1.30 + 2 × 0.70 = 4.0 µs, 82 KB | 2 × 1.08 + 2 × 0.63 = 3.4 µs, 82 KB **plus the coalescing copy** `toString` makes over a multi-block stream (one array of the body size per rendering, not measured: the benchmark renders presized streams) |
-| Byte-wise reader, length known | 2 × 22.4 + 1.2 = 46 µs - **2.3 %** | 2 × 76.6 + 1.4 = 155 µs - **7.7 %** | 2 × 42.7 + 1.3 = 87 µs - **4.3 %** |
-| Byte-wise reader, length unknown | 2 × 19.1 + 1.2 = 39 µs - 2.0 % | 2 × 140 + 1.4 = 281 µs - **14 %** | 2 × 40.0 + 1.3 = 81 µs - 4.1 % |
-| 256 KiB cap, bulk, length known, complete | 61 µs, 1.44 MB - 3.1 %, 720 MB/s | 2 × 10.5 + 2 × 10.9 = 43 µs, 1.05 MB - 2.1 %, 524 MB/s | 2 × 10.8 + 2 × 10.9 = 43 µs, 1.05 MB - 2.2 %, 524 MB/s |
+| Default cap, bulk reads, length known | 2.6 | 2.7 | 2.6 |
+| Default cap, bulk reads, length unknown | 3.4 | 4.0 | 3.4 |
+| Default cap, byte-wise reads, length known | 46 | 155 | 87 |
+| Default cap, byte-wise reads, length unknown | 39 | 281 | 81 |
+| 256 KiB cap, bulk reads, length known | 61 | 43 | 43 |
+
+**Share of one core at 500 exchanges/s** (CPU per exchange × 500, as a percentage of one second)
+
+| Scenario | `BoundedByteBuffer` | `ByteArrayOutputStream` | `FastByteArrayOutputStream` |
+|---|---|---|---|
+| Default cap, bulk reads, length known | 0.13 % | 0.14 % | 0.13 % |
+| Default cap, bulk reads, length unknown | 0.17 % | 0.20 % | 0.17 % |
+| Default cap, byte-wise reads, length known | 2.3 % | **7.7 %** | 4.3 % |
+| Default cap, byte-wise reads, length unknown | 2.0 % | **14 %** | 4.1 % |
+| 256 KiB cap, bulk reads, length known | 3.1 % | 2.1 % | 2.2 % |
+
+**Allocation per exchange (KB)**
+
+| Scenario | `BoundedByteBuffer` | `ByteArrayOutputStream` | `FastByteArrayOutputStream` |
+|---|---|---|---|
+| Default cap, bulk reads, length known | 66 | 66 | 66 |
+| Default cap, bulk reads, length unknown | 82 | 82 | 82, plus about 33 for the coalescing copy `toString` makes over a multi-block stream (structural, not measured: the benchmark renders presized streams) |
+| Default cap, byte-wise reads, length known | 66 | 66 | 66 |
+| Default cap, byte-wise reads, length unknown | 82 | 82 | 82, plus about 33 as above |
+| 256 KiB cap, bulk reads, length known | 1 440 | 1 050 | 1 050 |
+
+**Allocation rate at 500 exchanges/s (MB/s)**
+
+| Scenario | `BoundedByteBuffer` | `ByteArrayOutputStream` | `FastByteArrayOutputStream` |
+|---|---|---|---|
+| Default cap, bulk reads, length known | 33 | 33 | 33 |
+| Default cap, bulk reads, length unknown | 41 | 41 | 41, plus about 16 |
+| Default cap, byte-wise reads, length known | 33 | 33 | 33 |
+| Default cap, byte-wise reads, length unknown | 41 | 41 | 41, plus about 16 |
+| 256 KiB cap, bulk reads, length known | 720 | 524 | 524 |
 
 Reading: in bulk the three are the same instrument - the buffer's growth and rendering are the streams' growth and rendering, and the only row where a stream wins is the presized 256 KiB case, where the buffer's 64 KiB hint ceiling costs it 200 KB per body (section 4.1 says why that is bought deliberately). Byte-wise, the JDK stream's monitor per `write(int)` is the difference between 2 % and 14 % of a core at this load; Spring's stream halves that gap but does not close it (its `write(int)` checks and advances a block cursor, the buffer's a single compare and store). The read-loop shape is not exotic: `InputStream.read()` loops appear in hand-written parsers, in `Scanner`-style consumers and in any `Reader` without a `BufferedReader` in front, and the tee cannot choose the application's read shape.
 
