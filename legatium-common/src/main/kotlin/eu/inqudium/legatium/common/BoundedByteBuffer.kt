@@ -109,51 +109,56 @@ internal class BoundedByteBuffer(
         if (total == 0L) {
             return null
         }
-        val buffered = bytes ?: ByteArray(0)
         return if (total > size) {
-            "${decodeTruncated(buffered, charset, size)}... [truncated, $total bytes total]"
+            renderTruncated(charset, total)
         } else {
-            String(buffered, 0, size, charset)
+            String(bytes ?: ByteArray(0), 0, size, charset)
+        }
+    }
+
+    /**
+     * The buffered PREFIX decoded and followed by the truncation note, as ONE string. The capture limit
+     * bounds bytes, not characters, so the cut can fall inside a multi-byte sequence; decoded as a whole,
+     * that incomplete tail would render as a replacement character and corrupt the logged prefix.
+     * Decoding with `endOfInput = false` leaves an incomplete trailing sequence undecoded (underflow)
+     * instead of reporting it as malformed; malformed bytes INSIDE the prefix are still replaced, as
+     * `String(bytes, charset)` would. The note is written into the same `CharBuffer` behind the decoded
+     * characters, so the result is materialized once, not decoded into a string and copied again by a
+     * template.
+     */
+    private fun renderTruncated(
+        charset: Charset,
+        total: Long,
+    ): String {
+        val note = "... [truncated, $total bytes total]"
+        val decoder =
+            charset
+                .newDecoder()
+                .onMalformedInput(CodingErrorAction.REPLACE)
+                .onUnmappableCharacter(CodingErrorAction.REPLACE)
+        // Sized in double precision and rounded UP: maxCharsPerByte is a float, and a float product
+        // truncated to Int can undershoot for large captures - the OVERFLOW result below is the guard
+        // against a decoder whose declared maximum is wrong, not the normal path.
+        var capacity = ceil(size.toDouble() * decoder.maxCharsPerByte()).toInt() + 1
+        val input = ByteBuffer.wrap(bytes ?: ByteArray(0), 0, size)
+        while (true) {
+            // The note's room is reserved behind the limit the decoder may fill.
+            val chars = CharBuffer.allocate(capacity + note.length)
+            chars.limit(capacity)
+            input.rewind()
+            val result = decoder.reset().decode(input, chars, false)
+            if (!result.isOverflow) {
+                chars.limit(chars.capacity())
+                chars.put(note)
+                chars.flip()
+                return chars.toString()
+            }
+            capacity *= 2
         }
     }
 
     companion object {
         /** No trustworthy declared length. */
         const val UNKNOWN_LENGTH = -1L
-    }
-}
-
-/**
- * Decodes a byte-bounded PREFIX of a text - the first [length] bytes of [bytes]: the capture limit bounds
- * bytes, not characters, so the cut can fall inside a multi-byte sequence; decoded as a whole, that
- * incomplete tail would render as a replacement character and corrupt the logged prefix.
- * Decoding with `endOfInput = false` leaves an incomplete trailing sequence undecoded (underflow) instead
- * of reporting it as malformed; malformed bytes INSIDE the prefix are still replaced, as `String(bytes,
- * charset)` would. Only [BoundedByteBuffer.render] decodes a prefix, so the decoder lives beneath it.
- */
-private fun decodeTruncated(
-    bytes: ByteArray,
-    charset: Charset,
-    length: Int = bytes.size,
-): String {
-    val decoder =
-        charset
-            .newDecoder()
-            .onMalformedInput(CodingErrorAction.REPLACE)
-            .onUnmappableCharacter(CodingErrorAction.REPLACE)
-    // Sized in double precision and rounded UP: maxCharsPerByte is a float, and a float product
-    // truncated to Int can undershoot for large captures - the OVERFLOW result below is the guard
-    // against a decoder whose declared maximum is wrong, not the normal path.
-    var capacity = ceil(length.toDouble() * decoder.maxCharsPerByte()).toInt() + 1
-    val input = ByteBuffer.wrap(bytes, 0, length)
-    while (true) {
-        val chars = CharBuffer.allocate(capacity)
-        input.rewind()
-        val result = decoder.reset().decode(input, chars, false)
-        if (!result.isOverflow) {
-            chars.flip()
-            return chars.toString()
-        }
-        capacity *= 2
     }
 }
