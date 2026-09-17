@@ -1,0 +1,119 @@
+# Performance Assessment: BoundedByteBuffer at 500 client calls per second
+
+1. Identification of the codebase
+   - **Repository:** `https://github.com/Inqudium/legatium.git`
+   - **Commit hash (HEAD):** `dbb0a1bb` (merge of PR #23 on top of PR #22 and PR #14 - the buffer as shipped)
+   - **Reference (branch):** `refs/heads/docs/bench-report-utf8-fast-path`
+2. Input
+   - **Evidence:** `./docs/assessment/BENCH_REPORT-2026-09-17T17-07-53.md`, sections 3 and 6 (JMH 1.37, 3 forks × 8 measurement iterations, `-prof gc`, JDK 26 on a Ryzen AI 9 workstation); raw output under `./benchmarks/results/`. Every number below is either quoted from that report or derived from it by the arithmetic shown.
+   - **Changes assessed:** PR #14 (scratch-buffer truncated rendering, 256-byte floor, 64 KiB hint ceiling, range check, `Long` doubling, `total` precondition), PR #22 (UTF-8 fast path of the truncated rendering), PR #23 (the benchmark module).
+3. Questions
+   - What the buffer costs at **500 client calls per second**, in CPU and in allocation, per configuration.
+   - **Code effort against result**, per change.
+   - **Memory peaks and GC pressure** the chosen implementation can produce, with the thresholds where a configuration turns it from negligible into a GC concern.
+4. Assumptions (stated once, used throughout)
+   - **Load model:** 500 exchanges/s. "Parallel" is read as 500 in flight at once, i.e. 500/s at a 1 s mean exchange duration - the conservative reading for retained memory (at 100 ms mean duration the in-flight count is 50 and every live-memory figure below shrinks tenfold).
+   - **Bodies:** both request and response captured (`logRequestBody` and `logResponseBody` both set), bodies as large as the cap or larger (the worst case; a 2 KiB JSON answer under a 16 KiB cap costs an eighth). Bulk reads (8 KiB chunks) unless "byte-wise" is named. ASCII unless named.
+   - **Modes:** ALWAYS renders every body; ON_FAILURE captures every body and renders about 1 % (a 1 % failure rate is assumed); measure-only buffers nothing.
+   - **Not in the numbers:** the twins' tees, the emitter, the logger and the appender - the buffer is the unit. Absolute times are JDK 26 workstation figures; ratios and bytes transfer (BENCH_REPORT, section 3 of its metadata).
+
+---
+
+## 1. Executive summary
+
+At the shipped default (16 KiB cap) the buffer is **invisible at 500 calls/s**: about 2.6 µs of CPU and 66 KB of allocation per exchange with both bodies captured and rendered, which is **0.13 % of one core and 33 MB/s** of young-generation allocation - a G1 young collection every half a minute on a 2 GiB heap - and **at most 16 MiB retained** by 500 in-flight exchanges. Truncation, missing Content-Length and non-ASCII text each add tens of percent to that, never a multiple. The configuration that changes the picture is the cap: at **256 KiB** the same load costs 4.6 % of a core and **1 GB/s** of allocation with **256 MiB retained**, and from **512 KiB** upwards every buffer and every rendered string becomes a G1 humongous object on a 2 GiB heap. The **64 KiB hint ceiling** (PR #14) is the one change with a large, measurable effect in this model: without it, 500 in-flight exchanges against a 16 MiB cap could be made to retain **16 GiB** by peers declaring a large Content-Length and sending one byte; with it, **64 MiB**. Against that, the render-path work of PR #14 and PR #22 bought about **1 µs and 2 KB per truncated body** - real, measured, and worth about 0.05 % of a core at this load; its value is the smaller peak (3N instead of 4N per rendering) and the correctness hardening that came with it, not throughput. The byte-array design itself (ADR-0003) is confirmed as the right one for the blocking tee: the JDK stream would have cost 6-11× the CPU on byte-wise reads for the same memory.
+
+## 2. Five hundred client calls per second
+
+Per-exchange costs are the sum of two captures and two renderings from BENCH_REPORT §3.1, §3.3 and §6; the request body arrives as one array and is written in one call, so its capture equals the hinted case.
+
+### 2.1 Default cap (16 KiB), bodies at the cap
+
+| Scenario | CPU per exchange | Allocation per exchange | At 500/s: CPU | At 500/s: allocation |
+|---|---|---|---|---|
+| ALWAYS, Content-Length known, bodies fit | 2 × 0.69 + 2 × 0.62 = **2.6 µs** | 2 × 16.4 + 2 × 16.4 = **66 KB** | 1.3 ms/s = **0.13 % of a core** | **33 MB/s** |
+| ALWAYS, response chunked (no hint), bodies exceed the cap (truncated) | 0.69 + 1.09 + 2 × 1.35 = **4.5 µs** | 16.4 + 24.6 + 2 × 32.9 = **107 KB** | 2.2 ms/s = 0.22 % | 53 MB/s |
+| ALWAYS, as above, two-byte text | 0.69 + 1.09 + 2 × 8.5 = 18.8 µs | 16.4 + 24.6 + 2 × 38.4 = 118 KB | 9.4 ms/s = 0.9 % | 59 MB/s |
+| ON_FAILURE (1 % rendered), Content-Length known | 2 × 0.69 + 0.01 × 1.2 = 1.4 µs | 2 × 16.4 + 0.3 = 33 KB | 0.7 ms/s = 0.07 % | 16 MB/s |
+| Measure-only (no body logging) | 2 × 0.05 (the capped write's compare loop, bulk) | 0 | ≈ 0 | 0 |
+| Byte-wise reader (`InputStream.read()` loop), ALWAYS | 2 × 22 + 2 × 0.62 = 45 µs | 66 KB | 23 ms/s = **2.3 %** | 33 MB/s |
+| The same byte-wise reader over `ByteArrayOutputStream` (the road not taken) | 2 × 140 + 2 × 0.7 = 281 µs | 66 KB | 141 ms/s = **14 %** | 33 MB/s |
+
+Reading: with bulk reads the buffer costs a tenth of a percent of a core; the shape of the application's reads matters more than any option of the buffer, and the byte-wise shape is exactly where the bare array (ADR-0003) pays for itself against the JDK stream (6-11×, BENCH_REPORT §4.2). The truncated rendering after PR #22 is within 7 % of the naive `String(bytes) + note` (§6), so nothing on the render path is left to win for ASCII.
+
+### 2.2 A 256 KiB cap, bodies at the cap
+
+| Scenario | CPU per exchange | Allocation per exchange | At 500/s: CPU | At 500/s: allocation |
+|---|---|---|---|---|
+| ALWAYS, Content-Length known, bodies fit | 2 × 19.7 + 2 × 10.9 = 61 µs | 2 × 459 + 2 × 262 = 1.44 MB | 31 ms/s = 3.1 % | **720 MB/s** |
+| ALWAYS, no hint, truncated | 2 × 22.9 + 2 × 23.1 = 92 µs | 2 × 516 + 2 × 524 = 2.08 MB | 46 ms/s = **4.6 %** | **1.04 GB/s** |
+| ON_FAILURE (1 % rendered), Content-Length known | 2 × 19.7 + 0.2 = 40 µs | 2 × 459 + 5 = 0.92 MB | 20 ms/s = 2 % | 460 MB/s |
+
+Reading: CPU stays modest, allocation does not - a gigabyte per second is a young collection every one to two seconds on a 2 GiB heap (section 4). The hinted case allocates 1.75× the cap per body here because the hint is clipped at 64 KiB and the array doubles twice more (BENCH_REPORT §4.3); presizing to the cap would save 200 KB per body at the price the ceiling exists to avoid (section 4.1). Whoever configures a cap of this size for a 500/s client should do it for a debugging window, not as a steady state.
+
+## 3. Code effort against result
+
+Sizes from `git diff --shortstat` of `legatium-common` per PR; effects from the BENCH_REPORT.
+
+| Change | Effort | Measured result | Assessment |
+|---|---|---|---|
+| PR #14 - truncated rendering through a scratch buffer into a presized builder (replacing the cap-sized `CharBuffer`) | part of +389/−47 lines and 8 of 11 new tests | Allocation per truncated rendering 2N (526.7 KB at 256 KiB) - the same as the naive concatenation; time 1.56× the naive path for ASCII, 1.11× for two-byte text, 28 % fewer bytes for two-byte text | The footprint goal (3N instead of 4N per rendering, the retained bytes included) was reached; the time was a step back for ASCII that PR #22 then repaired. On its own: a memory-peak change of 1× cap per rendering thread, worth about 16 KiB per concurrent rendering at the default cap. **Small effect, moderate effort** - justified by the peak, not by throughput. |
+| PR #14 - 256-byte floor without a hint | ~10 lines + 2 tests | 1 KiB byte-wise: 1.87 KB allocated instead of 1.84 KB before the floor (eight doublings from 1 byte were nine small arrays of 511 B in total); time unchanged within noise | **Negligible measured effect**; the floor's argument is allocation COUNT (nine arrays down to one), which `-prof gc` bytes do not show. Cheap, harmless, keep. |
+| PR #14 - 64 KiB hint ceiling | ~10 lines + 1 test | Truthful 256 KiB declaration: 459 KB allocated and 19.7 µs instead of 262 KB and 10.5 µs (1.75× bytes, 1.9× time); no effect at caps ≤ 64 KiB | **Large effect on the right variable**: bounds what a peer can make the client retain (section 4.1: 16 GiB → 64 MiB at 500 in flight under a 16 MiB cap). The measured cost falls only on large caps with truthful large bodies, a configuration section 2.2 already discourages. Best effort-to-result ratio of the set. |
+| PR #14 - range check, `Long` doubling, `total` precondition | ~15 lines + 3 tests | Not performance changes; the range check is one bounds check per ranged write (no measurable time at 8 KiB chunks: 1.09 vs 1.08 µs for the capped case) | Correctness hardening at zero measured cost. |
+| PR #22 - UTF-8 fast path (`utf8Cut` + `String(bytes, 0, cut)`) | +163/−46 lines, 3 new tests, 2 rewritten | Truncated ASCII: 37.1 → 23.1 µs at 256 KiB, 2.31 → 1.35 µs at 16 KiB, bytes unchanged; truncated two-byte text: 182 → 155 µs but 439 → 612 KB (+39 %) | **About 1 µs per truncated body at the default cap** - 0.05 % of a core at 500/s - bought with 30 lines of cut logic and a parity test that pins it to the decoder. Defensible because the truncated ASCII rendering is the common truncated case and the logic is small and proven; but the allocation regression for non-ASCII text shows it was a trade, not a free win. |
+| PR #23 - benchmark module | +395 lines, a CI job, 44 minutes of machine time per full run | The evidence behind every row of this table, including the discovery that the first write run measured dead code | The only way the other rows became numbers. Its recurring cost is the smoke job's `mvn install` per PR. |
+
+Overall: the two render-path PRs together (about 500 changed lines, 20 tests) moved a per-exchange cost of 2-4 µs by about 1 µs and a per-rendering peak by 1× cap. At 500 calls/s and the default cap that is 0.5 ms of CPU per second and 16 KiB of peak per rendering thread. The **class itself** - 270 lines against a `ByteArrayOutputStream` - is the effort with the clearest return: 6-11× on byte-wise reads (§4.2) and the cap, the reset, the hint and the truncation semantics the streams do not offer. The **hint ceiling** is the change with the best ratio. The rest is correctness and evidence, and should be described as such rather than as optimization.
+
+## 4. Memory peaks and GC pressure
+
+### 4.1 Retained memory (what 500 in-flight exchanges hold at once)
+
+Each capture retains its array until the exchange is emitted; the array is sized by the hint (≤ 64 KiB), by the floor, or by doubling up to the cap.
+
+| Cap | Bodies at the cap, both captured | Peers declare huge lengths and send one byte: without the ceiling | With the 64 KiB ceiling (shipped) |
+|---|---|---|---|
+| 16 KiB (default) | 500 × 2 × 16 KiB = **16 MiB** | 16 MiB | 16 MiB |
+| 256 KiB | **256 MiB** | 256 MiB | 500 × 2 × 64 KiB = 64 MiB |
+| 16 MiB | **16 GiB** (infeasible: the cap must be sized against concurrency) | **16 GiB from 500 bytes of body** | **64 MiB** |
+
+The middle column is the attack the ceiling closes: Content-Length is the peer's word, and before PR #14 a single byte reserved the cap. The right column is the exposure now - bounded by concurrency × 128 KiB whatever the cap. Note that the ceiling does not cap what a TRUTHFUL large body retains (left column): that is the cap's own job, and a 16 MiB cap at 500 in flight is a misconfiguration regardless of the buffer.
+
+Unhinted growth adds transient garbage of about one cap per body (the chain 256 … cap/2 sums to just under the cap) but retains only the final array.
+
+### 4.2 Transient peaks at rendering
+
+Per rendering, on top of the retained array (N = buffered bytes): complete rendering 1N (the string); truncated ASCII 2N (prefix string plus the concatenated result, momentarily both alive); truncated two-byte text 2.3N (the JDK's Latin1 attempt array, the trimmed prefix and the result). Renderings are short (1-25 µs at the sizes measured) and one per exchange, so the simultaneous peak is bounded by the number of threads emitting at the same instant, T: at most T × 2 × 2.3N. For the default cap and T = 24 (one per hardware thread) that is 1.8 MiB; for a 256 KiB cap, 28 MiB. Not a sizing concern at any realistic T; the 4N → 3N change of PR #14 moved this figure by T × 2 × 1N, i.e. 0.8 MiB at the default cap and 12 MiB at 256 KiB.
+
+### 4.3 Allocation rate and collection frequency
+
+Allocation rates from section 2, against G1's young generation on a 2 GiB heap (young sized between 5 % and 60 % of the heap by default, so 100 MiB to 1.2 GiB; a fixed `-Xmn` narrows the range):
+
+| Configuration | Allocation | Young collections | Survivor copying per collection |
+|---|---|---|---|
+| Default cap, ALWAYS, Content-Length known | 33 MB/s | one every 3-36 s | ≤ 16 MiB live buffers - a few ms |
+| Default cap, ALWAYS, truncated, no hint | 53 MB/s | one every 2-23 s | ≤ 16 MiB |
+| 256 KiB cap, ALWAYS, truncated, no hint | 1.04 GB/s | **one every 0.1-1.2 s** | ≤ 256 MiB live buffers - tens of ms per collection, and survivor space overflow promotes them to the old generation, where they die unreclaimed until a mixed collection |
+
+The buffer's garbage is short-lived by construction (arrays die at emission, strings when the appender is done), which is the friendly case for a generational collector - as long as the in-flight set fits the survivor space. At the default cap it does with room to spare. At 256 KiB and 500 in flight it does not on a 2 GiB heap (survivor space is a fraction of the young generation), and the premature promotion turns cheap young collections into old-generation churn. That is the mechanism behind the section 2.2 recommendation, and it depends on concurrency × cap, not on the buffer's code.
+
+### 4.4 The humongous threshold
+
+G1 allocates any object of at least half a region outside the young generation. Region size is the heap divided by 2048, rounded to a power of two between 1 and 32 MiB: 1 MiB regions on a 2 GiB heap, 2 MiB on 4 GiB, 4 MiB on 8 GiB. The buffer's array, the truncated rendering's prefix string and the result string are each about one cap in size, so:
+
+| Heap | Region | Humongous from | A cap of |
+|---|---|---|---|
+| ≤ 2 GiB | 1 MiB | 512 KiB | 512 KiB or more makes every capture and every rendered string humongous |
+| 4 GiB | 2 MiB | 1 MiB | 1 MiB or more |
+| 8 GiB | 4 MiB | 2 MiB | 2 MiB or more |
+
+Humongous allocations bypass the young generation, fragment the region set and are reclaimed eagerly only when unreferenced at a young collection; at 500/s with several such objects per exchange they are the fastest route to a full collection. The default and the 256 KiB point are below every row; a debugging profile with a cap in the megabytes should either raise the region size (`-XX:G1HeapRegionSize`) or accept that it runs under a different collector regime. The 64 KiB hint ceiling keeps the hinted first allocation below the threshold everywhere; only the doubling to the cap and the renderings cross it.
+
+## 5. Recommendations
+
+1. **Keep the default cap of 16 KiB** for steady-state body logging at this rate; every figure in this assessment is comfortable there.
+2. **Treat caps of 256 KiB and above as debugging windows**, and size them against concurrency: retained memory is concurrency × 2 × cap, allocation is 500/s × 4 × cap, and from 512 KiB (2 GiB heap) the objects are humongous.
+3. **Prefer ON_FAILURE over ALWAYS** where the log volume allows: it halves the allocation at the default cap and removes the rendering from the hot path entirely.
+4. **Do not spend further effort on the render path.** The truncated ASCII rendering is within 7 % of the naive path in both time and bytes; the remaining non-ASCII allocation gap (39 % on truncated renderings only) would need a content check before the path choice and is worth doing only if GC metrics of a deployment logging truncated non-ASCII bodies show it.
+5. **Leave the hint ceiling at 64 KiB.** It is the change with the largest effect on the variable that matters (retained memory under adversarial declarations), and its cost falls only on configurations recommendation 2 already discourages.
