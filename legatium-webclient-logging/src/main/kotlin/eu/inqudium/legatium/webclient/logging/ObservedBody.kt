@@ -98,8 +98,9 @@ internal class ObservedBody(
         }
 
         override fun onNext(buffer: DataBuffer) {
-            // The tee is a passive copy and fail-open: a tee that throws costs the capture, never the
-            // buffer - the caller's original continues downstream untouched.
+            // The tee is a passive copy and fail-open: a tee that throws costs the logged text of this
+            // chunk (its bytes are counted before the copy), never the buffer - the caller's original
+            // continues downstream untouched.
             val observed =
                 if (capture == null) {
                     buffer

@@ -13,11 +13,13 @@ import java.nio.ByteBuffer
 import java.nio.file.Path
 
 /**
- * The reactive tee: every [DataBuffer] that flows is COUNTED in full, at most the capture's remaining
- * capacity is copied out of it (a non-advancing read - the read position stays untouched), and the
- * ORIGINAL buffer continues downstream unchanged - ownership, pooling and release semantics are exactly
- * those of an undecorated exchange (the reactive counterpart of the RestClient module's tee stream: a
- * passive copy, never a pre-read or replay). Transient allocation is bounded by
+ * The reactive tee: every [DataBuffer] that flows is COUNTED in full FIRST, then at most the capture's
+ * remaining capacity is copied out of it (a non-advancing read - the read position stays untouched),
+ * and the ORIGINAL buffer continues downstream unchanged - ownership, pooling and release semantics are
+ * exactly those of an undecorated exchange (the reactive counterpart of the RestClient module's tee
+ * stream: a passive copy, never a pre-read or replay). Counting cannot throw; the copy can (an exotic
+ * `DataBuffer`), and [ObservedBody] lets it - so the order makes a copy that throws cost the logged text
+ * of that chunk, never the size sample. Transient allocation is bounded by
  * [ClientLoggingProperties.maxBodyBytes], not by the buffer size, and count-only captures (limit 0)
  * copy nothing at all.
  */
@@ -26,14 +28,12 @@ internal fun tee(
     buffer: DataBuffer,
 ): DataBuffer {
     val length = buffer.readableByteCount()
+    capture.count(length)
     val wanted = minOf(length, capture.remainingCapacity())
     if (wanted > 0) {
         val prefix = ByteArray(wanted)
         buffer.toByteBuffer(buffer.readPosition(), ByteBuffer.wrap(prefix), 0, wanted)
-        capture.capture(prefix, 0, wanted)
-        capture.count(length - wanted)
-    } else {
-        capture.count(length)
+        capture.store(prefix, 0, wanted)
     }
     return buffer
 }
