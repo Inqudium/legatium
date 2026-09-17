@@ -42,9 +42,11 @@ The configuration that changes the picture is the cap. At **256 KiB** the same l
 | Aspect | `ByteArrayOutputStream` | `FastByteArrayOutputStream` |
 |---|---|---|
 | CPU, byte-wise reads | 3.4× to 7.3× | 1.9× to 2.1× |
-| Retained memory under a lying Content-Length, presized to the declaration | 256× | 256× |
+| Retained memory under a lying Content-Length, presized to the declaration (see note) | 256× | 256× |
 | Retained memory per exchange without a presize | 1.0× | up to 2× |
 | CPU and bytes, bulk reads | 1.0× | 1.0× |
+
+Note on the second row: the peer declares a Content-Length of at least the cap and sends one byte; the streams are presized to `min(declaration, cap)`, as the buffer was before its ceiling. The factor is therefore `cap / 64 KiB` and depends on the cap alone: **1.0× at the default cap of 16 KiB** (the ceiling does not bind below 64 KiB), 4× at 256 KiB, 256× at the 16 MiB cap of the example in section 4.1.
 
 **Whether that is proportionate.** Yes. This class sits on every exchange of every client the twins wrap, cannot choose the application's read shape, and takes the peer's Content-Length as input - the two properties the 200 lines address are exactly the two an attacker or a careless reader controls. The marginal part of the effort is the render-path work of PR #14 and PR #22 (about half of the added lines and 8 of the 20 tests), which bought about **1 µs and 2 KB per truncated body** - 0.05 % of a core at this load - and a rendering peak of 3N instead of 4N. That part would not have been justified by throughput; it is justified as the smaller peak and the correctness hardening that came with it (the `total` precondition, the range check, the `Long` doubling), and it should be the last change to this class for a while.
 
