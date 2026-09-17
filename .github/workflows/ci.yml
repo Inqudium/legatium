@@ -110,6 +110,30 @@ jobs:
         working-directory: consumer-smoke
         run: python3 ../.github/scripts/surefire-summary.py
 
+  # The standalone JMH module is deliberately no reactor child, so `mvn verify`
+  # never compiles it - a renamed or moved production type would silently
+  # break the BENCH_REPORT evidence trail. This smoke build pins the benchmarks
+  # to the current legatium-common API without pulling JMH measurements into
+  # the product build.
+  benchmarks-smoke:
+    name: Benchmarks compile smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: maven
+
+      - name: Install the module under test (tests already gated by the build job)
+        run: mvn --batch-mode --no-transfer-progress -DskipTests install
+
+      - name: Compile the standalone benchmarks against it
+        run: mvn --batch-mode --no-transfer-progress -f benchmarks/pom.xml -DskipTests package
+
   dependency-scan:
     name: Dependency vulnerability scan
     runs-on: ubuntu-latest
