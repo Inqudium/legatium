@@ -133,7 +133,8 @@ adapter-logging:
   # response is its one proof that the bytes went out. The response side additionally records the counter
   # `adapter.response.body.read` (tag `state` = unread | partial | complete): the tee mirrors what the
   # application CONSUMED, so this is the one signal that tells a body the peer sent but the application
-  # dropped from a body that was never sent.
+  # dropped from a body that was never sent. What each sample measures per direction and stack - and
+  # why the two twins' request samples must not be pooled - is the Common guide's section 7.8.
   # Cardinality precondition: the meters are tagged `uri` (the recorded URI template, kept only when it
   # carries a placeholder - `uri("/things/" + id)` folds to UNKNOWN) and `host` (the peer host as called,
   # NOT folded). A host that calls many peer hosts pays one tag set per host in its registry.

@@ -41,6 +41,7 @@ two disagree, the code wins.
    5. [Reading the meters together](#75-reading-the-meters-together)
    6. [Trace correlation](#76-trace-correlation)
    7. [Naming a client](#77-naming-a-client)
+   8. [What the body sizes measure](#78-what-the-body-sizes-measure)
 8. [Scope and guarantees](#8-scope-and-guarantees)
    1. [What the modules deliberately do not do](#81-what-the-modules-deliberately-do-not-do)
    2. [Fail-open contract](#82-fail-open-contract)
@@ -682,7 +683,7 @@ deliberately left to `http.client.requests` and the log fields.
 | `adapter.logging.exchanges.open` | gauge | `client` = `restclient` \| `webclient` | Exchanges between entry (wiring) and the exactly-once completion — response close, resp. the body's terminal signal. Hovers near the in-flight call count in health. Tagged per twin so that a host carrying both twins gets two gauges instead of Micrometer silently keeping the first one registered; sum over `client` for the total. |
 | `adapter.logging.correlation.id` | counter | `source` = `trace` \| `header` \| `generated` | Origin of each call's request id (ADR-0002). A re-entry by a retrying outer interceptor with the id generated on attempt 1 keeps counting `generated`. |
 | `adapter.response.body.read` | counter | `uri` = template with a placeholder, `UNKNOWN` otherwise; `host`; `name` = the client's name, `UNNAMED` otherwise ([§7.7](#77-naming-a-client)); `state` = `unread` \| `partial` \| `complete` | How far the application **consumed** the response body, opt-in via `measure-response-body-size`. Recorded once per call that received a response. `unread` = the response carried a body and the application never opened it — the discarded-payload share the counter exists to show (blocking stack: `toBodilessEntity()`, a `ResponseEntity<Void>`). `partial` = consumption started but the end of the body was never observed (a converter that stopped early, an exception mid-read, a consumer that stopped reading; on the reactive stack also Spring's body skip for `bodyToMono(Void.class)`). `complete` = the end was observed — or the answer carried no body at all (1xx, 204, 304, `Content-Length: 0`, the answer to a `HEAD`): nothing to consume, nothing discarded, counted `complete` on **both** stacks so a route of deletes does not read as discarded payload. On the blocking stack the end is observed either as the EOF or as the byte count reaching a trustworthy declared `Content-Length` (none with a `Content-Encoding`), because Spring's `ByteArrayHttpMessageConverter` reads exactly that many bytes and never asks for the EOF. The reactive stack's `toBodilessEntity()` **releases** the body — subscribes and drains it through the tee — and therefore counts `complete` with its bytes on the size sample; a body nobody subscribes to is never counted (the gauge shows it). The seam observes what flows, not why: read the `unread`/`partial` share per route, against how that route's client is written. Created lazily per tag set on first use. |
-| `adapter.request.body.size` / `adapter.response.body.size` | distribution summary, base unit `bytes` | `uri`, `host`, `name` | Bytes that **actually flowed**, opt-in via `measure-*-body-size`, independent of body logging and level. Exact beyond `max-body-bytes`. Zero-byte bodies record no sample. On the blocking stack the **request** sample is recorded only for an exchange that received a response: the interceptor copies the serialized body before the wire call and has no seam at the actual write, so a response is its one proof that the bytes went out (a refused connection or connect timeout records nothing; the reactive stack tees at the connector's write and needs no such rule). Created lazily per tag set on first use. |
+| `adapter.request.body.size` / `adapter.response.body.size` | distribution summary, base unit `bytes` | `uri`, `host`, `name` | Bytes that **actually flowed**, opt-in via `measure-*-body-size`, independent of body logging and level. Exact beyond `max-body-bytes`. What the number is per direction and stack, and what it can differ from, is [§7.8](#78-what-the-body-sizes-measure). Zero-byte bodies record no sample. On the blocking stack the **request** sample is recorded only for an exchange that received a response: the interceptor copies the serialized body before the wire call and has no seam at the actual write, so a response is its one proof that the bytes went out (a refused connection or connect timeout records nothing; the reactive stack tees at the connector's write and needs no such rule). Created lazily per tag set on first use. |
 
 **One instance per registry and stack.** Micrometer deduplicates meters by id, so a second metrics
 owner against the same registry would share the counters but not the gauge — the second gauge
@@ -808,6 +809,38 @@ host's vocabulary, and a per-call value there buys the cardinality it asks for.
 Where the name lands on each stack, and how to verify it, is each module guide's §3.5
 ([RestClient](../legatium-restclient-logging/docs/GUIDE.md#35-naming-a-client),
 [WebClient](../legatium-webclient-logging/docs/GUIDE.md#35-naming-a-client)).
+
+### 7.8 What the body sizes measure
+
+One definition for `adapter.request.body.size`, `adapter.response.body.size` and the `[truncated, N
+bytes total]` note of a logged body: **the number of body bytes that passed the module's seam for that
+direction, on that stack, between the entry of the exchange and its exactly-once completion** — exact
+beyond `max-body-bytes` (bytes beyond the limit are counted, not buffered), zero when nothing passed (no
+sample, no field), and the same count behind the note and the sample of one exchange. The seam differs
+per direction and stack, and so does what the number can differ from. A dashboard that pools the two
+twins or reads a request size as "what reached the peer" needs this table.
+
+| Direction, stack | The seam | The number is | A sample is recorded when | What it can differ from |
+|---|---|---|---|---|
+| Request, blocking (`RestClient`, `RestTemplate`) | The byte array the client hands the interceptor, **before** the wire call | The length of the serialized body — what the client was about to send | The exchange **received a response**; a refused connection, a connect timeout or a failure before the status records nothing | It can **exceed** what reached the peer: a server that answers before the upload finished (a `413`, a `401`, a redirect on a large `POST`) still records the whole body. A retrying outer interceptor records once per attempt. |
+| Request, reactive (`WebClient`) | The connector's write path — every `DataBuffer` the inserter writes through `writeWith` / `writeAndFlushWith`; a zero-copy file transfer (Reactor Netty's `sendfile`) counts its bytes when the transfer completes | The bytes handed to the connector until the exchange completed | **Every completed exchange**, with or without a response: a cancel or a connection failure before the status records what was written so far | It can **fall short** of the body: the captures freeze at emission, so a server that answers before the upload finished stops the count where the upload was, and a zero-copy transfer that completes after the emission, or fails midway, records nothing of it. |
+| Response, blocking | The tee stream around the engine's body stream — every `read` the application makes (`skip`, `readAllBytes`, `transferTo` and the converters all go through it) | The bytes the application **consumed**, each once: a replay after `mark`/`reset` is not counted twice | The exchange received a response, at its close, whatever the read state ([§7.4](#74-meters) `adapter.response.body.read`) — an unread body is zero bytes and records no sample | Consumption, not transmission: a body the application never opened or stopped reading is that much smaller than what the peer sent. Decoded bytes when the engine decompresses transparently (Apache HttpClient 5 does and strips `Content-Encoding`), wire bytes when it does not (the JDK `HttpClient`). |
+| Response, reactive | The tee on the body `Flux` — every `DataBuffer` delivered to the application's subscription, including a `releaseBody()` drain | The bytes the application received until the body's terminal signal or its cancel | At the body's terminal signal — complete, error or cancel. A body nobody subscribes to never completes and is never recorded (the open-exchanges gauge shows it) | Consumption, not transmission: bytes the connector received but the subscriber never requested are not counted, and a cancel stops the count at the last delivered buffer. Decoded bytes when the connector decompresses (Reactor Netty with `compress(true)`, which strips the headers), wire bytes otherwise. |
+
+**Comparing across the twins.** The two response summaries measure the same thing — consumption — and
+compare, up to the engine's decompression. The two request summaries do **not** pool: they bound the
+bytes sent from opposite sides (blocking from above, reactive from below, on an early response) and
+describe different populations (blocking only exchanges with a response, reactive every completed
+exchange). Read a request summary per twin, and read it as "handed to the client" resp. "handed to the
+connector", never as "received by the peer" — no seam of either stack observes that. The
+`adapter.response.body.read` counter, not the size, tells a body the peer sent but the application
+dropped from a body that was never sent ([§7.4](#74-meters)).
+
+**Why the seams differ.** The interceptor API of the blocking client hands over the serialized body and
+offers no hook at the write, so the response is its one proof that the bytes went out (`ClientHttpRequestInterceptor.intercept(request, body, execution)`);
+the reactive client wraps the body inserter and observes the connector's write itself. On the response
+side both clients decode the body *after* it flowed ([§6.3](#63-body-logging-and-body-measuring)), so
+both seams sit exactly where the application reads.
 
 ---
 
