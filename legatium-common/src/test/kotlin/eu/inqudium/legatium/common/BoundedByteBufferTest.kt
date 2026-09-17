@@ -283,6 +283,27 @@ class BoundedByteBufferTest {
             assertThat(full.render(StandardCharsets.UTF_8, 5)).isEqualTo("hello")
             assertThat(full.render(StandardCharsets.UTF_8, 7)).isEqualTo("hello... [truncated, 7 bytes total]")
         }
+
+        @Test
+        fun `should reject a total below the buffered size`() {
+            // What is tested: five buffered bytes rendered with a total of 3, of 0 and of -1.
+            // Success criteria: each call fails naming the total; the buffer stays renderable.
+            // Why it matters: a total below the size means the twin's count and the buffer disagree - a
+            //   silent render would log a partial body as complete (or hide it as null) and the emitter's
+            //   fail-open guard would never learn of the bug.
+            // Given
+            val buffer = BoundedByteBuffer(8)
+            buffer.write("hello")
+
+            // When/Then
+            listOf(3L, 0L, -1L).forEach { total ->
+                assertThat(catchThrowable { buffer.render(StandardCharsets.UTF_8, total) })
+                    .describedAs("total $total")
+                    .isInstanceOf(IllegalArgumentException::class.java)
+                    .hasMessageContaining("total")
+            }
+            assertThat(buffer.render(StandardCharsets.UTF_8, 5)).isEqualTo("hello")
+        }
     }
 
     @Nested

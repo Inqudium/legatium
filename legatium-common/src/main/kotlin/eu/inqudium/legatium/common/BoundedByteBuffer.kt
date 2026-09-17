@@ -113,14 +113,21 @@ internal class BoundedByteBuffer(
     }
 
     /**
-     * The buffered bytes decoded with [charset], suffixed with a truncation note when [total] - the
-     * bytes that flowed - exceeds what is buffered. Null for a body of zero bytes, so the emission can
-     * omit the key instead of logging an empty string.
+     * The buffered bytes decoded with [charset], suffixed with a truncation note when [total] exceeds
+     * what is buffered. Null for a body of zero bytes, so the emission can omit the key instead of
+     * logging an empty string.
+     *
+     * [total] is the twin's count of the bytes that flowed to the buffer's CURRENT position: every byte
+     * written here was counted there, bytes beyond the cap were only counted, and a stream reset rewinds
+     * the count together with [truncate], so a replay is neither counted nor buffered twice. The count
+     * is therefore never below [size]; a smaller one is a caller's inconsistency and is rejected rather
+     * than rendered as a complete body - or hidden as null - that it is not.
      */
     fun render(
         charset: Charset,
         total: Long,
     ): String? {
+        require(total >= size) { "total must not be below the $size buffered bytes, got: $total" }
         if (total == 0L) {
             return null
         }
