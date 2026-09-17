@@ -174,6 +174,82 @@ By submitting a contribution you agree that it is licensed under the
 [Developer Certificate of Origin](https://developercertificate.org/) — i.e. you have
 the right to submit the work under that license.
 
+## Releasing (maintainers)
+
+A release is one commit, one tag, one GitHub release and one Maven Central
+deployment - in that order, because the tag is what both the release workflow
+and the Central deployment build from. Versions follow semantic versioning: a
+cycle with `### Added` entries is a minor release, a cycle of `### Changed` and
+`### Fixed` entries only is a patch release, a migration note under `### Changed`
+makes it a major one.
+
+1. **Release commit** on a topic branch, merged by pull request like any change
+   (branch protection requires the `build` check; `gh pr merge --auto --merge`
+   merges it once green). It changes exactly:
+   - `pom.xml`: `<revision>` to the version, `<project.build.outputTimestamp>`
+     to the release date at midnight UTC (`YYYY-MM-DDT00:00:00Z`) - the
+     timestamp is what makes the jars reproducible, see the README;
+   - `consumer-smoke/pom.xml` and `benchmarks/pom.xml`: `<legatium.version>` to the version;
+   - `README.md`: a new first row in the compatibility table;
+   - `CHANGELOG.md`: a `## [1.1.0] - YYYY-MM-DD` heading directly under the
+     (then empty) `## [Unreleased]` heading, the `[Unreleased]:` link changed
+     to `compare/1.1.0...HEAD`, and a `[1.1.0]:` link to the release tag.
+   Commit message: `(chore) release 1.1.0`.
+2. **Tag and GitHub release.** On the merged `main`, tag the merge commit with
+   the bare version (no `v` prefix) and create the release with the changelog
+   section as its notes:
+
+   ```bash
+   git tag 1.1.0 && git push origin 1.1.0
+   gh release create 1.1.0 --title 1.1.0 --notes-file notes.md --verify-tag
+   ```
+
+   `notes.md` is the version's changelog section without its heading. Publishing
+   the release triggers `release.yml`: it builds the twins on the tag with
+   `-Drevision`, attaches the jars and the aggregate SBOM, generates SLSA
+   provenance (`multiple.intoto.jsonl`) and deploys to GitHub Packages.
+3. **Maven Central.** From a checkout of the tag, with the GPG key and the
+   `central` server (Central Portal user token) in `~/.m2/settings.xml`:
+
+   ```bash
+   mvn --batch-mode -Prelease -DskipTests -Djacoco.skip=true deploy
+   ```
+
+   The `release` profile attaches sources and the Dokka-rendered javadoc jar,
+   signs everything and uploads one bundle; `legatium-common` is skipped, the
+   twins carry it inlined. The plugin runs with `autoPublish=false`, so the
+   deployment stops at **VALIDATED** and prints its deployment id. Publish it
+   either in the Central Portal (Deployments, "Publish") or through the
+   portal API:
+
+   ```bash
+   TOKEN=$(printf '%s:%s' "$CENTRAL_USER" "$CENTRAL_PASSWORD" | base64 -w0)
+   curl -X POST -H "Authorization: Bearer $TOKEN" \
+     https://central.sonatype.com/api/v1/publisher/deployment/<deployment-id>
+   curl -X POST -H "Authorization: Bearer $TOKEN" \
+     "https://central.sonatype.com/api/v1/publisher/status?id=<deployment-id>"
+   ```
+
+   The status moves from `PUBLISHING` to `PUBLISHED` within minutes; the
+   artifacts appear on `repo1.maven.org` some minutes after that. Publishing is
+   irreversible - do the check of step 4 against the release assets first.
+4. **Verify the bytes.** The jars attached to the GitHub release, the jars the
+   deployment uploaded and, once synced, the jars on Central are the same bytes
+   (README, "Reproducible builds"):
+
+   ```bash
+   sha256sum legatium-restclient-logging/target/legatium-restclient-logging-1.1.0.jar legatium-webclient-logging/target/legatium-webclient-logging-1.1.0.jar
+   gh release download 1.1.0 --pattern '*.jar' --dir /tmp/assets && sha256sum /tmp/assets/*.jar
+   curl -sL https://repo1.maven.org/maven2/eu/inqudium/legatium-restclient-logging/1.1.0/legatium-restclient-logging-1.1.0.jar | sha256sum
+   ```
+
+   A mismatch means a build input differs from the tag (JDK below 24, a stale
+   `~/.m2` snapshot of `legatium-common`, a local change) - rebuild from a clean
+   checkout of the tag before publishing.
+5. **Next development version.** A follow-up pull request
+   `(chore) start 1.1.1-SNAPSHOT` sets `<revision>` and the version pins of
+   step 1 to the next patch `-SNAPSHOT`.
+
 ## Reporting bugs
 
 Please include:
