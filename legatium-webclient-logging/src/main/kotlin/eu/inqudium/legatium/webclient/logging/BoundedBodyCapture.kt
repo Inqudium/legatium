@@ -89,17 +89,20 @@ internal class BoundedBodyCapture(
     internal val expectedBytes: Long
         get() = lock.withLock { buffer.expectedBytes }
 
-    fun capture(
+    /**
+     * Buffers the prefix of a chunk that [count] has ALREADY counted - the tee counts a chunk in full
+     * before it copies, so a copy that throws costs the logged text of that chunk, never its size. Up to
+     * [remainingCapacity] bytes are kept; a no-op once frozen.
+     */
+    fun store(
         bytes: ByteArray,
         offset: Int,
         length: Int,
     ) {
         lock.withLock {
-            if (frozen) {
-                return
+            if (!frozen) {
+                buffer.write(bytes, offset, length)
             }
-            buffer.write(bytes, offset, length)
-            total += length
         }
     }
 
@@ -111,8 +114,8 @@ internal class BoundedBodyCapture(
     fun remainingCapacity(): Int = lock.withLock { if (frozen) 0 else buffer.remaining }
 
     /**
-     * Counts [length] bytes that flowed WITHOUT buffering them: the reactive tee's path for everything
-     * beyond [remainingCapacity], and its whole path in count-only mode.
+     * Counts [length] bytes that flowed: the reactive tee's FIRST call per chunk, for the whole chunk,
+     * before it copies the prefix [store] keeps. Counting cannot throw, the copy can.
      */
     fun count(length: Int) = count(length.toLong())
 
@@ -125,7 +128,7 @@ internal class BoundedBodyCapture(
         }
 
     /**
-     * Makes the capture immutable: the emission's first step. Every later [capture]/[count] is a no-op,
+     * Makes the capture immutable: the emission's first step. Every later [store]/[count] is a no-op,
      * so a body chunk still flowing through the tee after cancellation can neither corrupt the logged
      * text nor make the size sample disagree with it. Idempotent.
      */

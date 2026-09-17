@@ -21,6 +21,16 @@ import java.nio.charset.StandardCharsets
 class BoundedBodyCaptureTest {
     private fun bytes(text: String) = text.toByteArray(StandardCharsets.UTF_8)
 
+    /** What the tee does with a chunk, in the tee's order: counted in full, then the prefix stored. */
+    private fun BoundedBodyCapture.capture(
+        bytes: ByteArray,
+        offset: Int,
+        length: Int,
+    ) {
+        count(length)
+        store(bytes, offset, length)
+    }
+
     @Nested
     inner class `Limit` {
         @Test

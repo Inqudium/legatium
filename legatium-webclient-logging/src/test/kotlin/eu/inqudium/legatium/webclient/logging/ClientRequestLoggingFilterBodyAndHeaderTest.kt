@@ -396,10 +396,12 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             // What is tested: the fail-open path around the tee in ObservedBody.onNext - a DataBuffer
             //   whose non-advancing read throws while the capture copies its prefix.
             // Success criteria: the application still receives the full body, the exchange logs as a
-            //   success without a response-body field (nothing was captured), and the fail-open
-            //   counter shows stage=wiring at 1.
-            // Why it matters: the tee is a passive copy; a failure in it may cost the log field, never
-            //   the buffer the application is about to read - and it must be counted, not swallowed.
+            //   success whose response-body field is the bare truncation note for the 7 bytes that
+            //   flowed (counted before the copy that broke - the text is lost, the size is not), and
+            //   the fail-open counter shows stage=wiring at 1.
+            // Why it matters: the tee is a passive copy; a failure in it may cost the logged text, never
+            //   the size sample nor the buffer the application is about to read - and it must be
+            //   counted, not swallowed.
             // Given: a measuring, body-logging filter and a buffer that breaks under the tee's copy
             val registry = SimpleMeterRegistry()
             val filter = filterWith(base.copy(logResponseBody = BodyLogMode.ALWAYS), ticker, registry)
@@ -420,7 +422,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             // Then
             assertThat(body).isEqualTo("payload")
             val event = log.events.single()
-            assertThat(keyValues(event)).containsEntry("adapter_outcome", "success").doesNotContainKey("adapter_response_body")
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "success").containsEntry("adapter_response_body", "... [truncated, 7 bytes total]")
             assertThat(
                 registry
                     .get(ClientLoggingMetrics.FAIL_OPEN_METER)
