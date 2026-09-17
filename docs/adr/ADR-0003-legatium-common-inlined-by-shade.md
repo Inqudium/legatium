@@ -51,7 +51,7 @@ every move is recorded in [History](#history).
 | `NanoTimeSource`, `CorrelationIdGenerator` (with the counting default, ADR-0004), `reportQuietly`/`failOpen`   | 2026-09-03 | original extraction                                                     |
 | `Mdc.kt` (`MdcKeys`/`TraceMdcKeys`/`MdcScope`)                                                                 | 2026-09-03 | original extraction                                                     |
 | `HeaderLogProperties` (selection semantics, with unit test and fuzz target), `HeaderValueMasker`               | 2026-09-03 | original extraction; see ADR-0005                                       |
-| `BodyReadState`/`decodeTruncated`, `Timeouts` (one `adapter_outcome=timeout` on both stacks)                   | 2026-09-03 | original extraction                                                     |
+| `BodyReadState` (`decodeTruncated` moved beneath `BoundedByteBuffer` on 2026-09-17), `Timeouts` (one `adapter_outcome=timeout` on both stacks) | 2026-09-03 | original extraction                                                     |
 | `ClientLogField` with its builder extensions; `ClientLogFieldTest` binds the ELK component template here       | 2026-09-03 | first amendment                                                         |
 | `ClientLoggingProperties` (the `adapter-logging.*` binding) with its unit and reference-config tests            | 2026-09-03 | second amendment                                                        |
 | `CorrelationHeader` (the acceptance rule of ADR-0002)                                                          | 2026-09-04 | `CODE_ANALYSIS-2026-09-04T20-56-15.md`, finding 13                      |
@@ -269,4 +269,6 @@ of both jars.
   the declared `Content-Length`. `BoundedByteBuffer` moved to
   `legatium-common` with its unit test and fuzz target; each twin keeps
   its count, read state and locking, and the truncation-boundary tests
-  stay in the twins as tests of the twin API.
+  stay in the twins as tests of the twin API. `decodeTruncated`, whose
+  only caller is now the buffer's rendering, became private to the
+  buffer's file.
