@@ -104,7 +104,7 @@ internal class BoundedByteBuffer(
             return current
         }
         val hint = if (expected > 0) minOf(expected, maxBytes.toLong(), MAX_HINTED_CAPACITY.toLong()).toInt() else MIN_CAPACITY
-        val grown = ByteArray(minOf(maxBytes, maxOf(needed, hint, (current?.size ?: 0) * 2)))
+        val grown = ByteArray(grownLength(maxBytes, current?.size ?: 0, needed, hint))
         if (current != null) {
             System.arraycopy(current, 0, grown, 0, size)
         }
@@ -198,6 +198,19 @@ internal class BoundedByteBuffer(
          * doublings from here (a copy of about the cap in total), a lying declaration at most this much.
          */
         internal const val MAX_HINTED_CAPACITY = 64 * 1024
+
+        /**
+         * The length of the next array: the need, the hint or the doubled current length, whichever is
+         * largest, clipped to the cap. Doubled in `Long`: from 1 GiB an `Int` doubling turns negative,
+         * and the growth would fall back to the exact need - an allocation and a copy per byte.
+         * Exposed for the tests, which cannot allocate that array.
+         */
+        internal fun grownLength(
+            maxBytes: Int,
+            current: Int,
+            needed: Int,
+            hint: Int,
+        ): Int = minOf(maxBytes.toLong(), maxOf(needed.toLong(), hint.toLong(), current.toLong() * 2)).toInt()
 
         /** The scratch `CharBuffer` [renderTruncated] decodes through - 2 KiB, whatever the cap. Exposed for the tests. */
         internal const val SCRATCH_CHARS = 1024

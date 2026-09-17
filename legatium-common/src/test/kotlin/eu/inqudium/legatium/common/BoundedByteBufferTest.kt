@@ -86,6 +86,23 @@ class BoundedByteBufferTest {
         }
 
         @Test
+        fun `should keep doubling past 1 GiB instead of growing by the need`() {
+            // What is tested: the growth arithmetic alone (the array itself would need a 2 GiB heap):
+            //   a current length of 1 GiB, a need of one byte more, no hint, a cap of Int.MAX_VALUE.
+            // Success criteria: the next length is the cap - the doubling clipped - not the need.
+            // Why it matters: an Int doubling of 1 GiB is negative; maxOf would then pick the need,
+            //   and every further byte would allocate and copy the whole array.
+            // Given
+            val current = 1 shl 30
+
+            // When
+            val next = BoundedByteBuffer.grownLength(Int.MAX_VALUE, current, current + 1, 0)
+
+            // Then
+            assertThat(next).isEqualTo(Int.MAX_VALUE)
+        }
+
+        @Test
         fun `should buffer nothing in count-only mode and reject a negative cap`() {
             // What is tested: cap 0 - the measure-only mode - never has room; below 0 is no mode.
             // Success criteria: size stays 0 after writes, remaining is 0, rendering 5 flowed bytes is
