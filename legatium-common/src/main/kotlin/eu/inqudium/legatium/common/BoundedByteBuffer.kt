@@ -116,20 +116,17 @@ internal class BoundedByteBuffer(
     }
 
     /**
-     * The buffered PREFIX decoded and followed by the truncation note, as ONE string. The capture limit
-     * bounds bytes, not characters, so the cut can fall inside a multi-byte sequence; decoded as a whole,
-     * that incomplete tail would render as a replacement character and corrupt the logged prefix.
-     * Decoding with `endOfInput = false` leaves an incomplete trailing sequence undecoded (underflow)
-     * instead of reporting it as malformed; malformed bytes INSIDE the prefix are still replaced, as
-     * `String(bytes, charset)` would.
+     * Decodes the buffered prefix ONCE, through a small scratch buffer, and appends the truncation note
+     * to the same `StringBuilder`. The capture limit bounds bytes, not characters, so the cut can fall
+     * inside a multi-byte sequence: decoding with `endOfInput = false` leaves an incomplete trailing
+     * sequence undecoded instead of rendering it as a replacement character, while malformed or
+     * unmappable sequences INSIDE the prefix are replaced, as `String(bytes, charset)` would. The decoder
+     * is deliberately not finalized or flushed.
      *
-     * Decoded through a small scratch `CharBuffer` into a `StringBuilder` rather than into a `CharBuffer`
-     * sized by the cap: the builder stores Latin1 text in one byte per char, so the transient footprint
-     * is the buffered bytes plus the builder plus the final string, not the buffered bytes plus a char
-     * array of twice their size plus the string. The builder is sized once by `size + note.length` - an
-     * upper bound for every charset whose `maxCharsPerByte` is 1 (all the HTTP ones); a decoder that
-     * expands further only grows it. The note is appended behind the decoded characters, so the one copy
-     * of the text is the builder's `toString()`.
+     * The builder reserves one char per buffered byte plus the note. This avoids capacity growth for
+     * decoders with `maxCharsPerByte <= 1` (every HTTP charset); larger output is accommodated by the
+     * builder's normal growth. Stored compactly, the transient footprint is the buffered bytes plus the
+     * builder plus the result, not a char array of twice the buffered bytes plus the result.
      */
     private fun renderTruncated(
         charset: Charset,
@@ -147,21 +144,22 @@ internal class BoundedByteBuffer(
                 .onMalformedInput(CodingErrorAction.REPLACE)
                 .onUnmappableCharacter(CodingErrorAction.REPLACE)
         val input = ByteBuffer.wrap(buffered, 0, length)
-        // At least two chars: a supplementary character decodes to a surrogate pair in one step.
+        // A UTF-16 surrogate pair requires two output slots.
         var scratch = CharBuffer.allocate(minOf(SCRATCH_CHARS, maxOf(2, length)))
         val output = StringBuilder(Math.addExact(length, note.length))
         while (true) {
             val inputBefore = input.position()
             val result = decoder.decode(input, scratch, false)
             val produced = scratch.position()
-            // With REPLACE on both actions a conforming decoder never reports an error.
-            check(!result.isError) { "decoder returned $result despite REPLACE" }
+            // With both actions set to REPLACE, an error violates the contract.
+            check(!result.isError) { "Decoder returned $result despite REPLACE" }
             output.append(scratch.array(), scratch.arrayOffset(), produced)
             if (result.isUnderflow) {
                 break
             }
-            // OVERFLOW without progress: the EMPTY scratch is too small for the decoder's next step
-            // (no JDK decoder needs more than a surrogate pair, but the contract allows it). Retry larger.
+            // OVERFLOW without progress: the empty output buffer cannot accommodate the next decoding
+            // step (no JDK decoder needs more than a surrogate pair, but the contract allows it).
+            // Retry with more space.
             if (input.position() == inputBefore && produced == 0) {
                 scratch = CharBuffer.allocate(Math.multiplyExact(scratch.capacity(), 2))
             } else {

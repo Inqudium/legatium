@@ -4,6 +4,12 @@ import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import java.nio.ByteBuffer
+import java.nio.CharBuffer
+import java.nio.charset.Charset
+import java.nio.charset.CharsetDecoder
+import java.nio.charset.CharsetEncoder
+import java.nio.charset.CoderResult
 import java.nio.charset.StandardCharsets
 
 /**
@@ -203,5 +209,83 @@ class BoundedByteBufferTest {
             val total = bytes(head).size + 10L
             assertThat(buffer.render(StandardCharsets.UTF_8, total)).isEqualTo(head + "... [truncated, $total bytes total]")
         }
+
+        @Test
+        fun `should leave a UTF-16 high surrogate without its low surrogate out`() {
+            // What is tested: a UTF-16BE body "a😀b" cut after four bytes - the "a" and the high
+            //   surrogate of the emoji.
+            // Success criteria: the text is "a" and the note; the lone high surrogate is left out.
+            // Why it matters: the boundary case of the charsets whose code units are not bytes - a
+            //   decoder finishing with endOfInput = true would render the pending surrogate as a
+            //   replacement character.
+            // Given
+            val body = "a😀b".toByteArray(StandardCharsets.UTF_16BE)
+            val buffer = BoundedByteBuffer(4)
+
+            // When
+            buffer.write(body, 0, body.size)
+
+            // Then
+            assertThat(buffer.render(StandardCharsets.UTF_16BE, body.size.toLong())).isEqualTo("a... [truncated, ${body.size} bytes total]")
+        }
+
+        @Test
+        fun `should replace malformed bytes inside the prefix`() {
+            // What is tested: "ab", a byte that is no UTF-8 at all, "cd", and one flowed byte beyond.
+            // Success criteria: the malformed byte renders as U+FFFD; the text around it is intact.
+            // Why it matters: only an INCOMPLETE sequence at the cut is left out - a malformed byte in
+            //   the middle must show as such, as String(bytes, charset) would render it.
+            // Given
+            val body = byteArrayOf('a'.code.toByte(), 'b'.code.toByte(), 0xFF.toByte(), 'c'.code.toByte(), 'd'.code.toByte())
+            val buffer = BoundedByteBuffer(body.size)
+
+            // When
+            buffer.write(body, 0, body.size)
+
+            // Then
+            assertThat(buffer.render(StandardCharsets.UTF_8, body.size + 1L)).isEqualTo("ab\uFFFDcd... [truncated, 6 bytes total]")
+        }
+
+        @Test
+        fun `should grow the scratch for a decoder that needs more room than a surrogate pair`() {
+            // What is tested: a charset whose decoder turns every byte into three chars and refuses a
+            //   step with less room - two bytes buffered, so the scratch starts at two chars.
+            // Success criteria: the text is "abcabc" and the note.
+            // Why it matters: the first step overflows WITHOUT progress and the scratch must double
+            //   (to four); the second step overflows WITH progress and the scratch must be cleared, not
+            //   grown - a loop that mistook either case would spin or allocate without bound.
+            // Given
+            val buffer = BoundedByteBuffer(2)
+
+            // When
+            buffer.write("xy")
+
+            // Then
+            assertThat(buffer.render(TripletCharset, 3)).isEqualTo("abcabc... [truncated, 3 bytes total]")
+        }
+    }
+
+    /** Every byte decodes to "abc" in one step; the decoder refuses a step with fewer than three slots. */
+    private object TripletCharset : Charset("x-legatium-triplet", null) {
+        override fun contains(cs: Charset): Boolean = cs === this
+
+        override fun newEncoder(): CharsetEncoder = throw UnsupportedOperationException("decode only")
+
+        override fun newDecoder(): CharsetDecoder =
+            object : CharsetDecoder(this, 3f, 3f) {
+                override fun decodeLoop(
+                    input: ByteBuffer,
+                    output: CharBuffer,
+                ): CoderResult {
+                    while (input.hasRemaining()) {
+                        if (output.remaining() < 3) {
+                            return CoderResult.OVERFLOW
+                        }
+                        input.get()
+                        output.put("abc")
+                    }
+                    return CoderResult.UNDERFLOW
+                }
+            }
     }
 }
