@@ -105,6 +105,35 @@ class BoundedByteBufferTest {
     }
 
     @Nested
+    inner class `Range check` {
+        @Test
+        fun `should reject a range outside the source before clipping, allocating or spending the hint`() {
+            // What is tested: a length beyond the array against a 1-byte cap, which the clip alone
+            //   would have accepted; a negative length; an offset beyond the array against a FULL
+            //   buffer, where a clip to zero would have ignored it.
+            // Success criteria: each call throws IndexOutOfBoundsException; nothing is buffered and
+            //   nothing allocated after the first; a hint given afterwards still sizes the array.
+            // Why it matters: whether a caller's bug surfaced depended on the fill level, and a failed
+            //   copy could already have allocated the array and silenced every later hint.
+            // Given
+            val buffer = BoundedByteBuffer(1)
+            val src = byteArrayOf(65, 66, 67)
+
+            // When/Then
+            assertThat(catchThrowable { buffer.write(src, 0, 100) }).isInstanceOf(IndexOutOfBoundsException::class.java)
+            assertThat(catchThrowable { buffer.write(src, 0, -1) }).isInstanceOf(IndexOutOfBoundsException::class.java)
+            assertThat(buffer.size).isZero()
+            assertThat(buffer.capacity).isZero()
+            buffer.expect(1)
+            buffer.write(src, 2, 1)
+            assertThat(buffer.capacity).isEqualTo(1)
+            assertThat(buffer.remaining).isZero()
+            assertThat(catchThrowable { buffer.write(src, 3, 1) }).isInstanceOf(IndexOutOfBoundsException::class.java)
+            assertThat(buffer.render(StandardCharsets.UTF_8, 1)).isEqualTo("C")
+        }
+    }
+
+    @Nested
     inner class `Sizing hint` {
         @Test
         fun `should take the hint only before the first buffered byte`() {

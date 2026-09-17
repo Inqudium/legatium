@@ -4,6 +4,7 @@ import java.nio.ByteBuffer
 import java.nio.CharBuffer
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
+import java.util.Objects
 
 /**
  * The byte-bounded buffer beneath both twins' `BoundedBodyCapture` (ADR-0003): keeps the first [maxBytes]
@@ -60,12 +61,17 @@ internal class BoundedByteBuffer(
         }
     }
 
-    /** Buffers the first `min(length, remaining)` bytes of the range. */
+    /**
+     * Buffers the first `min(length, remaining)` bytes of the range. The range must lie within [src]
+     * whatever the room left: a caller's bug is reported BEFORE the clip, so it cannot hide behind a
+     * full buffer, and before [room], so it neither allocates nor spends the sizing hint.
+     */
     fun write(
         src: ByteArray,
         offset: Int,
         length: Int,
     ) {
+        Objects.checkFromIndexSize(offset, length, src.size)
         val n = minOf(length, remaining)
         if (n > 0) {
             System.arraycopy(src, offset, room(n), size, n)
