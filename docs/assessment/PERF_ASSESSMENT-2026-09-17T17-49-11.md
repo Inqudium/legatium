@@ -39,6 +39,13 @@ The configuration that changes the picture is the cap. At **256 KiB** the same l
 
 **What the extra effort buys, measured, as factors relative to the buffer (1.0×).** On byte-wise reads the `ByteArrayOutputStream` subclass would cost **3.4× to 7.3×** the buffer's CPU (presized and default; the inherited monitor on every `write(int)`, which a subclass cannot shed) and `FastByteArrayOutputStream` **1.9× to 2.1×** (section 5.1) - at 500 calls/s the difference between 2.3 % of a core and 7.7-14 %. On retained memory under adversarial Content-Length declarations, both streams presized to the declaration would hold **256×** what the buffer holds (16 GiB against 64 MiB for 500 in-flight exchanges under a 16 MiB cap, section 4.1), because neither clamps a declared length and the subclass would have to add the buffer's ceiling by hand; `FastByteArrayOutputStream` without a presize additionally retains **up to 2×** the buffer's bytes per exchange (its blocks are the data, section 5.3). On bulk reads, the common shape, all three are **1.0×** within 10 % in time and equal in bytes: there the 200 lines buy nothing measurable. Lazy allocation for measure-only mode and the range and `total` checks are behaviour, not factors.
 
+| Aspect | `ByteArrayOutputStream` | `FastByteArrayOutputStream` |
+|---|---|---|
+| CPU, byte-wise reads | 3.4× to 7.3× | 1.9× to 2.1× |
+| Retained memory under a lying Content-Length, presized to the declaration | 256× | 256× |
+| Retained memory per exchange without a presize | 1.0× | up to 2× |
+| CPU and bytes, bulk reads | 1.0× | 1.0× |
+
 **Whether that is proportionate.** Yes. This class sits on every exchange of every client the twins wrap, cannot choose the application's read shape, and takes the peer's Content-Length as input - the two properties the 200 lines address are exactly the two an attacker or a careless reader controls. The marginal part of the effort is the render-path work of PR #14 and PR #22 (about half of the added lines and 8 of the 20 tests), which bought about **1 µs and 2 KB per truncated body** - 0.05 % of a core at this load - and a rendering peak of 3N instead of 4N. That part would not have been justified by throughput; it is justified as the smaller peak and the correctness hardening that came with it (the `total` precondition, the range check, the `Long` doubling), and it should be the last change to this class for a while.
 
 ### 1.5 The stream candidates
