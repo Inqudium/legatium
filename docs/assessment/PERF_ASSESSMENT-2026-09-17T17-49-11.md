@@ -21,7 +21,25 @@
 
 ## 1. Executive summary
 
-At the shipped default (16 KiB cap) the buffer is **invisible at 500 calls/s**: about 2.6 µs of CPU and 66 KB of allocation per exchange with both bodies captured and rendered, which is **0.13 % of one core and 33 MB/s** of young-generation allocation - a G1 young collection every half a minute on a 2 GiB heap - and **at most 16 MiB retained** by 500 in-flight exchanges. Truncation, missing Content-Length and non-ASCII text each add tens of percent to that, never a multiple. The configuration that changes the picture is the cap: at **256 KiB** the same load costs 4.6 % of a core and **1 GB/s** of allocation with **256 MiB retained**, and from **512 KiB** upwards every buffer and every rendered string becomes a G1 humongous object on a 2 GiB heap. The **64 KiB hint ceiling** (PR #14) is the one change with a large, measurable effect in this model: without it, 500 in-flight exchanges against a 16 MiB cap could be made to retain **16 GiB** by peers declaring a large Content-Length and sending one byte; with it, **64 MiB**. Against that, the render-path work of PR #14 and PR #22 bought about **1 µs and 2 KB per truncated body** - real, measured, and worth about 0.05 % of a core at this load; its value is the smaller peak (3N instead of 4N per rendering) and the correctness hardening that came with it, not throughput. The two candidates the buffer was measured against are not alternatives at this load, for different reasons (section 5): `ByteArrayOutputStream` matches the buffer byte for byte in memory and within 10 % in bulk time, but its `synchronized` writes cost 6-11× the CPU on byte-wise reads (14 % of a core at 500/s for the read-loop shape, against 2.3 %), and it has no cap, no cut-back and no boundary-aware truncation - a subclass could add the first two and would inherit the lock. `FastByteArrayOutputStream` is unsynchronized and as fast as the buffer in bulk and 1.7× slower byte-wise, but it retains up to 2× the cap per in-flight exchange without a presize (its blocks are the data), coalesces them into a fresh array before every `toString`, and offers no way to cut back to a mark - the blocking twin's `reset` cannot be built on it. The byte-array design (ADR-0003) is thus confirmed by measurement, not only by the feature list.
+### 1.1 The buffer at 500 calls per second
+
+At the shipped default (16 KiB cap) the buffer is **invisible**: about 2.6 µs of CPU and 66 KB of allocation per exchange with both bodies captured and rendered, which is **0.13 % of one core and 33 MB/s** of young-generation allocation - a G1 young collection every half a minute on a 2 GiB heap. Truncation, a missing Content-Length and non-ASCII text each add tens of percent to that, never a multiple. The read shape of the application matters more than any option of the buffer: a byte-wise `InputStream.read()` loop costs 2.3 % of a core where bulk reads cost 0.13 %.
+
+### 1.2 The cap is the lever
+
+The configuration that changes the picture is the cap. At **256 KiB** the same load costs 4.6 % of a core and **1 GB/s** of allocation - a young collection every second or two, with 256 MiB of live buffers overflowing the survivor space - and from **512 KiB** upwards every buffer and every rendered string becomes a G1 humongous object on a 2 GiB heap. Caps of that size are debugging windows, not steady state.
+
+### 1.3 Memory peaks
+
+500 in-flight exchanges retain **at most 16 MiB** at the default cap and **256 MiB** at 256 KiB; the transient peak of the renderings stays below 30 MiB at any realistic thread count. The **64 KiB hint ceiling** (PR #14) is the one change with a large, measurable effect on this variable: without it, 500 in-flight exchanges against a 16 MiB cap could be made to retain **16 GiB** by peers declaring a large Content-Length and sending one byte; with it, **64 MiB**.
+
+### 1.4 Code effort against result
+
+The render-path work of PR #14 and PR #22 bought about **1 µs and 2 KB per truncated body** - real, measured, and worth about 0.05 % of a core at this load; its value is the smaller peak (3N instead of 4N per rendering) and the correctness hardening that came with it, not throughput. The hint ceiling has the best effort-to-result ratio of the set (ten lines); the class itself, 270 lines against a stream subclass of about 70, is paid for by the byte-wise path alone.
+
+### 1.5 The stream candidates
+
+Neither candidate is an alternative at this load, for different reasons (section 5). `ByteArrayOutputStream` matches the buffer byte for byte in memory and within 10 % in bulk time, but its `synchronized` writes cost 6-11× the CPU on byte-wise reads (14 % of a core at 500/s for the read-loop shape, against 2.3 %), and it has no cap, no cut-back and no boundary-aware truncation - a subclass could add the first two and would inherit the lock. `FastByteArrayOutputStream` is unsynchronized and as fast as the buffer in bulk and 1.7× slower byte-wise, but it retains up to 2× the cap per in-flight exchange without a presize (its blocks are the data), coalesces them into a fresh array before every `toString`, and offers no way to cut back to a mark - the blocking twin's `reset` cannot be built on it. The byte-array design (ADR-0003) is thus confirmed by measurement, not only by the feature list.
 
 ## 2. Five hundred client calls per second
 
