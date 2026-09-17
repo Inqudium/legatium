@@ -40,7 +40,7 @@
         <java.version>21</java.version>
         <!-- The reactor's `revision` for a local run; CI overrides it with -Dlegatium.version derived
              from the root POM, so the two cannot drift there. -->
-        <legatium.version>1.1.0</legatium.version>
+        <legatium.version>1.1.1-SNAPSHOT</legatium.version>
     </properties>
 
     <dependencies>
