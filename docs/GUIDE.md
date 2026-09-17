@@ -905,7 +905,7 @@ near-identical code.
 | `Timeouts` | The cause-chain walk that classifies a failure as a `timeout` ([§7.3](#73-levels-and-outcomes)): the JDK's timeout types matched as types, Netty's by fully qualified name, so neither twin needs a Netty dependency. |
 | `CorrelationHeader` | The acceptance rule for a correlation header found on a traceless request (ADR-0002, [§6.1](#61-property-reference)). |
 | `NanoTimeSource` / `CorrelationIdGenerator` / `HeaderValueMasker` | The injectable collaborators ([§3](#3-overriding-beans)); `SYSTEM`, `DEFAULT` and `forKey` are the production defaults. |
-| `BodyReadState` / `decodeTruncated` | The response-side read state behind `adapter.response.body.read`, and the byte-bounded decoding of a captured body in its declared charset ([§6.3](#63-body-logging-and-body-measuring)). |
+| `BodyReadState` / `BoundedByteBuffer` | The response-side read state behind `adapter.response.body.read`, and the cap-bounded buffer beneath both captures with the byte-bounded decoding of a captured body in its declared charset ([§6.3](#63-body-logging-and-body-measuring)). |
 | `reportQuietly` / `failOpen` | Guard the diagnostics channel (counter + internal log) of every catch block ([§8.2](#82-fail-open-contract)). |
 
 ### 9.2 The twin contract and its lockstep tests
