@@ -161,6 +161,46 @@ Because the interceptor is its own bean, a host can replace it while keeping the
 ([Common guide §3](../../docs/GUIDE.md#3-overriding-beans)). Boot's `spring-boot-restclient` module is an **optional** dependency:
 without it the interceptor bean still exists and the host attaches it by hand ([§3.2](#32-manual-wiring)).
 
+**Observing the wiring.** At DEBUG on the logger
+`eu.inqudium.legatium.restclient.logging.ClientLoggingAutoConfiguration` the auto-configuration reports
+what it did — the answer to "is the module on, and did it configure my client?" from the host's own log:
+
+```
+Adapter logging is enabled - the auto-configuration is active (adapter-logging.enabled is not false)
+Adapter logging registered its ClientRequestLoggingInterceptor bean with ClientLoggingProperties(enabled=true, loggerName=adapter-http-exchange, …, maskingKey=<redacted>)
+Adapter logging registered its RestClientCustomizer - the interceptor is attached to every RestClient.Builder Boot hands out
+Adapter logging registered its RestTemplateCustomizer - the interceptor is attached to every RestTemplate built through RestTemplateBuilder
+Adapter logging attached its interceptor to a RestClient.Builder behind 0 earlier interceptor(s)
+```
+
+The first three kinds appear once at context start (the bean line only when the bean is the module's
+own, not a host's — [Common guide §3](../../docs/GUIDE.md#3-overriding-beans)); the attach line appears
+once per `RestClient.Builder` Boot hands out and per `RestTemplate` built through `RestTemplateBuilder`,
+and its count of earlier interceptors is the position the customizer order gave the module
+([§3.3](#33-interceptor-order-and-other-interceptors)). With `adapter-logging.enabled=false` none of
+them appears; Boot's condition evaluation report (DEBUG on `org.springframework.boot.autoconfigure`)
+then names the property as the reason. Enable it with
+`logging.level.eu.inqudium.legatium.restclient.logging.ClientLoggingAutoConfiguration=DEBUG`, or
+`logging.level.eu.inqudium.legatium=DEBUG` for both twins at once.
+
+At **TRACE** the bean line is followed by where every `adapter-logging.*` value came from — Boot's
+origin of each value it bound, one line per key, then every value of the same name a lower-precedence
+source also holds, marked as shadowed. The masking key is rendered redacted whatever its source; keys
+no source sets are the class defaults and are not listed:
+
+```
+Adapter logging property adapter-logging.exclude-hosts[0] = pushgateway (origin: class path resource [application.yml] - 20:7)
+Adapter logging property adapter-logging.logger-name = outbound (origin: class path resource [application-prod.yml] - 3:16)
+Adapter logging property adapter-logging.logger-name = adapter-http-exchange (origin: class path resource [application.yml] - 12:16) is shadowed by class path resource [application-prod.yml] - 3:16
+Adapter logging property adapter-logging.masking-key = <redacted> (origin: System Environment Property "ADAPTER_LOGGING_MASKING_KEY")
+```
+
+With no `adapter-logging.*` key anywhere the report is one line saying so. The same information, per
+property source, is what the actuator's `env` endpoint shows for a key
+(`/actuator/env/adapter-logging.logger-name`); the TRACE lines put it into the startup log of a host
+without the actuator. The rendering lives once in `legatium-common`
+([Common guide §9.1](../../docs/GUIDE.md#91-the-shared-classes)).
+
 ### 2.3 Lifecycle of one exchange
 
 ```
@@ -536,6 +576,16 @@ with the WebClient twin. If the host needs a different position, it attaches the
 ([§3.2](#32-manual-wiring)).
 
 ### 3.4 Verifying the integration
+
+0. Before the first call, start the application with
+   `logging.level.eu.inqudium.legatium.restclient.logging.ClientLoggingAutoConfiguration=DEBUG` and
+   expect the wiring report of [§2.2](#22-auto-configuration-and-registration): the "enabled" line, the
+   bean line with the bound properties, both customizer lines — and, as soon as the host's first client
+   is built, `Adapter logging attached its interceptor to a RestClient.Builder behind N earlier
+   interceptor(s)`. No attach line for a client means Boot never handed that client a customized
+   builder: it was built by hand ([§3.2](#32-manual-wiring)). At TRACE instead of DEBUG the report also
+   names the file, line or environment variable each `adapter-logging.*` value came from, and which
+   values were shadowed.
 
 1. Make any call through a Boot-built `RestClient`:
 

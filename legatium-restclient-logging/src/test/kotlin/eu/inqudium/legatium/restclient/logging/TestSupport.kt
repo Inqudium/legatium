@@ -97,6 +97,8 @@ internal class PinnedMdcAppender : AppenderBase<ILoggingEvent>() {
 /** A list appender attached to [loggerName] at INFO, detached - and the previous level restored - by [detach]. */
 internal class CapturedLogger(
     loggerName: String,
+    /** The level the logger is raised to while captured - INFO for the exchange lines, DEBUG for the wiring report. */
+    level: Level = Level.INFO,
 ) {
     val logger: Logger = LoggerFactory.getLogger(loggerName) as Logger
     val appender: ListAppender<ILoggingEvent> = ListAppender<ILoggingEvent>().apply { start() }
@@ -108,7 +110,7 @@ internal class CapturedLogger(
 
     init {
         logger.addAppender(appender)
-        logger.level = Level.INFO
+        logger.level = level
     }
 
     val events: List<ILoggingEvent>

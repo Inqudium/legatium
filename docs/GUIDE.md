@@ -531,6 +531,17 @@ Level and outcome are resolved **before** the event is built, so a disabled leve
 header selection, no body decoding. Metrics are recorded **before** the level gate and are unaffected by
 it — except `adapter.logging.events`, which by definition counts emitted events only.
 
+Two further loggers are the modules' own, under `eu.inqudium.legatium`, and never carry an exchange:
+
+| Logger | Level | Says |
+|---|---|---|
+| `…ClientLoggingAutoConfiguration` (one per twin) | DEBUG | the **wiring report**: that the module is enabled, the interceptor or filter bean with its bound properties (masking key redacted), each customizer registered, and one line per builder the customizer attached the module to — how a host verifies from its own log that the library is on and actually configured a client (the twins' guides, §2.2 and §3.4). Nothing at all with `adapter-logging.enabled=false`; Boot's condition report (DEBUG on `org.springframework.boot.autoconfigure`) then names the property |
+| the same logger | TRACE | additionally the **origin** of every `adapter-logging.*` value Boot bound — file and line, environment variable, property source — and every value of the same name a lower-precedence source also holds, marked as shadowed; masking key redacted, unset keys not listed (`ClientLoggingPropertyOrigins`, [§9.1](#91-the-shared-classes)) |
+| the interceptor, filter, emitter and metrics classes | WARN / ERROR | the fail-open diagnostics: a breadcrumb for a call that threw, an emission that failed, a tee that broke ([§8.2](#82-fail-open-contract)) |
+
+`logging.level.eu.inqudium.legatium=DEBUG` switches the wiring report on for both twins, `TRACE` adds
+the property origins; the exchange lines are unaffected, they live on `logger-name`.
+
 ### 6.6 Validation at startup
 
 `ClientLoggingProperties.init` and `HeaderLogProperties.init` reject, with a message naming the property:
@@ -942,6 +953,7 @@ near-identical code.
 | Class | Responsibility |
 |---|---|
 | `ClientLoggingProperties` / `HeaderLogProperties` | The `adapter-logging.*` binding, validated in `init` ([§6.6](#66-validation-at-startup)) — one class for both twins. `HeaderLogProperties` is one header section with `includes` / `excludes` / `masked` / `unmasked` and the masking fingerprint ([§6.2](#62-header-sections)); unit-tested and fuzzed here. |
+| `ClientLoggingPropertyOrigins` | The TRACE half of the auto-configurations' wiring report ([§6.5](#65-logger-levels)): renders every `adapter-logging.*` value Boot bound with its origin, plus the shadowed values of lower-precedence sources, masking key redacted — one rendering for both twins. |
 | `ClientLogField` | The wire names and the exact JVM type of each structured field ([§7.1](#71-log-fields)), with the builder extensions the emitters write through; a wrongly typed value drops the field with a warning, never the event. One enum for both twins. |
 | `AdapterName` | The request attribute a host names a client with and the rule that reads it (blank is no name) — the source of `adapter_name` and the `name` meter tag ([§7.7](#77-naming-a-client), ADR-0009); one string for both twins. |
 | `ClientLoggingMetrics` | The six meters ([§7.4](#74-meters)), one implementation parameterised by the `ClientStack` (outcome vocabulary, `client` tag) — the fixed-tag meters pre-registered, the body meters created lazily per tag, per-meter fallback to a private registry on a registration conflict. Shared since the amendment of 2026-09-04 to ADR-0003, when the twin copies had converged to near-identity. |

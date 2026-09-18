@@ -99,13 +99,15 @@ internal fun buffer(text: String): DataBuffer = DefaultDataBufferFactory.sharedI
 internal abstract class AttachedLogger<A : Appender<ILoggingEvent>>(
     loggerName: String,
     val appender: A,
+    /** The level the logger is raised to while captured - INFO for the exchange lines, DEBUG for the wiring report. */
+    level: Level = Level.INFO,
 ) {
     val logger: Logger = LoggerFactory.getLogger(loggerName) as Logger
     private val previousLevel: Level? = logger.level
 
     init {
         logger.addAppender(appender)
-        logger.level = Level.INFO
+        logger.level = level
     }
 
     fun detach() {
@@ -118,7 +120,8 @@ internal abstract class AttachedLogger<A : Appender<ILoggingEvent>>(
 /** A list appender on [loggerName] for the synchronous tests: the events are read once the call returned. */
 internal class CapturedLogger(
     loggerName: String,
-) : AttachedLogger<ListAppender<ILoggingEvent>>(loggerName, ListAppender<ILoggingEvent>().apply { start() }) {
+    level: Level = Level.INFO,
+) : AttachedLogger<ListAppender<ILoggingEvent>>(loggerName, ListAppender<ILoggingEvent>().apply { start() }, level) {
     val events: List<ILoggingEvent>
         get() = appender.list.toList()
 }

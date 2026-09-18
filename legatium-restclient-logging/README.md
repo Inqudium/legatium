@@ -107,7 +107,11 @@ With `spring-boot-restclient` on the classpath (it comes with `spring-boot-start
 Boot 4 the web starters no longer pull it, so a host that only has `spring-boot-starter-web` must add
 it) the auto-configuration registers the interceptor bean **and** two late customizers — a
 `RestClientCustomizer` and a `RestTemplateCustomizer` — that append it to every client Boot builds, and
-thereby to every HTTP service client group built from Boot's builder.
+thereby to every HTTP service client group built from Boot's builder. At DEBUG on
+`eu.inqudium.legatium.restclient.logging.ClientLoggingAutoConfiguration` it reports each of these steps
+and every builder it attached the interceptor to, so the host's own log answers whether the module is
+on and configured a client; at TRACE it adds where each `adapter-logging.*` value came from and which
+values were shadowed (the guide's [§2.2](docs/GUIDE.md#22-auto-configuration-and-registration)).
 
 The hooks are Boot's **builder Spring beans**: the `RestClient.Builder` bean (prototype-scoped, one fresh
 builder per injection point) and the `RestTemplateBuilder` bean, both defined by Boot's
@@ -215,16 +219,16 @@ the message shows; it repeats the gist inline for exactly that case:
 Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
 ```
 
-With Spring Boot's structured logging (`logging.structured.format.console=ecs`) the same event is one
-JSON document: the `adapter_*` key-values and the MDC-carried identity become flat, typed top-level
-fields next to the encoder's own envelope:
-
 A client the host [named](#naming-a-client) reads by its name in place of the target — the same event
 of a client named `things`, as the JSON below shows it:
 
 ```
 Adapter http exchange POST things -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
 ```
+
+With Spring Boot's structured logging (`logging.structured.format.console=ecs`) the same event is one
+JSON document: the `adapter_*` key-values and the MDC-carried identity become flat, typed top-level
+fields next to the encoder's own envelope:
 
 ```json
 {

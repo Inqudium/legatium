@@ -164,6 +164,44 @@ five layers:
 Because the filter is its own bean, a host can replace it while keeping the customizer
 ([Common guide §3](../../docs/GUIDE.md#3-overriding-beans)). Boot's `spring-boot-webclient` module is an **optional** dependency:
 without it the filter bean still exists and the host attaches it by hand ([§3.2](#32-manual-wiring)).
+
+**Observing the wiring.** At DEBUG on the logger
+`eu.inqudium.legatium.webclient.logging.ClientLoggingAutoConfiguration` the auto-configuration reports
+what it did — the answer to "is the module on, and did it configure my client?" from the host's own log:
+
+```
+Adapter logging is enabled - the auto-configuration is active (adapter-logging.enabled is not false)
+Adapter logging registered its ClientRequestLoggingFilter bean with ClientLoggingProperties(enabled=true, loggerName=adapter-http-exchange, …, maskingKey=<redacted>)
+Adapter logging registered its WebClientCustomizer - the filter is attached to every WebClient.Builder Boot hands out
+Adapter logging attached its filter to a WebClient.Builder behind 0 earlier filter(s)
+```
+
+The first three appear once at context start (the bean line only when the bean is the module's own,
+not a host's — [Common guide §3](../../docs/GUIDE.md#3-overriding-beans)); the attach line appears once
+per `WebClient.Builder` Boot hands out, and its count of earlier filters is the position the customizer
+order gave the module ([§3.3](#33-filter-order-and-other-filters)). With `adapter-logging.enabled=false`
+none of them appears; Boot's condition evaluation report (DEBUG on
+`org.springframework.boot.autoconfigure`) then names the property as the reason. Enable it with
+`logging.level.eu.inqudium.legatium.webclient.logging.ClientLoggingAutoConfiguration=DEBUG`, or
+`logging.level.eu.inqudium.legatium=DEBUG` for both twins at once.
+
+At **TRACE** the bean line is followed by where every `adapter-logging.*` value came from — Boot's
+origin of each value it bound, one line per key, then every value of the same name a lower-precedence
+source also holds, marked as shadowed. The masking key is rendered redacted whatever its source; keys
+no source sets are the class defaults and are not listed:
+
+```
+Adapter logging property adapter-logging.exclude-hosts[0] = pushgateway (origin: class path resource [application.yml] - 20:7)
+Adapter logging property adapter-logging.logger-name = outbound (origin: class path resource [application-prod.yml] - 3:16)
+Adapter logging property adapter-logging.logger-name = adapter-http-exchange (origin: class path resource [application.yml] - 12:16) is shadowed by class path resource [application-prod.yml] - 3:16
+Adapter logging property adapter-logging.masking-key = <redacted> (origin: System Environment Property "ADAPTER_LOGGING_MASKING_KEY")
+```
+
+With no `adapter-logging.*` key anywhere the report is one line saying so. The same information, per
+property source, is what the actuator's `env` endpoint shows for a key
+(`/actuator/env/adapter-logging.logger-name`); the TRACE lines put it into the startup log of a host
+without the actuator. The rendering lives once in `legatium-common`
+([Common guide §9.1](../../docs/GUIDE.md#91-the-shared-classes)).
 The same property namespace and
 the same bean names as the RestClient twin — the two auto-configurations never clash, and both may be
 active in one application.
@@ -638,6 +676,15 @@ Activation is evaluated **in the filter** (`shouldNotFilter`), so its semantics 
 the RestClient twin.
 
 ### 3.4 Verifying the integration
+
+0. Before the first call, start the application with
+   `logging.level.eu.inqudium.legatium.webclient.logging.ClientLoggingAutoConfiguration=DEBUG` and
+   expect the wiring report of [§2.2](#22-auto-configuration-and-registration): the "enabled" line, the
+   bean line with the bound properties, the customizer line — and, as soon as the host's first client
+   is built, `Adapter logging attached its filter to a WebClient.Builder behind N earlier filter(s)`.
+   No attach line for a client means Boot never handed that client a customized builder: it was built
+   by hand ([§3.2](#32-manual-wiring)). At TRACE instead of DEBUG the report also names the file, line
+   or environment variable each `adapter-logging.*` value came from, and which values were shadowed.
 
 1. Make any call through a Boot-built `WebClient`:
 
