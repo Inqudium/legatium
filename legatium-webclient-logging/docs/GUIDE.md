@@ -705,8 +705,10 @@ completion event and on the arrival line, and the three body meters carry the na
 host's vocabulary and is neither folded nor validated.
 
 **Verifying it:** make one call through a named client and expect `adapter_name=billing` beside
-`adapter_url_host=localhost:15001` on the exchange line; a call through an unnamed client carries no
-`adapter_name` at all. With `measure-response-body-size` on,
+`adapter_url_host=localhost:15001` on the exchange line, whose message then reads
+`Adapter http exchange GET billing -> 200 [...]` — the name in place of the target, which stays on
+`adapter_route` and the `adapter_url_*` fields; a call through an unnamed client carries no
+`adapter_name` at all and keeps the target in the message. With `measure-response-body-size` on,
 `curl -s localhost:8080/actuator/metrics/adapter.response.body.read` lists `name` among the available
 tags.
 

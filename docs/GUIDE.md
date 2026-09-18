@@ -206,6 +206,17 @@ Adapter http exchange started POST https://api.example.com/things/42 [adapter_re
 The arrival line carries no outcome, status or duration, so a dashboard keyed on `adapter_outcome` still
 sees exactly one event per call.
 
+For a client the host **named** ([§7.7](#77-naming-a-client)) both messages carry the name in place of
+the target — behind a sidecar the target is the same for every dependency, the name is what tells a
+reader of a plain-text appender which client called:
+
+```
+Adapter http exchange POST things -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
+```
+
+The target then still rides the `adapter_route` MDC entry and the `adapter_url_*` fields. The examples
+that follow show this named client.
+
 The modules emit through SLF4J's fluent API. Every exchange event carries its data in **two places**,
 and an encoder treats them differently:
 
@@ -229,7 +240,7 @@ rest; which one fits depends on where the output goes.
 ```
 
 ```
-13:54:58.534 INFO  [http-nio-8080-exec-3] adapter-http-exchange - Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf9… traceId=4bf9… spanId=00f0…] adapter_outcome=success adapter_duration_ms=17 adapter_request_method=POST adapter_response_status_code=200 adapter_name=things adapter_url_host=api.example.com adapter_url_path=/things/42 adapter_url_template=https://api.example.com/things/{id} [adapter_method=POST, adapter_request_id=4bf9…, adapter_route=https://api.example.com/things/42, endpoint_request_id=4bf9…, traceId=4bf9…, spanId=00f0…]
+13:54:58.534 INFO  [http-nio-8080-exec-3] adapter-http-exchange - Adapter http exchange POST things -> 200 [adapter_request_id=4bf9… traceId=4bf9… spanId=00f0…] adapter_outcome=success adapter_duration_ms=17 adapter_request_method=POST adapter_response_status_code=200 adapter_name=things adapter_url_host=api.example.com adapter_url_path=/things/42 adapter_url_template=https://api.example.com/things/{id} [adapter_method=POST, adapter_request_id=4bf9…, adapter_route=https://api.example.com/things/42, endpoint_request_id=4bf9…, traceId=4bf9…, spanId=00f0…]
 ```
 
 (On the reactive stack the thread reads `reactor-http-epoll-2` or the like; the line is otherwise identical.)
@@ -276,11 +287,11 @@ declares in `ClientLogField` and the component template maps. This is the shape 
 [§5](#5-index-mapping-elk) is written for. `logging.structured.json.include` / `exclude` / `rename`
 control the field selection (e.g. to drop `adapter_route`, which duplicates host and path).
 
-The exchange at the top of this section becomes this document:
+The named exchange of this section becomes this document:
 
 ```json
 {
-  "message": "Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
+  "message": "Adapter http exchange POST things -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
   "level": "INFO",
   "logger": "adapter-http-exchange",
   "adapter_outcome": "success",
@@ -604,7 +615,7 @@ component template; `ClientLogFieldTest` in `legatium-common` keeps the shared e
 | `adapter_duration_ms` | long | yes | on | always | from the injected monotonic source; until response close (RestClient — after the converter's read) resp. until the body's terminal signal was handed on to the consumer (WebClient — after the decoder's synchronous work in it) |
 | `adapter_request_method` | keyword | yes | on | always | |
 | `adapter_response_status_code` | short | yes | on | when a response arrived | absent for a refused connection, a timeout before the status line, or a cancellation before the response (`-> -`) |
-| `adapter_name` | keyword | yes | on | when the host named the client | the client's logical name (`billing`, `geo-lookup`) from the `ADAPTER_NAME_ATTRIBUTE` request attribute — see [§7.7](#77-naming-a-client); the coordinate `adapter_url_host` cannot provide behind an egress sidecar (ADR-0009) |
+| `adapter_name` | keyword | yes | on | when the host named the client | the client's logical name (`billing`, `geo-lookup`) from the `ADAPTER_NAME_ATTRIBUTE` request attribute — see [§7.7](#77-naming-a-client); the coordinate `adapter_url_host` cannot provide behind an egress sidecar, and what the message names the call by in place of the target (ADR-0009) |
 | `adapter_url_host` | keyword | yes | on | when the URI has a host | `host` or `host:port` — the outbound coordinate |
 | `adapter_url_template` | keyword | yes | on | when the client recorded a template | the aggregation half of the path pair, e.g. `https://api.example.com/things/{id}`; never for `RestTemplate` |
 | `adapter_url_path` | keyword | yes | **off** | always | the **raw** path as sent, ids and all — filter exactly, never group |
@@ -799,8 +810,10 @@ fun geoClient(builder: WebClient.Builder): WebClient =
 
 The attribute string is the same on both twins (`eu.inqudium.legatium.adapterName`), so a host carrying
 both jars uses one literal. Every call of a named client then carries `adapter_name` on the completion
-event and the arrival line, and the body meters tag it as `name` ([§7.4](#74-meters)); a client nobody
-named carries no field and meters under `name=UNNAMED`. A blank value counts as no name. A per-call
+event and the arrival line, its messages name the call by the name instead of the target
+(`Adapter http exchange POST billing -> 200 [...]`, [§4](#4-logging-backend-and-structured-output)),
+and the body meters tag it as `name` ([§7.4](#74-meters)); a client nobody named carries no field, keeps
+the target in the message, and meters under `name=UNNAMED`. A blank value counts as no name. A per-call
 `attribute(...)` on the request spec overrides the builder default. `RestTemplate` has no
 `defaultRequest`: an interceptor of the host's own, registered before the logging interceptor, sets
 `request.attributes[ADAPTER_NAME_ATTRIBUTE]` instead. The value is not folded or validated — it is the

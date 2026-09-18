@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Both twins: the message of a **named** client's arrival line and completion event names the call
+  by the client's name in place of the request target
+  (`Adapter http exchange POST billing -> 200 [...]`), because behind an egress sidecar the target
+  is the same for every dependency and a plain-text appender shows nothing else. An unnamed client's
+  message keeps the target; the target of a named one stays on the `adapter_route` MDC entry and the
+  `adapter_url_*` fields. `TwinContractTest` pins both forms; ADR-0009's message section is amended.
+
 ## [1.1.0] - 2026-09-17
 
 ### Added

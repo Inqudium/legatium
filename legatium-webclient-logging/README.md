@@ -175,7 +175,9 @@ fun billingClient(builder: WebClient.Builder): WebClient =
 ```
 
 The attribute string is the same on both twins, a blank value counts as no name, and a client nobody
-named simply logs no `adapter_name`. The why and the alternatives are
+named simply logs no `adapter_name`. The message of a named client's arrival line and completion event
+names the call by the name in place of the target; the target stays on `adapter_route` and the
+`adapter_url_*` fields. The why and the alternatives are
 [ADR-0009](../docs/adr/ADR-0009-adapter-name-is-a-request-attribute.md); the long form, with the
 verification steps, is the guide's [§3.5](docs/GUIDE.md#35-naming-a-client), and the field itself is
 in the [Common guide §7.7](../docs/GUIDE.md#77-naming-a-client).
@@ -193,13 +195,20 @@ With Spring Boot's structured logging (`logging.structured.format.console=ecs`) 
 JSON document: the `adapter_*` key-values and the MDC-carried identity become flat, typed top-level
 fields next to the encoder's own envelope:
 
+A client the host [named](#naming-a-client) reads by its name in place of the target — the same event
+of a client named `things`, as the JSON below shows it:
+
+```
+Adapter http exchange POST things -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
+```
+
 ```json
 {
   "@timestamp": "2026-09-04T13:54:58.534Z",
   "log": { "level": "INFO", "logger": "adapter-http-exchange" },
   "process": { "pid": 4711, "thread": { "name": "reactor-http-epoll-2" } },
   "service": { "name": "things-service" },
-  "message": "Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
+  "message": "Adapter http exchange POST things -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
   "adapter_request_id": "4bf92f3577b34da6a3ce929d0e0e4736",
   "adapter_method": "POST",
   "adapter_route": "https://api.example.com/things/42",

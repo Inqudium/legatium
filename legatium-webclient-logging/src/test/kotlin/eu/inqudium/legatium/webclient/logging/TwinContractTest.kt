@@ -32,7 +32,8 @@ class TwinContractTest {
     fun `should pin the exchange and arrival message format to the literal twin contract`() {
         // What is tested: the MESSAGE half of the twin contract - the field names are locked by
         //   ClientLogFieldTest, the message text is pinned here in both twins.
-        // Success criteria: a pinned filter renders the literal messages both twins ship.
+        // Success criteria: a pinned filter renders the literal messages both twins ship - the target
+        //   names an unnamed client's call, the client's name a named one's (ADR-0009).
         // Why it matters: plain-text appenders and the README's parity promise key on this text; a
         //   divergence in one twin would otherwise ship silently.
         // Given
@@ -40,14 +41,21 @@ class TwinContractTest {
         val filter = ClientRequestLoggingFilter(properties, { 0L }, { "generated-42" }, SimpleMeterRegistry())
         val log = CapturedLogger(properties.loggerName)
         try {
-            // When: one successful call
+            // When: one successful call of an unnamed client, one of a named client
             filter.filter(request(uri = "https://api.example.com/things"), answering()).flatMap { it.releaseBody() }.block()
+            val named =
+                request(uri = "https://api.example.com/things") {
+                    attribute(ClientRequestLoggingFilter.ADAPTER_NAME_ATTRIBUTE, "things")
+                }
+            filter.filter(named, answering()).flatMap { it.releaseBody() }.block()
 
             // Then: the literal messages, identical in both twins
             assertThat(log.events.map { it.formattedMessage })
                 .containsExactly(
                     "Adapter http exchange started GET https://api.example.com/things [adapter_request_id=generated-42]",
                     "Adapter http exchange GET https://api.example.com/things -> 200 [adapter_request_id=generated-42]",
+                    "Adapter http exchange started GET things [adapter_request_id=generated-42]",
+                    "Adapter http exchange GET things -> 200 [adapter_request_id=generated-42]",
                 )
         } finally {
             log.detach()

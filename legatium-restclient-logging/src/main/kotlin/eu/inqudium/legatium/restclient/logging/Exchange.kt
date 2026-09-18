@@ -15,7 +15,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 internal class Exchange(
     val method: String,
-    /** [eu.inqudium.legatium.common.RequestTarget.target] - the message and MDC coordinate. */
+    /**
+     * [eu.inqudium.legatium.common.RequestTarget.target] - the MDC coordinate, and the message's
+     * [subject] for an unnamed client.
+     */
     val target: String,
     /** [eu.inqudium.legatium.common.RequestTarget.host]. */
     val host: String?,
@@ -62,6 +65,15 @@ internal class Exchange(
      * state machine).
      */
     val completed = AtomicBoolean(false)
+
+    /**
+     * What the arrival and completion messages name the call by: the client's [name] when the host gave
+     * one, the [target] otherwise (ADR-0009). Behind a sidecar the target is the same for every
+     * dependency, so a named client reads by its name in a plain-text appender; the target still rides
+     * the `adapter_route` MDC entry and the `adapter_url_*` fields.
+     */
+    val subject: String
+        get() = name ?: target
 
     /**
      * The failure of the call - the exception the wire call threw (no response), or the exception the

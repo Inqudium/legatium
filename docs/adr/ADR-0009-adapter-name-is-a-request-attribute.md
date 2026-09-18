@@ -107,13 +107,21 @@ was never given - and the tag is always present, so every meter of a
 name carries the same tag keys (a registry with a Prometheus backend
 rejects the alternative). No meter is added (ADR-0008).
 
-### The message stays as it is
+### The message names the call by the name
 
-The message text (`Adapter http exchange POST http://... -> 200 [...]`)
-does not carry the name. The message is the plain-text fallback for
-an appender without key-values; a reader with only that still has the
-URL, and the pinned text (`TwinContractTest`) does not move for an
-optional field.
+The message text of a named client's arrival line and completion
+event carries the name **in place of** the target:
+`Adapter http exchange POST billing -> 200 [...]`. The message is the
+plain-text fallback for an appender without key-values, and behind a
+sidecar the target is the same for every dependency - a reader with
+only the message would see the sidecar, not the client. An unnamed
+client's message keeps the target (`POST http://... -> 200`), so the
+pinned text (`TwinContractTest`) covers both forms. The target itself
+is not lost: it rides the `adapter_route` MDC entry and the
+`adapter_url_*` fields either way.
+
+*Amended 2026-09-18: this section originally kept the message as it
+was, the name only a field; the message now prefers the name.*
 
 ## Consequences
 
