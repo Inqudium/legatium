@@ -328,6 +328,32 @@ class ClientLoggingMetricsTest {
     }
 
     @Test
+    fun `should drop the update report silently when the fail-open counter itself throws`() {
+        // What is tested: updateQuietly's own diagnostics channel - the fail-open counter it reports a
+        //   throwing host meter to is a host meter as well, and here it throws too.
+        // Success criteria: requestId against a registry whose correlation AND fail-open counters
+        //   throw neither throws nor warns - the secondary failure is dropped, nothing escapes.
+        // Why it matters: the entry points guard this one layer further out, so an escape here would
+        //   still not fail a call - but it would turn a counted bookkeeping loss into an unlogged
+        //   pass-through of the whole exchange, the worse degradation for a broken registry.
+        // Given: correlation and fail-open counters that throw, the module logger captured
+        val hostile = registryWithBreakingCounters(ClientLoggingMetrics.CORRELATION_METER, ClientLoggingMetrics.FAIL_OPEN_METER)
+        val moduleLog = CapturedLogger(ClientLoggingMetrics::class.java.name)
+        try {
+            val metrics = ClientLoggingMetrics.forRegistry(hostile, ClientStack.RESTCLIENT)
+
+            // When
+            val thrown = catchThrowable { metrics.requestId(RequestIdSource.GENERATED) }
+
+            // Then
+            assertThat(thrown).isNull()
+            assertThat(moduleLog.events.filter { it.level == Level.WARN }).isEmpty()
+        } finally {
+            moduleLog.detach()
+        }
+    }
+
+    @Test
     fun `should register a body meter anew after the host removed it instead of recording into the detached one`() {
         // What is tested: the cache's one drift case - the owner resolves the body meters once per tag
         //   set, and a host may remove a meter from its registry afterwards.

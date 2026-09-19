@@ -330,7 +330,8 @@ class ClientRequestLoggingInterceptorIntegrationTest : PeerIntegrationSuite() {
         //   always on - and the read-state counter for it.
         // Success criteria: status 204 on the entity and the event; neither adapter_request_body
         //   nor adapter_response_body is present; adapter.response.body.read counts the call under
-        //   state=complete and nothing under state=unread.
+        //   state=complete and nothing under state=unread - under this test's own name tag, so the
+        //   count is absolute although the class shares one registry.
         // Why it matters: a 204 is the routine answer of every delete and update; an empty body
         //   field on each of them would be noise that looks like a payload, and an `unread` count
         //   for each of them would make the discarded-payload share of the route meaningless.
@@ -342,6 +343,7 @@ class ClientRequestLoggingInterceptorIntegrationTest : PeerIntegrationSuite() {
             client
                 .get()
                 .uri("/empty")
+                .attribute(ClientRequestLoggingInterceptor.ADAPTER_NAME_ATTRIBUTE, "bodiless")
                 .retrieve()
                 .toBodilessEntity()
 
@@ -351,8 +353,9 @@ class ClientRequestLoggingInterceptorIntegrationTest : PeerIntegrationSuite() {
         assertThat(keyValues(event))
             .containsEntry("adapter_response_status_code", 204)
             .doesNotContainKeys("adapter_request_body", "adapter_response_body")
-        // The template without a placeholder folds to the untemplated tag value ([ClientLoggingMetrics.uriTag]).
-        val tags = arrayOf("uri", ClientLoggingMetrics.UNTEMPLATED_URI, "host", peer.host)
+        // The template without a placeholder folds to the untemplated tag value ([ClientLoggingMetrics.uriTag]);
+        // the name tag keeps this tag set apart from the other tests' calls on the registry the class shares.
+        val tags = arrayOf("uri", ClientLoggingMetrics.UNTEMPLATED_URI, "host", peer.host, "name", "bodiless")
         assertThat(
             registry
                 .get(ClientLoggingMetrics.RESPONSE_BODY_READ_METER)
