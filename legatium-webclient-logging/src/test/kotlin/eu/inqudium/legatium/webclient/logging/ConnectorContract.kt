@@ -153,7 +153,8 @@ abstract class ConnectorContract : IntegrationFixture() {
                     .block(AWAIT)
             }
 
-        // Then
+        // Then: the engine's exception type is engine-internal detail the contract does not promise
+        // (CONTRIBUTING.md, test rules) - the classification below is what is pinned
         assertThat(thrown).isNotNull()
         val event = log.awaitEvents(1).single()
         assertThat(event.level).describedAs("event for %s", thrown).isEqualTo(Level.WARN)
@@ -183,7 +184,8 @@ abstract class ConnectorContract : IntegrationFixture() {
                     .block(AWAIT)
             }
 
-        // Then
+        // Then: the engine's exception type is engine-internal detail the contract does not promise
+        // (CONTRIBUTING.md, test rules) - the classification below is what is pinned
         assertThat(thrown).isNotNull()
         val event = log.awaitEvents(1).single()
         assertThat(event.level).describedAs("event for %s", thrown).isEqualTo(Level.WARN)
@@ -209,7 +211,8 @@ abstract class ConnectorContract : IntegrationFixture() {
                     .block(AWAIT)
             }
 
-        // Then
+        // Then: the engine's exception type is engine-internal detail the contract does not promise
+        // (CONTRIBUTING.md, test rules) - the classification below is what is pinned
         assertThat(thrown).isNotNull()
         val event = log.awaitEvents(1).single()
         assertThat(event.level).describedAs("event for %s", thrown).isEqualTo(Level.ERROR)

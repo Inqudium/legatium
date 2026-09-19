@@ -98,6 +98,13 @@ the UI with a written reason.
   comment only LOOKS checked, so the CI job rejects it - name the symbol in backticks there, or
   move the sentence into the enclosing declaration's KDoc.
 - Every behavior change needs a test in the module it touches.
+- Integration tests against a real engine (the request-factory and connector contracts, the
+  Boot-builder suites) pin the module's **classification** of an engine failure - level, outcome,
+  the absent status - and that the engine raised *an* exception, not **which** exception type or
+  message the engine chose: that is engine-internal detail the contract does not promise, and
+  pinning it per engine would turn every engine upgrade into a test edit for no safety gained
+  (decision of 2026-09-19, defect analyses of that day, findings 19 resp. 20). Unit tests against
+  the module's own fakes may pin messages, because there the message is the test's own input.
 - Changes to the shared field/configuration contract need the reference file and the
   contract tests in **both** modules updated.
 - Test classes follow the existing `*Test.kt` naming (Surefire picks up `**/*Test.kt`).
