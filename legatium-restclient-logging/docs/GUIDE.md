@@ -701,7 +701,7 @@ Everything not listed here behaves exactly as in `legatium-webclient-logging`.
 
 | Concern | This module | WebClient twin |
 |---|---|---|
-| Disposition vocabulary | `success` / `failure` / `timeout` | plus **`cancelled`** — a cancelled subscription (a downstream `timeout()` operator, a `take`, a disposed caller) is the reactive reality a blocking call cannot have |
+| Disposition vocabulary | `success` / `rejected` / `failure` / `timeout` | plus **`cancelled`** — a cancelled subscription (a downstream `timeout()` operator, a `take`, a disposed caller) is the reactive reality a blocking call cannot have |
 | Emission point | response **close** | the response **body's terminal signal** |
 | Never-completing exchange | a response the application never closes | a response body nobody subscribes to or releases |
 | Request body | the byte array the client hands the interceptor — complete, captured at wiring **before** the wire call (the field shows what was about to be sent; the size meter records only once a response proves it went out) | teed at the connector's `writeWith` as the inserter writes it |

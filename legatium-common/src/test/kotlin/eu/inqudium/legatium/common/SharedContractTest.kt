@@ -81,17 +81,18 @@ class SharedContractTest {
 
     @Test
     fun `should pin the outcome vocabulary`() {
-        // What is tested: the tagValue literals of ClientOutcome - the three both stacks share and the
+        // What is tested: the tagValue literals of ClientOutcome - the four both stacks share and the
         //   reactive cancelled - and the size of the enum.
-        // Success criteria: the four literals match the values dashboards filter on; no fifth value.
+        // Success criteria: the five literals match the values dashboards filter on; no sixth value.
         // Why it matters: adapter_outcome and the outcome tag of adapter.logging.events are the closed
         //   vocabulary every alert keys on; a renamed value would silently zero an alert.
         // Given/When/Then
         assertThat(ClientOutcome.SUCCESS.tagValue).isEqualTo("success")
+        assertThat(ClientOutcome.REJECTED.tagValue).isEqualTo("rejected")
         assertThat(ClientOutcome.FAILURE.tagValue).isEqualTo("failure")
         assertThat(ClientOutcome.TIMEOUT.tagValue).isEqualTo("timeout")
         assertThat(ClientOutcome.CANCELLED.tagValue).isEqualTo("cancelled")
-        assertThat(ClientOutcome.entries).hasSize(4)
+        assertThat(ClientOutcome.entries).hasSize(5)
     }
 
     @Test

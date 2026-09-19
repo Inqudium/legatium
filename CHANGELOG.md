@@ -37,6 +37,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Both twins: a 4xx answer is **`adapter_outcome=rejected`**, a new value of the outcome vocabulary,
+  in place of `success` — the outcome names who is responsible for the disposition (nobody, the
+  caller, the peer, the clock), and a refused request is the caller's. The level stays INFO for the
+  class, and is **WARN for 401, 403, 408 and 429**: the rejections about the application's own standing
+  with the peer — credentials, a permission, a peer that gave up waiting for us, a rate limit — which
+  only an operator can resolve. The set is fixed, not a property. The status half of both twins'
+  classification is one function in `legatium-common` (`Classification.ofStatus`), pinned by
+  `ClassificationTest`; each twin pins that it calls it. The `outcome` tag of `adapter.logging.events`
+  carries `rejected`, pre-registered at zero like the others. The `on-failure` body gate reads
+  `outcome != success` again: a `rejected` exchange logs its bodies as a 4xx did before, without the
+  status range the gate had to carry. **A dashboard or alert that keyed on `success` as "the peer
+  answered" sees the 4xx share move to `rejected`.** The decision and the reasons against a blanket
+  WARN are [ADR-0012](docs/adr/ADR-0012-a-4xx-answer-is-rejected.md); ADR-0006 is amended.
+
 - Both twins: the message of a **named** client's arrival line and completion event names the call
   by the client's name in place of the request target
   (`Adapter http exchange POST billing -> 200 [...]`), because behind an egress sidecar the target

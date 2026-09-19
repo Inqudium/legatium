@@ -38,7 +38,7 @@ each exchange line carries, and finally the cluster you are touching.
 | ADR | Title | Status |
 |-----|-------|--------|
 | [0005](ADR-0005-headers-masked-by-default.md) | Logged header values are masked by default; plaintext is an explicit allowlist | Accepted |
-| [0006](ADR-0006-bodies-logged-by-outcome.md) | Body logging is a mode per direction, gated by the outcome | Accepted; last updated 2026-09-05 |
+| [0006](ADR-0006-bodies-logged-by-outcome.md) | Body logging is a mode per direction, gated by the outcome | Accepted; last updated 2026-09-19 |
 
 ### Operator surface & observability
 
@@ -46,6 +46,7 @@ each exchange line carries, and finally the cluster you are touching.
 |-----|-------|--------|
 | [0007](ADR-0007-adapter-is-the-operator-vocabulary.md) | The operator-facing vocabulary is `adapter`, the counterpart of `endpoint` | Accepted; last updated 2026-09-05 |
 | [0008](ADR-0008-six-meters-consumed-not-exported.md) | Six meter families, consumed from the host's registry, never exported | Accepted |
+| [0012](ADR-0012-a-4xx-answer-is-rejected.md) | A 4xx answer is `rejected`; the level is INFO, WARN for 401, 403, 408 and 429 | Accepted |
 
 ### Conventions & project process
 

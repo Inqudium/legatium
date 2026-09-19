@@ -19,13 +19,13 @@ class TwinContractTest {
     fun `should pin this stack's client tag and outcome vocabulary`() {
         // What is tested: the ClientStack.WEBCLIENT facts the shared metrics owner is parameterised
         //   with - the client tag of the gauge and the outcomes pre-registered on the events counter.
-        // Success criteria: client=webclient, and exactly success, failure, timeout and cancelled in
-        //   this order - the shared three plus the reactive disposition.
+        // Success criteria: client=webclient, and exactly success, rejected, failure, timeout and
+        //   cancelled in this order - the shared four plus the reactive disposition.
         // Why it matters: alerts on adapter.logging.events{outcome="cancelled"} must find the value at
         //   zero from the start; a lost cancelled would silently empty the abandoned-call signal.
         // Given/When/Then
         assertThat(ClientStack.WEBCLIENT.tagValue).isEqualTo("webclient")
-        assertThat(ClientStack.WEBCLIENT.outcomes.map { it.tagValue }).containsExactly("success", "failure", "timeout", "cancelled")
+        assertThat(ClientStack.WEBCLIENT.outcomes.map { it.tagValue }).containsExactly("success", "rejected", "failure", "timeout", "cancelled")
     }
 
     @Test

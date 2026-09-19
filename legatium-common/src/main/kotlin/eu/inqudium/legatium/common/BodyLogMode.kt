@@ -11,16 +11,16 @@ package eu.inqudium.legatium.common
  * like [ALWAYS] does (bounded by `max-body-bytes`) and discards it for a success: the capture is paid,
  * the output is saved - and the output is what burdens the log pipeline.
  *
- * "Failed" is wider than the outcome vocabulary of the exchange line by one status class: `failure`,
- * `timeout`, on the WebClient twin `cancelled` - and a 4xx answer, which keeps its `success`
- * outcome (the peer answered; the request was wrong) but is exactly the case a body explains. A 5xx is a
- * `failure` and logs as well; a slow but healthy call stays `success` and logs no body.
+ * "Failed" is every outcome but `success`: `rejected` (a 4xx - the peer answered, the request was
+ * wrong, and that is exactly the case a body explains; ADR-0012), `failure` (a 5xx or a thrown call),
+ * `timeout`, on the WebClient twin `cancelled`. A slow but healthy call stays `success` and logs no
+ * body.
  */
 enum class BodyLogMode {
     /** Nothing is captured for logging; a size meter may still install a count-only capture. */
     NEVER,
 
-    /** Captured on every call, logged only when the exchange failed: outcome not `success`, or a 4xx status. */
+    /** Captured on every call, logged only when the exchange failed: outcome not `success`. */
     ON_FAILURE,
 
     /** Captured and logged on every call. */
@@ -33,7 +33,7 @@ enum class BodyLogMode {
 
     /**
      * Whether the captured body is written to the line of an exchange that [failed] (outcome not
-     * `success`, or a 4xx status) or did not.
+     * `success`) or did not.
      */
     fun logs(failed: Boolean): Boolean =
         when (this) {

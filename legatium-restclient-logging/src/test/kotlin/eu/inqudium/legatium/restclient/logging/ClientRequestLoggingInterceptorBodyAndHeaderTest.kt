@@ -575,10 +575,10 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
         }
 
         @Test
-        fun `should log both bodies of a 4xx answer although its outcome stays success`() {
-            // What is tested: the gate is wider than the outcome vocabulary by one status class - a 4xx keeps
-            //   its success outcome (the peer answered; the request was wrong) but is exactly the case a body explains.
-            // Success criteria: outcome success, and BOTH bodies on the line.
+        fun `should log both bodies of a 4xx answer, a rejected exchange`() {
+            // What is tested: the gate follows the outcome alone - a 4xx is `rejected` (the peer answered;
+            //   the request was wrong, ADR-0012), which is not `success` and exactly the case a body explains.
+            // Success criteria: INFO and outcome rejected, and BOTH bodies on the line.
             // Why it matters: a validation error\'s response body is the most wanted body of all; hiding it
             //   behind the outcome vocabulary would make on-failure useless for client errors.
             // Given/When: a 404 with a body
@@ -587,8 +587,10 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
                 .consumeAndClose()
 
             // Then
-            assertThat(keyValues(log.events.single()))
-                .containsEntry("adapter_outcome", "success")
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.INFO)
+            assertThat(keyValues(event))
+                .containsEntry("adapter_outcome", "rejected")
                 .containsEntry("adapter_request_body", "sent")
                 .containsEntry("adapter_response_body", "no such thing")
         }

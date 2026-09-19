@@ -372,11 +372,11 @@ by construction.
 | `include-path-patterns` | list of `PathPattern` | `[]` | Request paths the logging is active for at all, whatever the host; empty = every call. Parsed once at startup; an invalid pattern fails the context. |
 | `exclude-path-prefixes` | list of strings | `[]` | Request-path prefixes skipped entirely — no event, no MDC, no correlation header, no gauge movement. Prefix match against the decoded path. An exclude always wins over an include. |
 | `exclude-hosts` | list of strings | `[]` | Peer hosts skipped entirely (case-insensitive, without port; an IPv6 literal with or without its brackets; a service name `java.net.URI` will not parse as a host, such as `billing_api`, as written) — the outbound counterpart of excluding a health probe. |
-| `slow-request-threshold` | duration | `5s` | At/above this duration an INFO call escalates to WARN and is flagged `adapter_slow: true`; the outcome stays `success`. Measured until the exchange is truly over — response close (RestClient) or the body's terminal signal (WebClient): response occupancy, not bare round-trip time. Must be ≥ 1 ms. |
+| `slow-request-threshold` | duration | `5s` | At/above this duration an INFO call escalates to WARN and is flagged `adapter_slow: true`; the outcome is unchanged. Measured until the exchange is truly over — response close (RestClient) or the body's terminal signal (WebClient): response occupancy, not bare round-trip time. Must be ≥ 1 ms. |
 | `request-headers.includes` / `.excludes` / `.masked` / `.unmasked` | lists of header names | see [§6.2](#62-header-sections) | The request-header section. |
 | `response-headers.includes` / `.excludes` / `.masked` / `.unmasked` | lists of header names | see [§6.2](#62-header-sections) | The response-header section. |
-| `log-request-body` | `never` \| `on-failure` \| `always` | `never` | Log the request body into `adapter_request_body`, up to `max-body-bytes` — on every line (`always`) or only when the outcome is not `success` or the status is a 4xx (`on-failure`, [§6.3](#63-body-logging-and-body-measuring)). On the blocking stack this is the serialized body the client **hands to the wire call** — copied before the call, so a refused connection still shows what was about to be sent; on the reactive stack it is teed as the inserter **writes** it to the connector. |
-| `log-response-body` | `never` \| `on-failure` \| `always` | `never` | Tee the response body into `adapter_response_body` as the application reads it, up to `max-body-bytes` — on every line or only when the outcome is not `success` or the status is a 4xx. |
+| `log-request-body` | `never` \| `on-failure` \| `always` | `never` | Log the request body into `adapter_request_body`, up to `max-body-bytes` — on every line (`always`) or only when the outcome is not `success` (`on-failure`, [§6.3](#63-body-logging-and-body-measuring)). On the blocking stack this is the serialized body the client **hands to the wire call** — copied before the call, so a refused connection still shows what was about to be sent; on the reactive stack it is teed as the inserter **writes** it to the connector. |
+| `log-response-body` | `never` \| `on-failure` \| `always` | `never` | Tee the response body into `adapter_response_body` as the application reads it, up to `max-body-bytes` — on every line or only when the outcome is not `success`. |
 | `measure-request-body-size` | boolean | `false` | Record `adapter.request.body.size`; independent of `log-request-body`. On the blocking stack a sample is recorded only for an exchange that **received a response** — the one proof the interceptor's seam has that the request went out ([§7.4](#74-meters)). |
 | `measure-response-body-size` | boolean | `false` | Record `adapter.response.body.size` and `adapter.response.body.read`; independent of `log-response-body`. |
 | `max-body-bytes` | int > 0 | `16384` | Capture limit per body. Bounds **memory** (and, on the reactive stack, the tee's transient copy per buffer), not the exchange: bytes beyond it still flow; the logged value is truncated with a note of the total size. |
@@ -425,21 +425,21 @@ measured — independent of each other:
 |---|---|---|---|---|
 | `never` | off | no | — | request body untouched; response passes through (the blocking stack keeps a read-failure guard, the reactive stack the terminal hooks) |
 | `always` | off | yes, limit `max-body-bytes` | up to the limit | field logged on every line; no size sample |
-| `on-failure` | off | yes, limit `max-body-bytes` | up to the limit | field logged only when `adapter_outcome` is not `success` or the status is a 4xx; no size sample |
+| `on-failure` | off | yes, limit `max-body-bytes` | up to the limit | field logged only when `adapter_outcome` is not `success`; no size sample |
 | `never` | on | yes, limit `0` (count-only) | nothing | size sample recorded; no field |
 | `always` / `on-failure` | on | yes, limit `max-body-bytes` | up to the limit | both |
 
 **`on-failure` is the volume switch** ([ADR-0006](adr/ADR-0006-bodies-logged-by-outcome.md)).
 `always` means every body of every call; what is nearly always wanted is bodies for the calls that went
-wrong — `failure`, `timeout`, on the reactive stack `cancelled` — which cuts the volume by orders of
-magnitude and hits exactly the lines a body is wanted for. The response side decides at emission, when
-the outcome is final. The request body flows before the outcome is known, so `on-failure` captures it
-exactly like `always` does (bounded by `max-body-bytes`) and discards it for a success: the capture is
-paid, the output is saved — and the output is what burdens the log pipeline. The gate is wider than the
-outcome vocabulary ([§7.3](#73-levels-and-outcomes)) by one status class: a `4xx` answer keeps its
-`success` outcome — the peer answered — but its bodies are logged in `on-failure`, because the client's
-error is exactly what the body explains; a `5xx` is `failure` and logs as well. A slow but healthy call
-stays `success` and logs no bodies.
+wrong — `rejected`, `failure`, `timeout`, on the reactive stack `cancelled` — which cuts the volume by
+orders of magnitude and hits exactly the lines a body is wanted for. The response side decides at
+emission, when the outcome is final. The request body flows before the outcome is known, so `on-failure`
+captures it exactly like `always` does (bounded by `max-body-bytes`) and discards it for a success: the
+capture is paid, the output is saved — and the output is what burdens the log pipeline. The gate is the
+outcome vocabulary ([§7.3](#73-levels-and-outcomes)): a `4xx` answer is `rejected` — the peer answered,
+the request was refused — and its bodies are logged in `on-failure`, because the client's error is
+exactly what the body explains; a `5xx` is `failure` and logs as well. A slow but healthy call stays
+`success` and logs no bodies.
 
 **A decoding failure is the application's, not the exchange's.** Both clients decode the body *after*
 it flowed: the `RestClient` converters run above the interceptor, the `WebClient` decoders downstream of
@@ -765,7 +765,7 @@ component template; `ClientLogFieldTest` in `legatium-common` keeps the shared e
 
 | Field | Type | Index | doc_values | When present | Notes |
 |---|---|---|---|---|---|
-| `adapter_outcome` | keyword | yes | on | always | `success` / `failure` / `timeout`, plus `cancelled` on the reactive stack — the field dashboards split by; decoupled from the level |
+| `adapter_outcome` | keyword | yes | on | always | `success` / `rejected` / `failure` / `timeout`, plus `cancelled` on the reactive stack — the field dashboards split by, naming who is responsible ([§7.3](#73-levels-and-outcomes)); decoupled from the level |
 | `adapter_duration_ms` | long | yes | on | always | from the injected monotonic source; until response close (RestClient — after the converter's read) resp. until the body's terminal signal was handed on to the consumer (WebClient — after the decoder's synchronous work in it) |
 | `adapter_request_method` | keyword | yes | on | always | |
 | `adapter_response_status_code` | short | yes | on | when a response arrived | absent for a refused connection, a timeout before the status line, or a cancellation before the response (`-> -`) |
@@ -825,12 +825,21 @@ Resolved in this order in each twin's `ExchangeLogEmitter`:
 | the call threw or errored (no response), or the body read threw or errored | `ERROR` | `failure` |
 | the subscription was abandoned by the caller — reactive stack only (a timeout operator, a disposed caller, a disconnect; a consumer that stops reading the body because it has read enough is `success`) | `WARN` | `cancelled` |
 | status ≥ 500 without an exception (the peer answered; the application decides) | `WARN` | `failure` |
+| status 401, 403, 408 or 429 without an exception (the peer refuses *us*: identity, the connection, quota) | `WARN` | `rejected` |
+| any other 4xx without an exception (the request was refused; the application handles it) | `INFO` | `rejected` |
 | otherwise | `INFO` | `success` |
 | … and the duration reached `slow-request-threshold` | `INFO → WARN` | unchanged, plus `adapter_slow: true` |
 
-A 4xx is a `success` at INFO: the peer answered as designed, and whether a 404 is a problem is the
-application's call — the status is on the line for the dashboard to split by. Slowness raises severity;
-it never turns a completed call into a failure.
+The outcome names who is responsible — nobody, the caller (this application), the peer, the clock —
+and the level carries the severity separately. A 4xx is `rejected` at INFO: the peer answered as
+designed, and whether a 404 on a lookup or a 409 of optimistic locking is a problem is the
+application's call. The four statuses that are about the application's own standing with the peer
+rather than about one request — expired credentials, a revoked permission, a peer that gave up waiting
+for us, a rate limit — are the rejections only an operator can resolve and reach the WARN channel; the
+set is fixed, pinned by `ClassificationTest`, and not a property
+([ADR-0012](adr/ADR-0012-a-4xx-answer-is-rejected.md)). A 408 is not a `timeout`: `timeout` means our wait ended without an answer, a 408
+is the peer's complete answer that we were too slow. Slowness raises severity; it never turns a
+completed call into a failure.
 
 ### 7.4 Meters
 
@@ -844,7 +853,7 @@ deliberately left to `http.client.requests` and the log fields.
 | Meter | Type | Tags | Meaning |
 |---|---|---|---|
 | `adapter.logging.failopen` | counter | `stage` = `emission` \| `arrival` \| `wiring` | Logging failures the fail-open path swallowed. `emission`: an exchange event was **lost**. `arrival`: a start line was lost. `wiring`: bookkeeping failed (pass-through degradation, a lost sample or counter) — the event usually still follows. A lost log line cannot report itself through the same pipeline; this counter is the independent channel. |
-| `adapter.logging.events` | counter | `outcome` = `success` \| `failure` \| `timeout` (\| `cancelled` on the reactive stack) | Exchange events actually **emitted** on the exchange logger — after the level gate, arrival lines excluded. The reconciliation ground truth against the log index. |
+| `adapter.logging.events` | counter | `outcome` = `success` \| `rejected` \| `failure` \| `timeout` (\| `cancelled` on the reactive stack) | Exchange events actually **emitted** on the exchange logger — after the level gate, arrival lines excluded. The reconciliation ground truth against the log index. |
 | `adapter.logging.exchanges.open` | gauge | `client` = `restclient` \| `webclient` | Exchanges between entry (wiring) and the exactly-once completion — response close, resp. the body's terminal signal. Hovers near the in-flight call count in health. Tagged per twin so that a host carrying both twins gets two gauges instead of Micrometer silently keeping the first one registered; sum over `client` for the total. |
 | `adapter.logging.correlation.id` | counter | `source` = `trace` \| `header` \| `generated` | Origin of each call's request id (ADR-0002). A re-entry by a retrying outer interceptor with the id generated on attempt 1 keeps counting `generated`. |
 | `adapter.response.body.read` | counter | `uri` = template with a placeholder, `UNKNOWN` otherwise; `host`; `name` = the client's name, `UNNAMED` otherwise ([§7.7](#77-naming-a-client)); `state` = `unread` \| `partial` \| `complete` | How far the application **consumed** the response body, opt-in via `measure-response-body-size`. Recorded once per call that received a response. `unread` = the response carried a body and the application never opened it — the discarded-payload share the counter exists to show (blocking stack: `toBodilessEntity()`, a `ResponseEntity<Void>`). `partial` = consumption started but the end of the body was never observed (a converter that stopped early, an exception mid-read, a consumer that stopped reading; on the reactive stack also Spring's body skip for `bodyToMono(Void.class)`). `complete` = the end was observed — or the answer carried no body at all (1xx, 204, 304, `Content-Length: 0`, the answer to a `HEAD`): nothing to consume, nothing discarded, counted `complete` on **both** stacks so a route of deletes does not read as discarded payload. On the blocking stack the end is observed either as the EOF or as the byte count reaching a trustworthy declared `Content-Length` (none with a `Content-Encoding`), because Spring's `ByteArrayHttpMessageConverter` reads exactly that many bytes and never asks for the EOF. The reactive stack's `toBodilessEntity()` **releases** the body — subscribes and drains it through the tee — and therefore counts `complete` with its bytes on the size sample; a body nobody subscribes to is never counted (the gauge shows it). The seam observes what flows, not why: read the `unread`/`partial` share per route, against how that route's client is written. Created lazily per tag set on first use. |
@@ -877,6 +886,7 @@ The meters are designed to cover each other's blind spots:
 | Is the **log pipeline** (appender, broker, index) losing events? | `sum(adapter.logging.events)` over a window ≠ count of indexed `adapter-http-exchange` documents for the same window |
 | Did the application stop propagating identity onto its calls? | the `generated` share of `correlation.id` rises (in a host with tracing configured it is zero by construction — [§7.6](#76-trace-correlation)) |
 | Are callers abandoning their own calls (operator timeouts, disconnects)? — reactive stack | `events{outcome=cancelled}` rises while `timeout` does not |
+| Is a peer refusing our requests (credentials, quota, a payload contract that changed)? | the `rejected` share of `events` rises; the log index splits it by `adapter_response_status_code` and `adapter_url_host` |
 | Is a call site discarding the payload it paid for? | the `unread` or `partial` share of `response.body.read{uri=...,host=...}` rises |
 | Are payloads growing beyond what the log captures? | `body.size` percentiles vs. `max-body-bytes` |
 | Which dependency is slow, or failing? | `adapter_url_host` on the log line — `adapter_name` where the calls go through a sidecar — split by `adapter_outcome`; not a meter of this module, `http.client.requests` has the latency histogram |

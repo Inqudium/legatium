@@ -42,11 +42,12 @@ internal enum class ClientLogField(
     private val type: KClass<out Any>,
 ) {
     /**
-     * ELK: `keyword`, index true, doc_values ON - aggregate. `success`, `failure` and `timeout` on both
-     * stacks, plus `cancelled` on the reactive one (a cancelled subscription is the reactive reality a
-     * blocking call cannot have), and the field a dashboard splits by - deliberately NOT the log level:
-     * a 5xx answer logs at WARN while a call that threw logs at ERROR, yet both carry `failure`. Panels
-     * key off this field, the level only carries severity.
+     * ELK: `keyword`, index true, doc_values ON - aggregate. `success`, `rejected`, `failure` and
+     * `timeout` on both stacks, plus `cancelled` on the reactive one (a cancelled subscription is the
+     * reactive reality a blocking call cannot have), and the field a dashboard splits by - deliberately
+     * NOT the log level: a 5xx answer logs at WARN while a call that threw logs at ERROR, yet both carry
+     * `failure`; a 404 and a 401 both carry `rejected` at INFO resp. WARN. Panels key off this field,
+     * the level only carries severity.
      */
     OUTCOME("adapter_outcome", String::class),
 

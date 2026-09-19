@@ -59,7 +59,7 @@ and bodies — and the identity in the MDC. A client the host named reads by tha
 target (`Adapter http exchange POST things -> 200 [...]`); the target stays in the MDC and the fields.
 The trace ids come from the `traceparent` header the host's tracing propagation put on the request; on a
 traceless call the module sends an `X-Correlation-Id` instead, so the peer can quote it. Outcomes:
-`success`, `failure`, `timeout`, and on the reactive stack `cancelled`.
+`success`, `rejected` (a 4xx), `failure`, `timeout`, and on the reactive stack `cancelled`.
 
 ## Documentation
 
