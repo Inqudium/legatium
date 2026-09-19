@@ -143,7 +143,7 @@ internal class ClientLoggingMetrics private constructor(
      */
     private data class BodyMeterKey(
         val meterName: String,
-        val uri: String,
+        val uriTemplate: String,
         val host: String,
         val name: String,
         val state: String? = null,
@@ -296,7 +296,7 @@ internal class ClientLoggingMetrics private constructor(
                     Counter
                         .builder(RESPONSE_BODY_READ_METER)
                         .description("Exchanges by how far the application consumed the response body: unread, partial, or complete")
-                        .tag("uri", key.uri)
+                        .tag("uri", key.uriTemplate)
                         .tag("host", key.host)
                         .tag("name", key.name)
                         .tag("state", state.tagValue)
@@ -396,7 +396,7 @@ internal class ClientLoggingMetrics private constructor(
                             .builder(meterName)
                             .baseUnit("bytes")
                             .description("Bytes of the body that actually flowed through the exchange")
-                            .tag("uri", key.uri)
+                            .tag("uri", key.uriTemplate)
                             .tag("host", key.host)
                             .tag("name", key.name)
                             .register(registry)
