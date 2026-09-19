@@ -2,13 +2,16 @@ package eu.inqudium.legatium.restclient.logging
 
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.ClientLoggingPropertyOrigins
+import eu.inqudium.legatium.common.ClientObservationWiring
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.NanoTimeSource
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.composite.CompositeMeterRegistry
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.ListableBeanFactory
 import org.springframework.beans.factory.ObjectProvider
+import org.springframework.beans.factory.SmartInitializingSingleton
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBooleanProperty
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
@@ -43,8 +46,10 @@ import org.springframework.core.env.Environment
  * At DEBUG on this class's logger the auto-configuration reports what it did, so a host can tell from
  * its own log whether the module is switched on and whether a builder was actually configured: one
  * line when the configuration is active (the switch is on), one when the interceptor bean is registered
- * (with the bound properties, the masking key redacted), one per customizer registered, and one per
- * `RestClient.Builder` or `RestTemplate` the customizers attached the interceptor to. With
+ * (with the bound properties, the masking key redacted), one saying whether Boot's client observation
+ * and Micrometer Tracing are wired next to the module - the decision behind the identity contract of
+ * ADR-0002, which has no property ([ClientObservationWiring]) -, one per customizer registered, and one
+ * per `RestClient.Builder` or `RestTemplate` the customizers attached the interceptor to. With
  * `adapter-logging.enabled=false` none of them appears - Boot's condition evaluation report (DEBUG on
  * `org.springframework.boot.autoconfigure`) then names the property as the reason.
  *
@@ -98,13 +103,31 @@ class ClientLoggingAutoConfiguration {
         if (log.isTraceEnabled) {
             val bound = boundProperties.ifAvailable
             if (bound == null) {
-                log.trace("Adapter logging property origins are unavailable - no BoundConfigurationProperties bean in this context")
+                log.trace(
+                    "Adapter logging cannot tell where its adapter-logging.* values came from (which file, environment " +
+                        "variable or command-line argument set them); the values above are in effect nonetheless. " +
+                        "Adapter logging property origins are unavailable - no BoundConfigurationProperties bean in this context",
+                )
             } else {
                 ClientLoggingPropertyOrigins.describe(bound.all, environment).forEach(log::trace)
             }
         }
         return ClientRequestLoggingInterceptor(properties, nanoTime, correlationIds, meterRegistry.getIfAvailable { CompositeMeterRegistry() }, masker)
     }
+
+    /**
+     * The observation line of the wiring report ([ClientObservationWiring]) - logged once every singleton
+     * exists, because Boot declares its observation customizers under their interface type and only the
+     * instance tells them apart from a host's. Independent of the interceptor bean above: the line is about the
+     * context, and appears also when a host replaced the bean.
+     */
+    @Bean
+    fun clientLoggingObservationReport(beanFactory: ListableBeanFactory): SmartInitializingSingleton =
+        SmartInitializingSingleton {
+            if (log.isDebugEnabled) {
+                log.debug(ClientObservationWiring.describe(beanFactory, OBSERVATION_CUSTOMIZERS))
+            }
+        }
 
     /**
      * Attaches the interceptor to every `RestClient.Builder` Boot hands out (and to every HTTP service
@@ -159,6 +182,13 @@ class ClientLoggingAutoConfiguration {
          * `@Order` below `LOWEST_PRECEDENCE - 10`, `@Order(0)` being the usual choice).
          */
         const val CUSTOMIZER_ORDER = Ordered.LOWEST_PRECEDENCE - 10
+
+        /** Boot's observation customizers for the two builders this twin attaches to, by class name (optional classes). */
+        private val OBSERVATION_CUSTOMIZERS =
+            mapOf(
+                "org.springframework.boot.restclient.observation.ObservationRestClientCustomizer" to "RestClient.Builder",
+                "org.springframework.boot.restclient.observation.ObservationRestTemplateCustomizer" to "RestTemplate",
+            )
 
         /** The wiring report of the class KDoc, at DEBUG; the exchange lines have their own logger. */
         private val log = LoggerFactory.getLogger(ClientLoggingAutoConfiguration::class.java)

@@ -11,10 +11,14 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.boot.autoconfigure.AutoConfigurations
+import org.springframework.boot.micrometer.observation.autoconfigure.ObservationAutoConfiguration
+import org.springframework.boot.micrometer.tracing.autoconfigure.MicrometerTracingAutoConfiguration
+import org.springframework.boot.micrometer.tracing.brave.autoconfigure.BraveAutoConfiguration
 import org.springframework.boot.test.context.FilteredClassLoader
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
 import org.springframework.boot.webclient.WebClientCustomizer
 import org.springframework.boot.webclient.autoconfigure.WebClientAutoConfiguration
+import org.springframework.boot.webclient.autoconfigure.WebClientObservationAutoConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.annotation.Order
@@ -95,11 +99,15 @@ class ClientLoggingAutoConfigurationTest {
     @Test
     fun `should report at DEBUG that it is enabled and every builder it configured`() {
         // What is tested: the wiring report on the auto-configuration's own logger - the line for the
-        //   active switch, the filter bean with its properties (masking key redacted), the customizer,
-        //   and one line per WebClient.Builder the customizer actually touched.
+        //   active switch, the filter bean with its properties (masking key redacted), the outcome of the
+        //   context-propagation detection (ADR-0010), the observation line for a context without Boot's
+        //   client observation, the customizer, and one line per WebClient.Builder the customizer
+        //   actually touched.
         // Success criteria: after obtaining Boot's WebClient.Builder twice, the DEBUG events contain
         //   the enabled line, the bean line naming the bound logger and a redacted masking key, the
-        //   customizer line, and two attach lines each reporting zero earlier filters.
+        //   restore line for a classpath that has context-propagation (this test's), the
+        //   no-observation line, the customizer line, and two attach lines each reporting zero earlier
+        //   filters.
         // Why it matters: an operator asking "is the module on, and did it configure my client?" reads
         //   the answer from the host's log at DEBUG instead of decompiling the customizer order.
         // Given: the auto-configuration's logger captured at DEBUG
@@ -114,6 +122,8 @@ class ClientLoggingAutoConfigurationTest {
                 val messages = log.events.filter { it.level == Level.DEBUG }.map { it.formattedMessage }
                 assertThat(messages).contains(
                     "Adapter logging is enabled - the auto-configuration is active (adapter-logging.enabled is not false)",
+                    "Adapter logging restores the caller's thread-locals (its MDC) around every exchange line from the Reactor Context - io.micrometer:context-propagation is on the classpath",
+                    "Adapter logging found no client observation - Boot's observation auto-configuration for WebClient.Builder is not active (no ObservationRegistry bean, or the observation module is absent); the module generates the request id and sends X-Correlation-Id on every call that carries no traceparent",
                     "Adapter logging registered its WebClientCustomizer - the filter is attached to every WebClient.Builder Boot hands out",
                 )
                 assertThat(messages.filter { it == "Adapter logging attached its filter to a WebClient.Builder behind 0 earlier filter(s)" }).hasSize(2)
@@ -125,6 +135,46 @@ class ClientLoggingAutoConfigurationTest {
                         .doesNotContain("maskingKey=k")
                 }
             }
+        } finally {
+            log.detach()
+        }
+    }
+
+    @Test
+    fun `should report at DEBUG whether Boot's client observation and tracing are wired`() {
+        // What is tested: the observation line of the wiring report against Boot's REAL observation
+        //   and tracing auto-configurations - once with a Brave bridge (a Tracer bean), once with the
+        //   observation registry alone.
+        // Success criteria: with tracing, the line names the builder as observed and traced (trace id
+        //   is the request id, no correlation header); without a tracer, the observed-not-traced line
+        //   with the generated-id consequence. The no-observation line is pinned by the test above.
+        // Why it matters: the decision has no property; this line is where an operator reads why the
+        //   peer sees (or does not see) an X-Correlation-Id - and the test breaks when a Boot upgrade
+        //   renames the customizer bean the detection looks for.
+        // Given: the auto-configuration's logger captured at DEBUG
+        val log = CapturedLogger(ClientLoggingAutoConfiguration::class.java.name, Level.DEBUG)
+        val observed = contextRunner.withConfiguration(AutoConfigurations.of(ObservationAutoConfiguration::class.java, WebClientObservationAutoConfiguration::class.java))
+        try {
+            // When: observation with a tracing bridge
+            observed
+                .withConfiguration(AutoConfigurations.of(BraveAutoConfiguration::class.java, MicrometerTracingAutoConfiguration::class.java))
+                .run { context ->
+                    assertThat(context).hasNotFailed()
+                    context.getBean(ClientRequestLoggingFilter::class.java)
+                }
+
+            // Then
+            assertThat(log.events.map { it.formattedMessage }).contains("Adapter logging found Boot's client observation with Micrometer Tracing wired for WebClient.Builder - every call built there goes out with a traceparent, its trace id is the request id and no X-Correlation-Id is generated")
+
+            // When: observation alone
+            log.appender.list.clear()
+            observed.run { context ->
+                assertThat(context).hasNotFailed()
+                context.getBean(ClientRequestLoggingFilter::class.java)
+            }
+
+            // Then
+            assertThat(log.events.map { it.formattedMessage }).contains("Adapter logging found Boot's client observation wired for WebClient.Builder but no Micrometer Tracing - calls are observed, not traced, so the module generates the request id and sends X-Correlation-Id on every call that carries no traceparent")
         } finally {
             log.detach()
         }
@@ -157,7 +207,7 @@ class ClientLoggingAutoConfigurationTest {
                         assertThat(line).startsWith("Adapter logging property adapter-logging.logger-name = outbound (origin: ").contains("from property source \"test\"")
                     }
                     assertThat(traces).anySatisfy { line ->
-                        assertThat(line).startsWith("Adapter logging property adapter-logging.logger-name = base (origin: ").contains("host-defaults").contains(") is shadowed by ")
+                        assertThat(line).startsWith("+- Adapter logging property adapter-logging.logger-name = base (origin: ").contains("host-defaults").contains(") is shadowed by ")
                     }
                     assertThat(traces).anySatisfy { line ->
                         assertThat(line).startsWith("Adapter logging property adapter-logging.masking-key = <redacted> (origin: ")

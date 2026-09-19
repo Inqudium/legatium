@@ -28,9 +28,9 @@ internal object ClientLoggingPropertyOrigins {
 
     /**
      * One line per `adapter-logging.*` value in [bound] (the effective value and its origin), followed by
-     * one line per value of the same name a lower-precedence source of [environment] also holds; or a
-     * single line saying that no key is set anywhere. Sorted by name, so a report reads like the
-     * reference configuration.
+     * one line per value of the same name a lower-precedence source of [environment] also holds - indented
+     * with `+- ` under the effective value, so the shadowed values read as a tree; or a single line saying
+     * that no key is set anywhere. Sorted by name, so a report reads like the reference configuration.
      */
     fun describe(
         bound: Map<ConfigurationPropertyName, ConfigurationProperty>,
@@ -51,7 +51,7 @@ internal object ClientLoggingPropertyOrigins {
                     .drop(1)
                     .forEach { shadowed ->
                         add(
-                            "Adapter logging property ${shadowed.name} = ${render(shadowed)} " +
+                            "+- Adapter logging property ${shadowed.name} = ${render(shadowed)} " +
                                 "(origin: ${shadowed.origin?.toString() ?: "unknown origin"}) is shadowed by $effectiveOrigin",
                         )
                     }

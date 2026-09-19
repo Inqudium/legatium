@@ -172,12 +172,27 @@ what it did — the answer to "is the module on, and did it configure my client?
 ```
 Adapter logging is enabled - the auto-configuration is active (adapter-logging.enabled is not false)
 Adapter logging registered its ClientRequestLoggingFilter bean with ClientLoggingProperties(enabled=true, loggerName=adapter-http-exchange, …, maskingKey=<redacted>)
+Adapter logging restores the caller's thread-locals (its MDC) around every exchange line from the Reactor Context - io.micrometer:context-propagation is on the classpath
 Adapter logging registered its WebClientCustomizer - the filter is attached to every WebClient.Builder Boot hands out
+Adapter logging found Boot's client observation with Micrometer Tracing wired for WebClient.Builder - every call built there goes out with a traceparent, its trace id is the request id and no X-Correlation-Id is generated
 Adapter logging attached its filter to a WebClient.Builder behind 0 earlier filter(s)
 ```
 
-The first three appear once at context start (the bean line only when the bean is the module's own,
-not a host's — [Common guide §3](../../docs/GUIDE.md#3-overriding-beans)); the attach line appears once
+The first five appear once at context start (the bean line and the restore line only when the bean is
+the module's own, not a host's — [Common guide §3](../../docs/GUIDE.md#3-overriding-beans)). The
+observation line is logged once every singleton exists and states whether Boot's client observation
+and Micrometer Tracing are wired next to the module — the decision behind the identity contract of
+[Common guide §7.6](../../docs/GUIDE.md#76-trace-correlation), which has no property: without a
+tracing bridge it reads
+`Adapter logging found Boot's client observation wired for WebClient.Builder but no Micrometer Tracing - calls are observed, not traced, so the module generates the request id and sends X-Correlation-Id on every call that carries no traceparent`,
+without Boot's observation at all
+`Adapter logging found no client observation - Boot's observation auto-configuration for WebClient.Builder is not active (no ObservationRegistry bean, or the observation module is absent); the module generates the request id and sends X-Correlation-Id on every call that carries no traceparent`.
+It describes the wiring, not the fate of a call — a host can still switch the observation off per
+client or build a client by hand. The restore
+line is the outcome of the classpath detection of [§2.6](#26-mdc-and-the-reactive-call): without
+`io.micrometer:context-propagation` it reads
+`Adapter logging emits every exchange line with the completing thread's MDC only - io.micrometer:context-propagation is not on the classpath, so the caller's thread-locals are not restored`
+— the one place a host can read this, since the opt-in has no property. The attach line appears once
 per `WebClient.Builder` Boot hands out, and its count of earlier filters is the position the customizer
 order gave the module ([§3.3](#33-filter-order-and-other-filters)). With `adapter-logging.enabled=false`
 none of them appears; Boot's condition evaluation report (DEBUG on
@@ -187,13 +202,13 @@ none of them appears; Boot's condition evaluation report (DEBUG on
 
 At **TRACE** the bean line is followed by where every `adapter-logging.*` value came from — Boot's
 origin of each value it bound, one line per key, then every value of the same name a lower-precedence
-source also holds, marked as shadowed. The masking key is rendered redacted whatever its source; keys
+source also holds, marked as shadowed and indented with `+- ` under the winner. The masking key is rendered redacted whatever its source; keys
 no source sets are the class defaults and are not listed:
 
 ```
 Adapter logging property adapter-logging.exclude-hosts[0] = pushgateway (origin: class path resource [application.yml] - 20:7)
 Adapter logging property adapter-logging.logger-name = outbound (origin: class path resource [application-prod.yml] - 3:16)
-Adapter logging property adapter-logging.logger-name = adapter-http-exchange (origin: class path resource [application.yml] - 12:16) is shadowed by class path resource [application-prod.yml] - 3:16
++- Adapter logging property adapter-logging.logger-name = adapter-http-exchange (origin: class path resource [application.yml] - 12:16) is shadowed by class path resource [application-prod.yml] - 3:16
 Adapter logging property adapter-logging.masking-key = <redacted> (origin: System Environment Property "ADAPTER_LOGGING_MASKING_KEY")
 ```
 

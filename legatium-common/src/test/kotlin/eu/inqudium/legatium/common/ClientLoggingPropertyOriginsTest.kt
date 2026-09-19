@@ -20,8 +20,8 @@ class ClientLoggingPropertyOriginsTest {
         //   logger name and the masking key, a lower one setting the logger name too and an excluded
         //   host - with the bound map produced by Boot's own binder and tracking handler.
         // Success criteria: one line per effective value, sorted by name, each naming its source; the
-        //   lower logger name reported as shadowed by the higher source's origin; the masking key
-        //   rendered redacted; the raw key nowhere in the output.
+        //   lower logger name reported as shadowed by the higher source's origin and indented with "+- "
+        //   under the effective value; the masking key rendered redacted; the raw key nowhere in the output.
         // Why it matters: "why is my application.yml value not in effect" is answered by the shadowed
         //   line; a leaked masking key would turn a TRACE report into a secret dump.
         // Given
@@ -38,7 +38,7 @@ class ClientLoggingPropertyOriginsTest {
         assertThat(lines).containsExactly(
             "Adapter logging property adapter-logging.exclude-hosts[0] = pushgateway (origin: \"adapter-logging.exclude-hosts[0]\" from property source \"lower\")",
             "Adapter logging property adapter-logging.logger-name = outbound (origin: \"adapter-logging.logger-name\" from property source \"higher\")",
-            "Adapter logging property adapter-logging.logger-name = base (origin: \"adapter-logging.logger-name\" from property source \"lower\") " +
+            "+- Adapter logging property adapter-logging.logger-name = base (origin: \"adapter-logging.logger-name\" from property source \"lower\") " +
                 "is shadowed by \"adapter-logging.logger-name\" from property source \"higher\"",
             "Adapter logging property adapter-logging.masking-key = <redacted> (origin: \"adapter-logging.masking-key\" from property source \"higher\")",
         )

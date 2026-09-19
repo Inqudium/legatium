@@ -179,7 +179,7 @@ internal class ClientLoggingMetrics private constructor(
                     .tag("source", source.tagValue)
                     .description(
                         "Origin of the exchange's request id: the traceparent trace id, " +
-                            "the correlation header already on the request, or generated and sent (ADR-0002)",
+                            "the correlation header already on the request, or generated and sent",
                     ).register(registry)
             }
         }

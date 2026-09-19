@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`ClientLoggingPropertyOrigins` in `legatium-common`, one rendering for both twins). Nothing is
   logged with `adapter-logging.enabled=false`. The auto-configuration tests pin the lines and the
   silence, the common module's test the rendering.
+- WebClient twin: the wiring report also states whether the caller's thread-locals (its MDC) are
+  restored around every exchange line - the outcome of the classpath detection of ADR-0010, which has
+  no property and was so far readable nowhere: one line when `io.micrometer:context-propagation` is
+  present, another when it is absent. Pinned by the auto-configuration test.
+- Both twins: the wiring report states whether Boot's **client observation** and Micrometer Tracing
+  are wired next to the module - the decision behind the identity contract of ADR-0002 (a traced call
+  takes the trace id as its request id and gets no `X-Correlation-Id`), which has no property and was
+  so far readable only per call. One of three lines, logged once every singleton exists: observation
+  with tracing, observation without a tracing bridge, no observation (`ClientObservationWiring` in
+  `legatium-common`, matching by class name so the optional libraries stay optional). Pinned by the
+  auto-configuration tests against Boot's real observation and Brave auto-configurations.
 
 ### Changed
 
