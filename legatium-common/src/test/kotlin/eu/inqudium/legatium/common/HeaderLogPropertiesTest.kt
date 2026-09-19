@@ -141,6 +141,26 @@ class HeaderLogPropertiesTest {
     }
 
     @Test
+    fun `should drop an excluded name from explicit and wildcard includes whatever its case`() {
+        // What is tested: the `includes minus excludes` rule of select on both include paths - the
+        //   explicit one (the name is looked up directly, never through availableNames) and the
+        //   wildcard one - with the exclude spelled in a different case than the include.
+        // Success criteria: the excluded header is absent from both selections, the other included
+        //   header present.
+        // Why it matters: excludes is the operator's confidentiality list on top of includes; a
+        //   case-sensitive comparison would log a header the operator excluded - masked by default,
+        //   but there.
+        // Given
+        val values = mapOf("Set-Cookie" to "session=abc", "Accept" to "text/plain")
+        val explicit = HeaderLogProperties(includes = listOf("Accept", "Set-Cookie"), excludes = listOf("set-cookie"), masked = emptyList())
+        val wildcard = HeaderLogProperties(includes = listOf("*"), excludes = listOf("SET-COOKIE"), masked = emptyList())
+
+        // When/Then
+        assertThat(explicit.select(values.keys, HeaderValueMasker.DEFAULT) { values[it] }).containsExactly("Accept" to "text/plain")
+        assertThat(wildcard.select(values.keys, HeaderValueMasker.DEFAULT) { values[it] }).containsExactly("Accept" to "text/plain")
+    }
+
+    @Test
     fun `should reject blank entries in every list at construction time`() {
         // What is tested: the four blank-entry checks - the validation surface the masking fuzz target
         //   relies on (it catches the IllegalArgumentException) but never proves.

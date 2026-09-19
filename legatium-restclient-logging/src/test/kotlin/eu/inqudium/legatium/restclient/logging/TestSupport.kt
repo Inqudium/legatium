@@ -25,6 +25,7 @@ import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 /** The key-value pairs of an event as a map, for assertions on the `adapter_*` family. */
@@ -42,11 +43,14 @@ internal fun interceptorWith(
     correlationId: String = "generated-42",
 ): ClientRequestLoggingInterceptor = ClientRequestLoggingInterceptor(properties, NanoTimeSource { ticker.get() }, CorrelationIdGenerator { correlationId }, registry)
 
-/** Runs [block] on a fresh thread and returns its result - the case of a close that does not happen on the caller's thread. */
+/**
+ * Runs [block] on a fresh thread and returns its result - the case of a close that does not happen on
+ * the caller's thread. Bounded: a close that blocks fails the test instead of hanging the suite.
+ */
 internal fun <T> onAnotherThread(block: () -> T): T {
     val executor = Executors.newSingleThreadExecutor()
     try {
-        return executor.submit(block).get()
+        return executor.submit(block).get(30, TimeUnit.SECONDS)
     } finally {
         executor.shutdownNow()
     }
@@ -138,6 +142,11 @@ abstract class PeerIntegrationSuite {
      */
     internal lateinit var log: CapturedLogger
 
+    private val closeables = mutableListOf<AutoCloseable>()
+
+    /** Registers an engine resource to be released after the test. */
+    protected fun <T : AutoCloseable> closing(resource: T): T = resource.also { closeables += it }
+
     @BeforeEach
     fun attachLogAndClearPeerRecord() {
         log = CapturedLogger("adapter-http-exchange")
@@ -145,8 +154,10 @@ abstract class PeerIntegrationSuite {
     }
 
     @AfterEach
-    fun detachLog() {
+    fun detachLogAndReleaseEngineResources() {
         log.detach()
+        closeables.reversed().forEach { runCatching { it.close() } }
+        closeables.clear()
     }
 
     companion object {

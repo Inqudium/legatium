@@ -249,16 +249,18 @@ internal class ClientLoggingMetrics private constructor(
         host: String?,
         name: String?,
         state: BodyReadState,
-    ) = registerOrFallback(RESPONSE_BODY_READ_METER) { registry ->
-        Counter
-            .builder(RESPONSE_BODY_READ_METER)
-            .description("Exchanges by how far the application consumed the response body: unread, partial, or complete")
-            .tag("uri", uriTag(template))
-            .tag("host", host ?: UNKNOWN_HOST)
-            .tag("name", name ?: UNNAMED_ADAPTER)
-            .tag("state", state.tagValue)
-            .register(registry)
-    }.increment()
+    ) = updateQuietly(RESPONSE_BODY_READ_METER) {
+        registerOrFallback(RESPONSE_BODY_READ_METER) { registry ->
+            Counter
+                .builder(RESPONSE_BODY_READ_METER)
+                .description("Exchanges by how far the application consumed the response body: unread, partial, or complete")
+                .tag("uri", uriTag(template))
+                .tag("host", host ?: UNKNOWN_HOST)
+                .tag("name", name ?: UNNAMED_ADAPTER)
+                .tag("state", state.tagValue)
+                .register(registry)
+        }.increment()
+    }
 
     /**
      * Registers through [register] against the host registry; on rejection - Micrometer refusing the id,
@@ -291,13 +293,14 @@ internal class ClientLoggingMetrics private constructor(
     }
 
     /**
-     * Isolates an OPERATIONAL counter update from the exchange it observes: registration succeeded, but
-     * a host `Counter` may still throw on increment. The failure is counted `stage=wiring` on EVERY call
-     * (bookkeeping lost, event unaffected - the count is the measure of the loss) but warned ONCE per
-     * meter name, like a registration conflict: a permanently broken host counter is hit twice per
-     * exchange, and a warning per hit would drown the module's curated one-time warnings under load.
-     * The fail-open counter itself is reported through [reportQuietly], so a registry broken as a whole
-     * is silently dropped rather than escaping.
+     * Isolates an OPERATIONAL meter update from the exchange it observes: registration succeeded, but a
+     * host `Counter` or `DistributionSummary` may still throw on update. The failure is counted
+     * `stage=wiring` on EVERY call (bookkeeping lost, event unaffected - the count is the measure of the
+     * loss) but warned ONCE per meter name, like a registration conflict: a permanently broken host
+     * meter is hit up to five times per measured exchange (the two fixed counters and the three body
+     * meters), and a warning per hit would drown the module's curated one-time warnings under load. The
+     * fail-open counter itself is reported through [reportQuietly], so a registry broken as a whole is
+     * silently dropped rather than escaping.
      */
     private inline fun updateQuietly(
         meterName: String,
@@ -326,7 +329,8 @@ internal class ClientLoggingMetrics private constructor(
      * and the client's name ([AdapterName], `UNNAMED` for a client the host did not name). A zero-byte
      * body records no sample - the distribution describes bodies that exist, and the sum stays exact
      * either way. The summaries are created per tag set on first use; Micrometer's registry
-     * deduplicates by id.
+     * deduplicates by id. Guarded like the fixed counters ([updateQuietly]): a host summary that throws
+     * on record is counted per hit and warned once.
      */
     private fun recordBodySize(
         meterName: String,
@@ -338,16 +342,18 @@ internal class ClientLoggingMetrics private constructor(
         if (bytes == 0L) {
             return
         }
-        registerOrFallback(meterName) { registry ->
-            DistributionSummary
-                .builder(meterName)
-                .baseUnit("bytes")
-                .description("Bytes of the body that actually flowed through the exchange")
-                .tag("uri", uriTag(template))
-                .tag("host", host ?: UNKNOWN_HOST)
-                .tag("name", name ?: UNNAMED_ADAPTER)
-                .register(registry)
-        }.record(bytes.toDouble())
+        updateQuietly(meterName) {
+            registerOrFallback(meterName) { registry ->
+                DistributionSummary
+                    .builder(meterName)
+                    .baseUnit("bytes")
+                    .description("Bytes of the body that actually flowed through the exchange")
+                    .tag("uri", uriTag(template))
+                    .tag("host", host ?: UNKNOWN_HOST)
+                    .tag("name", name ?: UNNAMED_ADAPTER)
+                    .register(registry)
+            }.record(bytes.toDouble())
+        }
     }
 
     companion object {

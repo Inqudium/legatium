@@ -12,6 +12,9 @@ import io.micrometer.context.ContextRegistry
 import io.micrometer.context.ThreadLocalAccessor
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import org.reactivestreams.Publisher
+import org.reactivestreams.Subscriber
+import org.reactivestreams.Subscription
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
 import org.springframework.core.io.buffer.DataBuffer
@@ -21,9 +24,11 @@ import org.springframework.http.HttpStatus
 import org.springframework.web.reactive.function.client.ClientRequest
 import org.springframework.web.reactive.function.client.ClientResponse
 import org.springframework.web.reactive.function.client.ExchangeFunction
+import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import java.net.URI
 import java.time.Duration
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -80,6 +85,47 @@ internal fun filterWith(
     registry: MeterRegistry = SimpleMeterRegistry(),
     correlationId: String = "generated-42",
 ): ClientRequestLoggingFilter = ClientRequestLoggingFilter(properties, NanoTimeSource { ticker.get() }, CorrelationIdGenerator { correlationId }, registry)
+
+/**
+ * A response whose body refuses a SECOND subscription the way Spring's `AbstractClientHttpResponse` -
+ * the base of the JDK, Jetty and HttpComponents connector responses - does: the first subscriber gets
+ * [body], every later one an `onSubscribe` followed by the `IllegalStateException` Spring's own release
+ * path swallows. Reactor Netty, by contrast, completes a second subscriber empty; `Flux.just` bodies
+ * replay - neither shape proves anything about a second subscription.
+ */
+internal fun singleSubscriber(
+    body: String,
+    status: HttpStatus = HttpStatus.OK,
+): ClientResponse {
+    val subscribed = AtomicBoolean(false)
+    val once =
+        Flux.defer {
+            if (subscribed.compareAndSet(false, true)) {
+                Flux.just(buffer(body))
+            } else {
+                Flux.error(IllegalStateException("The client response body can only be consumed once"))
+            }
+        }
+    return ClientResponse.create(status).body(once).build()
+}
+
+/** A publisher that ignores cancellation - the Reactive-Streams-permitted late onNext, made deterministic. */
+internal class ManualPublisher : Publisher<DataBuffer> {
+    private lateinit var subscriber: Subscriber<in DataBuffer>
+
+    override fun subscribe(s: Subscriber<in DataBuffer>) {
+        subscriber = s
+        s.onSubscribe(
+            object : Subscription {
+                override fun request(n: Long) = Unit
+
+                override fun cancel() = Unit
+            },
+        )
+    }
+
+    fun emit(buffer: DataBuffer) = subscriber.onNext(buffer)
+}
 
 /** Runs the call the way `retrieve().bodyToMono(String)` does: exchange, then consume the body. */
 internal fun ClientRequestLoggingFilter.call(

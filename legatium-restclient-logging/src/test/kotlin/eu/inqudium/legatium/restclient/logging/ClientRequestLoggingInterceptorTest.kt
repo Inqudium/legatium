@@ -358,6 +358,44 @@ class ClientRequestLoggingInterceptorTest {
                     .count(),
             ).isEqualTo(1.0)
         }
+
+        @Test
+        fun `should keep the event and count the teardown as wiring when the restored scope fails to close`() {
+            // What is tested: restoreQuietly - the teardown half of the fail-open rule: the line counts
+            //   as emitted, a scope whose close throws is bookkeeping.
+            // Success criteria: the event exists with its outcome; the fail-open meter shows stage=wiring
+            //   at 1 and stage=emission at 0.
+            // Why it matters: the scope's close runs in the emission's finally; a close that threw INTO
+            //   the emission guard would count a lost line where the line was written.
+            // Given: a restorer whose scope refuses to close
+            MDC.put(key, "inbound-7")
+            val response = interceptor.intercept(request(), ByteArray(0), answering())
+            interceptor.emitter.callerMdcRestorer = CallerMdcRestorer { AutoCloseable { throw IllegalStateException("scope refused") } }
+
+            // When
+            try {
+                onAnotherThread { response.consumeAndClose() }
+            } finally {
+                interceptor.emitter.callerMdcRestorer = CallerMdcRestorer.DEFAULT
+            }
+
+            // Then
+            assertThat(keyValues(pinned.events.single())).containsEntry("adapter_outcome", "success")
+            assertThat(
+                meterRegistry
+                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
+                    .tag("stage", "wiring")
+                    .counter()
+                    .count(),
+            ).isEqualTo(1.0)
+            assertThat(
+                meterRegistry
+                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
+                    .tag("stage", "emission")
+                    .counter()
+                    .count(),
+            ).isZero()
+        }
     }
 
     @Nested

@@ -53,6 +53,21 @@ import java.util.concurrent.atomic.AtomicBoolean
  * occupancy, whose close comes after the converter's read. A `retry` that resubscribes synchronously
  * from `onError` runs the next attempt's wiring (and, with a connector that answers synchronously,
  * the whole attempt) before this attempt's line is written - the lines then appear in reverse order.
+ *
+ * ## Only the first subscription is observed
+ *
+ * The exchange has ONE body; the ownership of its terminal signal belongs to the first subscription,
+ * not to every subscription. Spring subscribes to a body a second time as a matter of course:
+ * `exchangeToMono`/`exchangeToFlux` release the body after the handler returned (`releaseIfNotConsumed`),
+ * and the JDK, Jetty and HttpComponents responses answer any second subscription with an error
+ * ("The client response body can only be consumed once") that Spring swallows - Reactor Netty completes
+ * it empty. Were every subscription observed, that synchronous error would arrive INSIDE the first
+ * subscription's `actual.onComplete()` (the release runs from the decoder's completion), before the
+ * first observer reached [onTerminal], and would win the exchange's completion as a `failure`: every
+ * healthy `exchangeToMono` call logged at ERROR on three of the four connectors. So the first
+ * subscription tees, marks the read state and completes the exchange; every later one passes through
+ * unobserved, whatever the source answers it. Pinned by the filter's unit test on a single-subscriber
+ * body and by the `exchangeToMono` scenario of the connector contract.
  */
 internal class ObservedBody(
     source: Flux<DataBuffer>,
@@ -61,7 +76,13 @@ internal class ObservedBody(
     private val onTerminal: (Exchange) -> Unit,
     private val onTeeFailure: (Exception) -> Unit,
 ) : FluxOperator<DataBuffer, DataBuffer>(source) {
+    private val subscribed = AtomicBoolean(false)
+
     override fun subscribe(actual: CoreSubscriber<in DataBuffer>) {
+        if (!subscribed.compareAndSet(false, true)) {
+            source.subscribe(actual)
+            return
+        }
         capture?.markStarted()
         source.subscribe(Observer(actual))
     }

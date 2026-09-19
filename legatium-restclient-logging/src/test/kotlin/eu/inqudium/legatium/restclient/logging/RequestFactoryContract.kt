@@ -6,7 +6,6 @@ import eu.inqudium.legatium.common.MdcKeys
 import io.micrometer.core.instrument.MeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
-import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -67,17 +66,6 @@ abstract class RequestFactoryContract : PeerIntegrationSuite() {
     @Autowired
     private lateinit var registry: MeterRegistry
 
-    private val closeables = mutableListOf<AutoCloseable>()
-
-    /** Registers an engine resource to be released after the test. */
-    protected fun <T : AutoCloseable> closing(resource: T): T = resource.also { closeables += it }
-
-    @AfterEach
-    fun releaseEngineResources() {
-        closeables.reversed().forEach { runCatching { it.close() } }
-        closeables.clear()
-    }
-
     /** A client on this engine; [timeout] applies to connect AND read - SHORT only where the timeout is the subject. */
     private fun client(
         baseUrl: String,
@@ -107,7 +95,12 @@ abstract class RequestFactoryContract : PeerIntegrationSuite() {
         // Why it matters: an engine whose stream never returned the EOF the tee waits for, or that
         //   handed out a body the converter reads differently, would log a partial read or empty bodies
         //   without any other symptom.
-        // Given/When
+        // Given: the counts before the call - the registry belongs to the cached context the engine
+        //   suites share, so the assertion is a delta, not an absolute
+        val completeBefore = readStateCount("complete")
+        val partialBefore = readStateCount("partial")
+
+        // When
         val body =
             client(peer.baseUrl)
                 .post()
@@ -133,8 +126,8 @@ abstract class RequestFactoryContract : PeerIntegrationSuite() {
             .containsEntry("adapter_request_body", "hello")
             .containsEntry("adapter_response_body", """{"id":7,"echo":"hello"}""")
         assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, received.header("X-Correlation-Id"))
-        assertThat(readStateCount("complete")).describedAs("complete reads").isEqualTo(1.0)
-        assertThat(readStateCount("partial")).describedAs("partial reads").isZero()
+        assertThat(readStateCount("complete") - completeBefore).describedAs("complete reads").isEqualTo(1.0)
+        assertThat(readStateCount("partial") - partialBefore).describedAs("partial reads").isZero()
     }
 
     @Test

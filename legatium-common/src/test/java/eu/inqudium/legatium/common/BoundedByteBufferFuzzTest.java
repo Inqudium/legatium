@@ -67,7 +67,10 @@ class BoundedByteBufferFuzzTest {
         if ((rendered == null) != (total == 0)) {
             throw new IllegalStateException("null contract violated: total=" + total + ", rendered=" + rendered);
         }
-        if (rendered != null && (total > expectedSize) != rendered.contains("[truncated, ")) {
+        // The exact note as a suffix, not a substring search: a body that itself decodes to
+        // "[truncated, " must not read as truncated.
+        String note = "... [truncated, " + total + " bytes total]";
+        if (rendered != null && (total > expectedSize) != rendered.endsWith(note)) {
             throw new IllegalStateException("truncation note wrong: total=" + total + ", size=" + expectedSize + ", rendered=" + rendered);
         }
     }

@@ -306,8 +306,11 @@ internal class ExchangeLogEmitter(
     }
 
     /**
-     * Guarded on its own: a host registry that rejects the body-size summary (meter-id conflict)
-     * costs the sample, never the event.
+     * Guarded on its own: whatever the body measurements throw costs the sample, never the event. The
+     * meter owner already confines the two host-registry faults itself - a rejected registration falls
+     * back to its private registry, a throwing host meter is counted per hit and warned once
+     * ([ClientLoggingMetrics]) - so this guard is the last line, warning per exchange because reaching
+     * it means the owner's own guards regressed.
      */
     private fun recordBodySizesQuietly(exchange: Exchange) {
         try {

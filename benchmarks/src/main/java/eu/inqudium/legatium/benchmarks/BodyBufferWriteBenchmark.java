@@ -30,7 +30,10 @@ import org.springframework.util.FastByteArrayOutputStream;
  * equals the body, so every buffer keeps every byte and the difference is the growth strategy
  * alone - plus the one structural difference the JDK stream carries: its writes are
  * {@code synchronized}. A seventh case, {@link #boundedBufferCapped16k}, writes the same body
- * into a 16 KiB cap (the shipped default): what the discard path beyond the cap costs.
+ * into a 16 KiB cap (the shipped default): what the discard path beyond the cap costs. That case
+ * measures something of its own at {@code bodyKb = 256} only - at 1 and 16 KiB the cap is not below
+ * the body, and the variant is byte-identical to {@link #boundedBuffer}; those two rows are its
+ * control, not a second measurement.
  *
  * <p>Every benchmark returns the BUFFER OBJECT to the blackhole, not its size: a buffer that does
  * not escape lets the JIT scalar-replace it and drop the dead stores into its array, and the
