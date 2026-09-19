@@ -277,6 +277,8 @@ abstract class RequestFactoryContract : PeerIntegrationSuite() {
         assertThat(event.level).describedAs("event for %s", thrown).isEqualTo(Level.ERROR)
         assertThat(event.formattedMessage).startsWith("Adapter http exchange GET http://127.0.0.1:1/things/1 -> - [")
         assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").doesNotContainKey("adapter_response_status_code")
+        // The cause type is engine-internal detail the contract does not promise (CONTRIBUTING.md,
+        // test rules): the classification is what is pinned, the engine's exception only that one exists.
         assertThat(event.throwableProxy).isNotNull()
     }
 
