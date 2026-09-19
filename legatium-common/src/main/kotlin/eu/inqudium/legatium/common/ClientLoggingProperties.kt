@@ -81,8 +81,8 @@ data class ClientLoggingProperties(
     /**
      * When the request body (up to [maxBodyBytes]) is logged: [BodyLogMode.NEVER] (the default),
      * [BodyLogMode.ON_FAILURE] - captured on every call, written only when the outcome is not `success`
-     * or the status is a 4xx - or [BodyLogMode.ALWAYS]. The mode, not a switch, is what decides the log
-     * volume (ADR-0006).
+     * (a `rejected` 4xx included) - or [BodyLogMode.ALWAYS]. The mode, not a switch, is what decides
+     * the log volume (ADR-0006).
      */
     val logRequestBody: BodyLogMode = BodyLogMode.NEVER,
     /** As [logRequestBody], for the response body; the outcome is final at emission, so nothing is captured in vain. */

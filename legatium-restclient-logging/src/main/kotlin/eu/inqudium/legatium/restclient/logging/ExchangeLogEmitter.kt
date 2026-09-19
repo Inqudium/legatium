@@ -214,9 +214,9 @@ internal class ExchangeLogEmitter(
     /**
      * The SLF4J level carries the severity, adapter_outcome the semantic - decoupled on purpose
      * ([ClientLogField.OUTCOME]): a timeout is WARN with its own outcome (the peer is slow, not broken),
-     * any other thrown call is ERROR, a 5xx answer without an exception is WARN (the peer answered, the
-     * application decides what to make of it) - both of the latter carry `failure`; INFO and `success`
-     * otherwise.
+     * any other thrown call is ERROR with `failure`; an answered call classifies by its status alone
+     * ([Classification.ofStatus], shared with the WebClient twin): a 5xx is WARN `failure`, a 4xx is
+     * `rejected` at INFO - WARN for 401, 403, 408 and 429 (ADR-0012) - and INFO `success` otherwise.
      */
     private fun classify(
         failure: Throwable?,
@@ -225,8 +225,7 @@ internal class ExchangeLogEmitter(
         when {
             failure != null && Timeouts.isTimeout(failure) -> Classification(Level.WARN, ClientOutcome.TIMEOUT, failure)
             failure != null -> Classification(Level.ERROR, ClientOutcome.FAILURE, failure)
-            (status ?: 0) >= 500 -> Classification(Level.WARN, ClientOutcome.FAILURE, null)
-            else -> Classification(Level.INFO, ClientOutcome.SUCCESS, null)
+            else -> Classification.ofStatus(status)
         }
 
     /**
@@ -242,7 +241,7 @@ internal class ExchangeLogEmitter(
         slow: Boolean,
     ) {
         val headers = exchange.responseHeaders
-        val (requestBody, responseBody) = loggedBodies(exchange, classification.outcome, status, headers)
+        val (requestBody, responseBody) = loggedBodies(exchange, classification.outcome, headers)
         val traceSuffix =
             if (exchange.traceId != null || exchange.spanId != null) {
                 " ${TraceMdcKeys.TRACE_ID}=${exchange.traceId ?: "-"} ${TraceMdcKeys.SPAN_ID}=${exchange.spanId ?: "-"}"
@@ -287,15 +286,15 @@ internal class ExchangeLogEmitter(
 
     /**
      * Body fields only when the direction's [eu.inqudium.legatium.common.BodyLogMode] admits THIS outcome ("failed" = outcome not
-     * `success`, or a 4xx); a count-only capture (size metrics) must not surface as an empty field.
+     * `success`, which since ADR-0012 includes a `rejected` 4xx); a count-only capture (size metrics) must
+     * not surface as an empty field.
      */
     private fun loggedBodies(
         exchange: Exchange,
         outcome: ClientOutcome,
-        status: Int?,
         headers: HttpHeaders?,
     ): Pair<String?, String?> {
-        val failed = outcome != ClientOutcome.SUCCESS || (status ?: 0) in 400..499
+        val failed = outcome != ClientOutcome.SUCCESS
         val requestBody = if (properties.logRequestBody.logs(failed)) exchange.requestCapture?.loggedValue(exchange.requestCharset) else null
         val responseBody =
             if (properties.logResponseBody.logs(failed)) {

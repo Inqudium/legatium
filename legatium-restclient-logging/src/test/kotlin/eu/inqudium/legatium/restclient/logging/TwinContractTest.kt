@@ -19,13 +19,13 @@ class TwinContractTest {
     fun `should pin this stack's client tag and outcome vocabulary`() {
         // What is tested: the ClientStack.RESTCLIENT facts the shared metrics owner is parameterised
         //   with - the client tag of the gauge and the outcomes pre-registered on the events counter.
-        // Success criteria: client=restclient, and exactly success, failure and timeout in this order;
-        //   cancelled belongs to the reactive twin alone.
+        // Success criteria: client=restclient, and exactly success, rejected, failure and timeout in
+        //   this order; cancelled belongs to the reactive twin alone.
         // Why it matters: alerts on adapter.logging.events{outcome=...} for this stack must find every
         //   value at zero from the start, and none the blocking stack can never produce.
         // Given/When/Then
         assertThat(ClientStack.RESTCLIENT.tagValue).isEqualTo("restclient")
-        assertThat(ClientStack.RESTCLIENT.outcomes.map { it.tagValue }).containsExactly("success", "failure", "timeout")
+        assertThat(ClientStack.RESTCLIENT.outcomes.map { it.tagValue }).containsExactly("success", "rejected", "failure", "timeout")
     }
 
     @Test

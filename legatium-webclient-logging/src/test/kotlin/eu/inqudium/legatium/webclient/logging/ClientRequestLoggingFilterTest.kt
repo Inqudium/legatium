@@ -346,6 +346,41 @@ class ClientRequestLoggingFilterTest {
         }
 
         @Test
+        fun `should log INFO with outcome rejected for a 4xx answer`() {
+            // What is tested: the shared status classification wired into this twin - a 4xx without an
+            //   error signal is `rejected` at INFO (ADR-0012).
+            // Success criteria: one INFO event with outcome rejected and status 404.
+            // Why it matters: a 404 on a lookup is a completed exchange the application handles; the
+            //   outcome lets a dashboard split it from a success without raising the severity.
+            // Given/When
+            filter.call(request(), answering(status = HttpStatus.NOT_FOUND))
+
+            // Then
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.INFO)
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "rejected").containsEntry("adapter_response_status_code", 404)
+        }
+
+        @Test
+        fun `should escalate a rejected answer to WARN for 401, 403, 408 and 429`() {
+            // What is tested: the escalation of the shared status classification wired into this twin -
+            //   the four rejections only an operator can resolve are WARN, the outcome stays rejected.
+            // Success criteria: four WARN events, each with outcome rejected and its status.
+            // Why it matters: expired credentials, a revoked permission, a peer that gave up waiting for
+            //   us and a rate limit are our side's problem; they must reach the WARN channel without
+            //   turning into a failure.
+            // Given/When
+            for (status in listOf(HttpStatus.UNAUTHORIZED, HttpStatus.FORBIDDEN, HttpStatus.REQUEST_TIMEOUT, HttpStatus.TOO_MANY_REQUESTS)) {
+                filter.call(request(), answering(status = status))
+            }
+
+            // Then
+            assertThat(log.events).hasSize(4).allSatisfy { assertThat(it.level).isEqualTo(Level.WARN) }
+            assertThat(log.events.map { keyValues(it)["adapter_outcome"] }).containsOnly("rejected")
+            assertThat(log.events.map { keyValues(it)["adapter_response_status_code"] }).containsExactly(401, 403, 408, 429)
+        }
+
+        @Test
         fun `should log ERROR with outcome failure and no status when the exchange errors before a response`() {
             // What is tested: the no-response path - the connector errored before a status line.
             // Success criteria: the error signal propagates unchanged; one ERROR event with the cause,

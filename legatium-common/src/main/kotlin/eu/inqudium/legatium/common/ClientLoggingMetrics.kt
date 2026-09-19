@@ -16,12 +16,16 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * The disposition of one exchange - the value of `adapter_outcome` and the `outcome` tag of the events
  * counter. A closed set, like every wire-bound vocabulary of the family: the tag value is the contract,
- * the constant is the code's name for it. [CANCELLED] exists on the reactive stack only.
+ * the constant is the code's name for it. The value names WHO is responsible for the disposition
+ * (ADR-0012): nobody for a [SUCCESS], the caller - this application - for a [REJECTED] 4xx, the peer or
+ * the call itself for a [FAILURE], the clock for a [TIMEOUT]. [CANCELLED] exists on the reactive stack
+ * only. The level carries the severity separately ([Classification]).
  */
 internal enum class ClientOutcome(
     val tagValue: String,
 ) {
     SUCCESS("success"),
+    REJECTED("rejected"),
     FAILURE("failure"),
     TIMEOUT("timeout"),
     CANCELLED("cancelled"),
@@ -66,7 +70,7 @@ internal enum class ClientStack(
 ) {
     RESTCLIENT(
         "restclient",
-        listOf(ClientOutcome.SUCCESS, ClientOutcome.FAILURE, ClientOutcome.TIMEOUT),
+        listOf(ClientOutcome.SUCCESS, ClientOutcome.REJECTED, ClientOutcome.FAILURE, ClientOutcome.TIMEOUT),
         "Exchanges between interceptor entry and response close; a growing baseline means " +
             "responses are not being closed and exchange events are silently lost",
     ),

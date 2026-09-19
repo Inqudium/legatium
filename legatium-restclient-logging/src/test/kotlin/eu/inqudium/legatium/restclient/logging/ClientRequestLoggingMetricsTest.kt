@@ -122,12 +122,13 @@ class ClientRequestLoggingMetricsTest {
         fun `should pre-register the outcome vocabulary and count emitted events per outcome`() {
             // What is tested: every fixed-tag meter exists at zero before the first call, and the events
             //   counter counts emitted events by outcome.
-            // Success criteria: success/failure/timeout exist at zero, the gauge under client=restclient;
-            //   one call each moves its side.
+            // Success criteria: success/rejected/failure/timeout exist at zero, the gauge under
+            //   client=restclient; one call each moves its side.
             // Why it matters: a rate() alert must see the zero before the first occurrence; the client
             //   tag is what keeps this twin's gauge apart from the reactive twin's in one host.
             // Given: nothing happened yet
             assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "success")).isZero()
+            assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "rejected")).isZero()
             assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "failure")).isZero()
             assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "timeout")).isZero()
             assertThat(registry.get(ClientLoggingMetrics.FAIL_OPEN_METER).counters()).hasSize(3)
@@ -140,13 +141,15 @@ class ClientRequestLoggingMetricsTest {
                     .value(),
             ).isZero()
 
-            // When: a success, a 5xx, a timeout
+            // When: a success, a 4xx, a 5xx, a timeout
             interceptor.intercept(request(), ByteArray(0), answering()).consumeAndClose()
+            interceptor.intercept(request(), ByteArray(0), answering(status = HttpStatus.NOT_FOUND)).consumeAndClose()
             interceptor.intercept(request(), ByteArray(0), answering(status = HttpStatus.BAD_GATEWAY)).consumeAndClose()
             catchThrowable { interceptor.intercept(request(), ByteArray(0)) { _, _ -> throw SocketTimeoutException("read") } }
 
             // Then
             assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "success")).isEqualTo(1.0)
+            assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "rejected")).isEqualTo(1.0)
             assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "failure")).isEqualTo(1.0)
             assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "timeout")).isEqualTo(1.0)
         }

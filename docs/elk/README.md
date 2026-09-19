@@ -27,7 +27,7 @@ ADR-0003), so one test is the lockstep for both.
 
 | Field | Type | `index` | `doc_values` | Access pattern |
 |---|---|---|---|---|
-| `adapter_outcome` | `keyword` | true | on | aggregate — `success` / `failure` / `timeout` / `cancelled`; decoupled from the level |
+| `adapter_outcome` | `keyword` | true | on | aggregate — `success` / `rejected` / `failure` / `timeout` / `cancelled`; decoupled from the level |
 | `adapter_duration_ms` | `long` | true | on | **compute** — percentiles; response occupancy including the body read, not bare round-trip time |
 | `adapter_request_method` | `keyword` | true | on | aggregate — closed set of HTTP verbs |
 | `adapter_response_status_code` | `short` | true | on | aggregate — a numeric **label**, never summed; absent when no response arrived |

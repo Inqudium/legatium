@@ -140,7 +140,7 @@ five layers:
 | `ClientRequestLoggingFilter` | Everything that decides **what** is logged and counted: activation by host and path, fail-open wiring (identity, the rebuilt request with correlation header and body tee), the arrival line, the response mutation with the body hooks, the exactly-once `complete` and the cancel decision. |
 | `ObservedResponse` | The response `Mono` operator: records and wraps the response, moves the state `OPEN → DELIVERING → RESPONDED` around the downstream's `onNext`, and completes the exchange itself for an error, an empty completion, or a cancel by the caller before the body owns it — including a cancel from another thread *during* the handover, which a `doFinally` would have ignored. |
 | `Exchange` / `ExchangeState` | Per-exchange state between entry and emission; one atomic `OPEN → DELIVERING → RESPONDED → COMPLETED` state instead of loose flags. |
-| `ExchangeLogEmitter` | Builds and emits the arrival line and the completion event; freezes the captures first; resolves level and outcome (timeouts via the shared `Timeouts`, `cancelled` on top); records body sizes; restores the caller's context, then opens the emission `MdcScope` with trace ownership. |
+| `ExchangeLogEmitter` | Builds and emits the arrival line and the completion event; freezes the captures first; resolves level and outcome (timeouts via the shared `Timeouts`, the status half via the shared `Classification.ofStatus`, `cancelled` on top); records body sizes; restores the caller's context, then opens the emission `MdcScope` with trace ownership. |
 | `AmbientContextRestorer` / `ContextPropagationRestorer` | Turns the exchange's captured `ContextView` back into thread-locals around an emission through Micrometer's context propagation (ADR-0010); detected by classpath presence, a no-op without the optional library. |
 | `CapturingClientHttpRequestDecorator` / `tee` | The `DataBuffer` tee: wraps the connector's request while the inserter writes (a zero-copy-preserving variant when the connector offers `sendfile`); the same `tee` copies each response buffer. |
 | `ObservedBody` | The response body operator: tees each buffer, marks the read state, turns the body's terminal signal into the exchange's completion, and tells a consumer's own stop (a cancel from within its delivery - Spring's body skip, a `take`) from an abandonment (`cancelled`). |
@@ -876,7 +876,7 @@ Everything not listed here behaves exactly as in `legatium-restclient-logging`.
 
 | Concern | RestClient twin | This module |
 |---|---|---|
-| Disposition vocabulary | `success` / `failure` / `timeout` | plus **`cancelled`** |
+| Disposition vocabulary | `success` / `rejected` / `failure` / `timeout` | plus **`cancelled`** |
 | Emission point | response `close()` | the response body's terminal signal; for a call without a response, the response `Mono`'s error/cancel signal |
 | Never-completing exchange | a response never closed | a body never subscribed nor released |
 | Request body | the byte array the client hands over | teed at the connector's `writeWith` through a wrapped inserter |

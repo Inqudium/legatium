@@ -18,6 +18,45 @@ legatus, the envoy a service sends to a foreign party, and the record of what ca
 auto-configured Spring Boot twins with identical fields and configuration: a RestClient/RestTemplate
 interceptor and a WebClient filter. No starter, no forced transitives.
 
+## What sets it apart
+
+- **One line, when the exchange is truly over.** The event is emitted at response close on the blocking
+  stack and at the body's terminal signal on the reactive one, so status, headers, bodies and the
+  duration are final: `adapter_duration_ms` is response occupancy including the body read, not a bare
+  round trip. A call without a response still yields exactly one line, with `-> -`.
+- **Two paradigm twins, one contract.** The `RestClient`/`RestTemplate` interceptor and the `WebClient`
+  filter emit the same fields under the same names with the same shapes, bound by the same
+  `adapter-logging.*` keys, and lockstep tests pin every literal: a field, a message format or a meter
+  that drifts between the twins fails the build.
+- **Fail-open, and the loss reports itself.** A logging failure never reaches the caller and never
+  changes the call. It is swallowed, counted in `adapter.logging.failopen` by stage, and the events
+  counter is the ground truth to reconcile against the log index, so a lost line is visible through a
+  channel that does not depend on the line.
+- **Identity that joins the lines.** The trace id is the request id; on a traceless call the module sends
+  an `X-Correlation-Id` instead, so the peer can quote it. A client line emitted while a request is
+  served inherits the server line's identity from the MDC, and the reactive twin restores the caller's
+  context around its emission, the blocking twin the caller's MDC for a response closed on another
+  thread: the outbound line always carries the identity of the request that caused it.
+- **Header values masked by default, bodies teed as they flow.** A logged header value is a stable keyed
+  fingerprint unless it is on an explicit plaintext allowlist; the same `masking-key` on both sides of
+  the family makes a masked token read identically on the inbound and the outbound line. Bodies are
+  never pre-read or replayed: they are teed as the application reads them, bounded by `max-body-bytes`,
+  and `on-failure` logs them only for the exchanges that went wrong.
+- **An outcome that names who is responsible, meters that are consumed, not exported.** `success`,
+  `rejected` (a 4xx), `failure`, `timeout` and `cancelled` say which side the disposition belongs to;
+  the level carries severity separately. Six meter families are fed into the host's own registry,
+  pre-registered at zero so a `rate()` alert sees the baseline before the first occurrence; rates,
+  latencies and status distributions are left to `http.client.requests` on purpose.
+- **The logger level is the volume control, at runtime.** Because the level carries severity only, the
+  level of the `adapter-http-exchange` logger decides how much is logged without changing what a line
+  means: `INFO` every call, `WARN` failures, timeouts, slow calls, cancellations and the four escalated
+  rejections, `ERROR` only calls that threw, `OFF` nothing. Level and outcome are resolved before the
+  event is built, so a disabled level costs no assembly, no header selection, no body decoding, and the
+  meters are recorded before the gate. Turn it up during an incident through the host's logging backend
+  (Boot's loggers endpoint included) and down again, no restart, no redeploy; the module's own logger
+  under `eu.inqudium.legatium` reports at `DEBUG` how it is wired and at `TRACE` where every property
+  value came from.
+
 ## About the name
 
 Legatium derives from *legatus*, the Roman envoy. A client call is exactly
@@ -59,7 +98,7 @@ and bodies — and the identity in the MDC. A client the host named reads by tha
 target (`Adapter http exchange POST things -> 200 [...]`); the target stays in the MDC and the fields.
 The trace ids come from the `traceparent` header the host's tracing propagation put on the request; on a
 traceless call the module sends an `X-Correlation-Id` instead, so the peer can quote it. Outcomes:
-`success`, `failure`, `timeout`, and on the reactive stack `cancelled`.
+`success`, `rejected` (a 4xx), `failure`, `timeout`, and on the reactive stack `cancelled`.
 
 ## Documentation
 

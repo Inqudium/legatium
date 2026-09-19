@@ -56,6 +56,7 @@ every move is recorded in [History](#history).
 | `ClientLoggingProperties` (the `adapter-logging.*` binding) with its unit and reference-config tests            | 2026-09-03 | second amendment                                                        |
 | `CorrelationHeader` (the acceptance rule of ADR-0002)                                                          | 2026-09-04 | `CODE_ANALYSIS-2026-09-04T20-56-15.md`, finding 13                      |
 | `ClientLoggingMetrics` parameterised by `ClientStack`; `ClientActivation`                                      | 2026-09-04 | `ARCHITECTURE_REVIEW-2026-09-04T21-49-30.md`, finding 1                 |
+| `Classification.ofStatus` with the escalation set (one `rejected` and one status table on both stacks)        | 2026-09-19 | ADR-0012                                                                |
 | `SharedContractTest` (the shared literals, pinned once)                                                        | 2026-09-05 | `ARCHITECTURE_REVIEW-2026-09-05T00-24-58.md`, finding 3                 |
 | `BoundedByteBuffer` (the byte-bounded buffer beneath both `BoundedBodyCapture`s, with unit test and fuzz target) | 2026-09-17 | extraction with the mark/reset and buffer-sizing work                   |
 
@@ -272,3 +273,7 @@ of both jars.
   stay in the twins as tests of the twin API. `decodeTruncated`, whose
   only caller is now the buffer's rendering, became private to the
   buffer's file.
+- **2026-09-19:** `Classification.ofStatus` and `ESCALATED_REJECTIONS`
+  joined `Classification` in common (ADR-0012): the status half of
+  both twins' `classify` is one function, so a 4xx is `rejected` and
+  401/403/408/429 are WARN on both lines by construction.

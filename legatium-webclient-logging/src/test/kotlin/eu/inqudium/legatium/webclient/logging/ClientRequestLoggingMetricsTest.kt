@@ -78,7 +78,7 @@ class ClientRequestLoggingMetricsTest {
             // What is tested: every fixed-tag meter exists at zero before the first call - including the
             //   cancelled outcome the blocking twin does not have - and the events counter counts by
             //   outcome.
-            // Success criteria: four outcomes at zero, the gauge under client=webclient; one call each
+            // Success criteria: five outcomes at zero, the gauge under client=webclient; one call each
             //   moves its side.
             // Why it matters: a rate() alert must see the zero before the first occurrence; the client
             //   tag is what keeps this twin's gauge apart from the blocking twin's in one host.
@@ -96,6 +96,7 @@ class ClientRequestLoggingMetricsTest {
 
             // And: one call per outcome moves exactly its side
             filter.call(request(), answering())
+            filter.call(request(), answering(status = HttpStatus.NOT_FOUND))
             filter.call(request(), answering(status = HttpStatus.BAD_GATEWAY))
             StepVerifier.create(filter.filter(request(), ExchangeFunction { Mono.error(TimeoutException("t")) })).expectError().verify()
             StepVerifier.create(filter.filter(request(), ExchangeFunction { Mono.never() })).thenCancel().verify()

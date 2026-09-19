@@ -2,7 +2,7 @@
 
 **Status:** Accepted  
 **Date:** 2026-09-03  
-**Last updated:** 2026-09-05  
+**Last updated:** 2026-09-19  
 **Deciders:** Dirk Haase (maintainer)  
 **Related:** ADR-0003 (`BodyLogMode` lives in `legatium-common` by
 its criterion), ADR-0005 (the companion configuration decision of the
@@ -40,16 +40,16 @@ not a switch.**
 `never` is the default.
 
 **The gate.** `on-failure` writes the bodies when `adapter_outcome` is
-not `success` (`failure`, `timeout`, and on the WebClient twin
-`cancelled`), or when the status is a 4xx. The response side decides
-at emission, when the outcome is final; the request side captures
-ahead and discards. The gate is wider than the outcome vocabulary by
-exactly one status class: a 4xx answer keeps its `success` outcome
-(the peer answered; the request was wrong), so levels, metrics and
-dashboards are untouched, but its bodies are logged, because a
-client's error is exactly the case a body explains. A 5xx is a
-`failure` and logs as well. A slow but healthy call stays `success`
-and logs no bodies.
+not `success`: `rejected` (a 4xx, since ADR-0012), `failure`,
+`timeout`, and on the WebClient twin `cancelled`. The response side
+decides at emission, when the outcome is final; the request side
+captures ahead and discards. A 4xx logs its bodies because a client's
+error is exactly the case a body explains; between 2026-09-03 and
+2026-09-19 the vocabulary had no value for it and the gate was
+widened by hand (`outcome != success || status in 400..499`) - the
+`rejected` outcome of ADR-0012 made that widening the plain rule
+again. A 5xx is a `failure` and logs as well. A slow but healthy call
+stays `success` and logs no bodies.
 
 **The gate follows the exchange's outcome, not the caller's.** A
 `200` whose body the application's Jackson converter or decoder
@@ -101,8 +101,8 @@ one, gate the same way.
 
 - `measure-*-body-size` is unchanged: it still measures what flowed,
   in every mode.
-- A 4xx is logged like a failure for bodies only; its outcome, level
-  and metrics stay those of a `success`.
+- A 4xx logs its bodies through its own outcome, `rejected`
+  (ADR-0012); the gate no longer needs to know a status range.
 
 ## History
 
@@ -113,3 +113,5 @@ one, gate the same way.
 - **2026-09-05:** the decoding boundary (a `200` the application
   cannot map) was documented and pinned by a test in both twins as
   the accepted limit of the gate.
+- **2026-09-19:** the 4xx widening became the `rejected` outcome
+  (ADR-0012); the gate reads `outcome != success` again.
