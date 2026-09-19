@@ -2,10 +2,12 @@ package eu.inqudium.legatium.common
 
 import ch.qos.logback.classic.Level
 import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.DistributionSummary
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Meter
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.composite.CompositeMeterRegistry
+import io.micrometer.core.instrument.distribution.DistributionStatisticConfig
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
@@ -35,6 +37,21 @@ class ClientLoggingMetricsTest {
                 if (id.name !in breakingMeters) return real
                 return object : Counter by real {
                     override fun increment(amount: Double) = error("counter broke")
+                }
+            }
+        }
+
+    /** A host registry whose distribution summaries register fine but throw on every record. */
+    private fun registryWithBreakingSummaries(): MeterRegistry =
+        object : SimpleMeterRegistry() {
+            override fun newDistributionSummary(
+                id: Meter.Id,
+                distributionStatisticConfig: DistributionStatisticConfig,
+                scale: Double,
+            ): DistributionSummary {
+                val real = super.newDistributionSummary(id, distributionStatisticConfig, scale)
+                return object : DistributionSummary by real {
+                    override fun record(amount: Double) = error("summary broke")
                 }
             }
         }
@@ -247,6 +264,39 @@ class ClientLoggingMetricsTest {
             repeat(6) { metrics.requestId(RequestIdSource.TRACE) }
 
             // Then
+            assertThat(
+                hostile
+                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
+                    .tags("stage", "wiring")
+                    .counter()
+                    .count(),
+            ).isEqualTo(6.0)
+            assertThat(moduleLog.events.filter { it.level == Level.WARN && it.formattedMessage.contains("could not be updated") }).hasSize(1)
+        } finally {
+            moduleLog.detach()
+        }
+    }
+
+    @Test
+    fun `should count a throwing host body summary per hit and warn once, like the fixed counters`() {
+        // What is tested: updateQuietly around the dynamic body meters - a host DistributionSummary
+        //   that registered fine but throws on every record.
+        // Success criteria: six samples neither throw nor reach the caller; the fail-open counter shows
+        //   stage=wiring at 6 and the module logger carries exactly ONE warning for the meter.
+        // Why it matters: the body meters are recorded per measured exchange; before they shared the
+        //   throttle, a permanently throwing host summary produced a warning per exchange in the
+        //   twins' emitters, proportional to the traffic.
+        // Given: a registry whose summaries always throw, and the module logger captured
+        val hostile = registryWithBreakingSummaries()
+        val moduleLog = CapturedLogger(ClientLoggingMetrics::class.java.name)
+        try {
+            val metrics = ClientLoggingMetrics.forRegistry(hostile, ClientStack.RESTCLIENT)
+
+            // When
+            val thrown = catchThrowable { repeat(6) { metrics.requestBodySize("https://api.example.com/things/{id}", "api.example.com", null, 5) } }
+
+            // Then
+            assertThat(thrown).isNull()
             assertThat(
                 hostile
                     .get(ClientLoggingMetrics.FAIL_OPEN_METER)

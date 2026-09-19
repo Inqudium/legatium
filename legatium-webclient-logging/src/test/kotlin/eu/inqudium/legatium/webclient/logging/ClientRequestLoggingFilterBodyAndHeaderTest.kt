@@ -28,6 +28,7 @@ import org.springframework.web.reactive.function.client.ExchangeFunction
 import org.springframework.web.reactive.function.client.ExchangeStrategies
 import org.springframework.web.reactive.function.client.WebClient
 import reactor.core.Exceptions
+import reactor.core.publisher.BaseSubscriber
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import java.io.IOException
@@ -375,6 +376,73 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
 
             // Then
             assertThat(keyValues(log.events.single())).containsEntry("adapter_response_body", "café")
+        }
+
+        @Test
+        fun `should fall back to UTF-8 and keep the event when the peer's Content-Type does not parse`() {
+            // What is tested: declaredCharsetOrUtf8's InvalidMediaTypeException branch at emission - a
+            //   response Content-Type Spring's MediaType cannot parse (no slash).
+            // Success criteria: the body logs decoded as UTF-8; no fail-open stage is counted.
+            // Why it matters: a malformed header is the peer's problem; thrown inside the emission it
+            //   would cost the event (stage=emission) of every call to that peer.
+            // Given
+            val registry = SimpleMeterRegistry()
+            val filter = filterWith(base.copy(logResponseBody = BodyLogMode.ALWAYS), ticker, registry)
+            val garbled =
+                ClientResponse
+                    .create(HttpStatus.OK)
+                    .header("Content-Type", "garbage")
+                    .body(Flux.just(buffer("payload")))
+                    .build()
+
+            // When
+            filter.filter(request(), ExchangeFunction { Mono.just(garbled) }).flatMap { it.releaseBody() }.block()
+
+            // Then
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_response_body", "payload")
+            assertThat(registry.get(ClientLoggingMetrics.FAIL_OPEN_METER).counters().sumOf { it.count() }).isZero()
+        }
+
+        @Test
+        fun `should freeze the captures before the emission so a late buffer cannot move the logged body or its size sample`() {
+            // What is tested: the freeze at the head of emitExchange - the emission of an out-of-band
+            //   cancel runs while a requested buffer may still be in flight through the tee. Here the
+            //   late buffer is delivered from INSIDE the emission, through the restorer seam (which runs
+            //   after the size sample and before the line): the deterministic stand-in for that race.
+            // Success criteria: the event logs the body as it was at the cancel and the size sample
+            //   carries the same count; the late buffer still reached the downstream subscriber.
+            // Why it matters: without the freeze - or with it behind the sample - the logged text would
+            //   carry the late chunk the sample never counted, with no red test.
+            // Given: a hand-driven body under a measuring filter, one buffer delivered, the late one
+            //   armed inside the emission
+            val registry = SimpleMeterRegistry()
+            val filter = filterWith(base.copy(logResponseBody = BodyLogMode.ALWAYS, measureResponseBodySize = true), ticker, registry)
+            val publisher = ManualPublisher()
+            val streamed = ClientResponse.create(HttpStatus.OK).body(Flux.from(publisher)).build()
+            val response = requireNotNull(filter.filter(request(), ExchangeFunction { Mono.just(streamed) }).block())
+            val delivered = mutableListOf<String>()
+            val subscriber =
+                object : BaseSubscriber<DataBuffer>() {
+                    override fun hookOnNext(value: DataBuffer) {
+                        delivered += value.toString(StandardCharsets.UTF_8)
+                    }
+                }
+            response.bodyToFlux(DataBuffer::class.java).subscribe(subscriber)
+            publisher.emit(buffer("before"))
+            filter.emitter.ambientRestorer =
+                AmbientContextRestorer {
+                    publisher.emit(buffer("-late"))
+                    AutoCloseable {}
+                }
+
+            // When: the caller cancels out of band - the emission runs, and the late buffer arrives inside it
+            subscriber.cancel()
+
+            // Then
+            val event = log.events.single()
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "cancelled").containsEntry("adapter_response_body", "before")
+            assertThat(registry.get(ClientLoggingMetrics.RESPONSE_BODY_SIZE_METER).summary().totalAmount()).isEqualTo(6.0)
+            assertThat(delivered).containsExactly("before", "-late")
         }
 
         @Test

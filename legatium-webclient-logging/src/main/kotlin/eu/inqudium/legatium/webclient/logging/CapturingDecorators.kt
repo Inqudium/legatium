@@ -92,7 +92,9 @@ internal open class CapturingClientHttpRequestDecorator(
  * path): the decorator keeps the [ZeroCopyHttpOutputMessage] contract, so `ResourceHttpMessageWriter`
  * still picks zero-copy for a file `Resource` body, and the bytes are COUNTED, not copied - a body that
  * never passes through user space cannot be logged, only measured. A plain [ClientHttpRequestDecorator]
- * would silently demote such uploads to buffered writes.
+ * would silently demote such uploads to buffered writes. The count lands on the connector's SUCCESS
+ * signal: a transfer that fails counts nothing - the connector reports no partial count, and the size
+ * meter describes bytes that flowed, not bytes that were attempted (pinned in `CapturingDecoratorsTest`).
  */
 internal class ZeroCopyCapturingClientHttpRequestDecorator(
     delegate: ClientHttpRequest,

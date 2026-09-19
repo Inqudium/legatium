@@ -317,30 +317,30 @@ class CountingCorrelationIdGeneratorTest {
             //   the AtomicLong with a plain Long - or, more plausibly, with a ThreadLocal in an attempt to
             //   avoid contention - would produce duplicates here; a non-atomic read-modify-write could
             //   additionally render a value outside the width. The pool is released in a finally so a
-            //   failed assertion cannot strand its non-daemon threads and hang the forked JVM.
+            //   failed assertion cannot strand its non-daemon threads and hang the forked JVM; the
+            //   workers are awaited through their futures, so an exception in one surfaces with its
+            //   cause instead of as a bare timeout.
             // Given
             val threads = 16
             val idsPerThread = 2_000
             val generator = CountingCorrelationIdGenerator(prefixSeed = 0L)
             val ids = ConcurrentHashMap.newKeySet<String>()
             val startSignal = CountDownLatch(1)
-            val done = CountDownLatch(threads)
             val pool = Executors.newFixedThreadPool(threads)
 
             try {
                 // When
-                repeat(threads) {
-                    pool.submit {
-                        startSignal.await()
-                        repeat(idsPerThread) { ids.add(generator.nextCorrelationId()) }
-                        done.countDown()
+                val workers =
+                    (1..threads).map {
+                        pool.submit {
+                            startSignal.await()
+                            repeat(idsPerThread) { ids.add(generator.nextCorrelationId()) }
+                        }
                     }
-                }
                 startSignal.countDown()
-                val finished = done.await(30, TimeUnit.SECONDS)
+                workers.forEach { it.get(30, TimeUnit.SECONDS) }
 
                 // Then
-                assertThat(finished).isTrue()
                 assertThat(ids).hasSize(threads * idsPerThread)
                 assertThat(ids).allSatisfy { assertThat(it).matches("[0-9a-z]{21}") }
             } finally {

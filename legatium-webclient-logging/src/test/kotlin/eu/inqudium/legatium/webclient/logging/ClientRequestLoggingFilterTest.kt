@@ -20,6 +20,7 @@ import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.web.reactive.function.client.ClientResponse
 import org.springframework.web.reactive.function.client.ExchangeFunction
+import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.util.pattern.PatternParseException
 import reactor.core.publisher.BaseSubscriber
 import reactor.core.publisher.Flux
@@ -103,22 +104,62 @@ class ClientRequestLoggingFilterTest {
         }
 
         @Test
-        fun `should emit only at the body's terminal signal and exactly once`() {
+        fun `should emit only at the body's terminal signal and exactly once, whatever a second subscription is answered`() {
             // What is tested: the emission point - the response body's completion - and its
-            //   exactly-once guard.
+            //   exactly-once guard against a body that REFUSES a second subscription, the shape of the
+            //   JDK, Jetty and HttpComponents connector responses (see singleSubscriber).
             // Success criteria: a delivered response logs nothing until its body is consumed; releasing
-            //   the body logs; consuming the body a second time logs nothing more.
+            //   the body logs one success; releasing it again is answered with the body's own error,
+            //   passed through to that second subscriber, and neither logs more nor turns the event.
             // Why it matters: emitting when the response Mono completes would log a body of zero bytes
-            //   and a duration without the read; a double subscription must not double the event.
-            // Given: a delivered response, body untouched
-            val response = requireNotNull(filter.filter(request(), answering(body = "later")).block())
+            //   and a duration without the read; a second subscription that could set the exchange's
+            //   failure logged every healthy exchangeToMono call at ERROR on three of the four
+            //   connectors - a replaying Flux.just body cannot show that.
+            // Given: a delivered response whose body refuses a second subscription, body untouched
+            val response = requireNotNull(filter.filter(request(), ExchangeFunction { Mono.just(singleSubscriber(body = "later")) }).block())
 
             // When/Then
             assertThat(log.events).isEmpty()
             response.releaseBody().block()
             assertThat(log.events).hasSize(1)
-            response.releaseBody().block()
-            assertThat(log.events).hasSize(1)
+            val secondRelease = catchThrowable { response.releaseBody().block() }
+            assertThat(secondRelease).isInstanceOf(IllegalStateException::class.java).hasMessageContaining("consumed once")
+            val event = log.events.single()
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "success")
+            assertThat(event.throwableProxy).isNull()
+        }
+
+        @Test
+        fun `should log a body consumed inside exchangeToMono as success although Spring releases it a second time`() {
+            // What is tested: Spring's own exchangeToMono against a single-subscriber body - the
+            //   handler consumes the body; releaseIfNotConsumed then subscribes again from INSIDE the
+            //   first consumption's completion and is answered with the error Spring swallows.
+            // Success criteria: the handler's value arrives; one INFO event, outcome success, no cause.
+            // Why it matters: this is the reproduction of the misclassification on the JDK, Jetty and
+            //   HttpComponents connectors, without an engine; the connector contract runs it against
+            //   each real one.
+            // Given: a WebClient over the filter and a single-subscriber response
+            val client =
+                WebClient
+                    .builder()
+                    .exchangeFunction { Mono.just(singleSubscriber(body = "payload")) }
+                    .filter(filter)
+                    .build()
+
+            // When
+            val value =
+                client
+                    .get()
+                    .uri("https://api.example.com/things")
+                    .exchangeToMono { it.bodyToMono(String::class.java) }
+                    .block()
+
+            // Then
+            assertThat(value).isEqualTo("payload")
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.INFO)
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "success").containsEntry("adapter_response_status_code", 200)
+            assertThat(event.throwableProxy).isNull()
         }
 
         @Test
@@ -875,6 +916,47 @@ class ClientRequestLoggingFilterTest {
                     .counter()
                     .count(),
             ).isEqualTo(1.0)
+        }
+
+        @Test
+        fun `should keep the event and count the teardown as wiring when the restored scope fails to close`() {
+            // What is tested: restoreQuietly - the teardown half of the fail-open rule: the line counts
+            //   as emitted, a scope whose close throws is bookkeeping.
+            // Success criteria: the event exists with its outcome; the fail-open meter shows stage=wiring
+            //   at 1 and stage=emission at 0.
+            // Why it matters: the restorer's close runs in the emission's finally; a close that threw
+            //   INTO the emission guard would count a lost line where the line was written.
+            // Given: a restorer whose scope refuses to close
+            filter.emitter.ambientRestorer = AmbientContextRestorer { AutoCloseable { throw IllegalStateException("scope refused") } }
+
+            // When
+            try {
+                filter
+                    .filter(request(), answering())
+                    .flatMap { it.bodyToMono(String::class.java) }
+                    .contextWrite { it.put(key, "inbound-7") }
+                    .block()
+            } finally {
+                filter.emitter.ambientRestorer = AmbientContextRestorer.detect()
+            }
+
+            // Then
+            val event = awaiting.awaitEvents(1).single()
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "success")
+            assertThat(
+                meterRegistry
+                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
+                    .tag("stage", "wiring")
+                    .counter()
+                    .count(),
+            ).isEqualTo(1.0)
+            assertThat(
+                meterRegistry
+                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
+                    .tag("stage", "emission")
+                    .counter()
+                    .count(),
+            ).isZero()
         }
     }
 

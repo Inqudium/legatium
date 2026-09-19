@@ -58,6 +58,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message keeps the target; the target of a named one stays on the `adapter_route` MDC entry and the
   `adapter_url_*` fields. `TwinContractTest` pins both forms; ADR-0009's message section is amended.
 
+### Fixed
+
+- WebClient twin: a body the application consumed inside `exchangeToMono`/`exchangeToFlux` was logged
+  as `adapter_outcome=failure` at ERROR - with the correct status, duration and body - on the JDK,
+  Jetty and HttpComponents connectors. Spring releases the body a second time after the handler
+  returned (`releaseIfNotConsumed`), those three connectors answer a second subscription with
+  "The client response body can only be consumed once" (Spring swallows it, the filter did not), and
+  because the error arrived inside the first consumption's completion it won the exchange's
+  exactly-once transition. Reactor Netty completes a second subscription empty and was never
+  affected, which is why every integration test stayed green. The body operator now binds the
+  exchange's completion to the body's FIRST subscription; later subscriptions pass through
+  unobserved. Pinned by an `exchangeToMono` scenario in the connector contract (all four connectors)
+  and by unit tests on a body that refuses a second subscription.
+- Both twins: a host registry whose body meters (`adapter.request.body.size`,
+  `adapter.response.body.size`, `adapter.response.body.read`) throw on update produced a warning per
+  measured exchange; the updates now share the once-per-meter warning throttle of the fixed counters
+  (`adapter.logging.fail_open` still counts every hit).
+
 ## [1.1.0] - 2026-09-17
 
 ### Added

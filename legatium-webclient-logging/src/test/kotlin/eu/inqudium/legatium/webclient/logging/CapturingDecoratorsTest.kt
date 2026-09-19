@@ -1,6 +1,7 @@
 package eu.inqudium.legatium.webclient.logging
 
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.Test
 import org.reactivestreams.Publisher
 import org.springframework.core.io.FileSystemResource
@@ -13,6 +14,7 @@ import org.springframework.web.reactive.function.client.ClientRequest
 import org.springframework.web.reactive.function.client.ExchangeStrategies
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
+import java.io.IOException
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -55,7 +57,8 @@ class CapturingDecoratorsTest {
         //   connector request when writeWith runs (EncoderHttpMessageWriter sets it for a Mono body
         //   right before), and a caller-set value Spring cannot parse.
         // Success criteria: the capture's hint is 5 for a declared 5; UNKNOWN_LENGTH for "many",
-        //   and the write still succeeds with the body captured.
+        //   and the write still succeeds with the body captured; the flushing path hands the hint on
+        //   the same way.
         // Why it matters: the hint sizes the capture's one block exactly; a peer- or caller-controlled
         //   header must never throw into the connector's write.
         // Given
@@ -63,15 +66,19 @@ class CapturingDecoratorsTest {
         val connector = connectorRequest().apply { headers.contentLength = 5 }
         val malformed = BoundedBodyCapture(64)
         val garbled = connectorRequest().apply { headers.set("Content-Length", "many") }
+        val flushed = BoundedBodyCapture(64)
+        val streaming = connectorRequest().apply { headers.contentLength = 9 }
 
         // When
         CapturingClientHttpRequestDecorator(connector, declared).writeWith(Mono.just(buffer("hello"))).block()
         CapturingClientHttpRequestDecorator(garbled, malformed).writeWith(Mono.just(buffer("hello"))).block()
+        CapturingClientHttpRequestDecorator(streaming, flushed).writeAndFlushWith(Flux.just(Flux.just(buffer("a\n")))).block()
 
         // Then
         assertThat(declared.expectedBytes).isEqualTo(5L)
         assertThat(malformed.expectedBytes).isEqualTo(BoundedBodyCapture.UNKNOWN_LENGTH)
         assertThat(malformed.loggedValue(StandardCharsets.UTF_8)).isEqualTo("hello")
+        assertThat(flushed.expectedBytes).isEqualTo(9L)
     }
 
     @Test
@@ -192,18 +199,41 @@ class CapturingDecoratorsTest {
         }
     }
 
-    /** A mock connector request that offers zero-copy, recording which path a writer took. */
+    @Test
+    fun `should count nothing for a zero-copy transfer that fails`() {
+        // What is tested: the placement of the zero-copy count on the connector's SUCCESS signal - the
+        //   decision that a failed transfer counts nothing, pinned.
+        // Success criteria: the failure reaches the writer; the capture counted zero bytes.
+        // Why it matters: the connector reports no partial count for a failed sendfile, and the size
+        //   meter describes bytes that flowed - counting the attempted length would inflate it by
+        //   exactly the uploads that failed, and the operator would read a full upload where none
+        //   happened.
+        // Given: a connector whose transfer fails
+        val capture = BoundedBodyCapture(64)
+        val connector = ZeroCopyConnectorRequest().apply { transferFailure = IOException("connection reset during sendfile") }
+
+        // When
+        val thrown = catchThrowable { ZeroCopyCapturingClientHttpRequestDecorator(connector, capture).writeWith(Path.of("upload.bin"), 0, 1_234).block() }
+
+        // Then
+        assertThat(thrown).hasMessageContaining("connection reset during sendfile")
+        assertThat(capture.totalBytes).isZero()
+        assertThat(capture.loggedValue(StandardCharsets.UTF_8)).isNull()
+    }
+
+    /** A mock connector request that offers zero-copy, recording which path a writer took; its transfer fails with [transferFailure] when set. */
     private class ZeroCopyConnectorRequest :
         MockClientHttpRequest(HttpMethod.PUT, URI.create("https://api.example.com/upload")),
         ZeroCopyHttpOutputMessage {
         var zeroCopied: Triple<Path, Long, Long>? = null
         var bufferedWrites = 0
+        var transferFailure: Throwable? = null
 
         override fun writeWith(
             file: Path,
             position: Long,
             count: Long,
-        ): Mono<Void> = Mono.fromRunnable { zeroCopied = Triple(file, position, count) }
+        ): Mono<Void> = transferFailure?.let { Mono.error(it) } ?: Mono.fromRunnable { zeroCopied = Triple(file, position, count) }
 
         override fun writeWith(body: Publisher<out DataBuffer>): Mono<Void> {
             bufferedWrites++

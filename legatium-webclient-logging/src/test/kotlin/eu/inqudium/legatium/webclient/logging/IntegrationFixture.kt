@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInstance
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.web.reactive.function.client.WebClient
 import java.time.Duration
@@ -13,10 +14,27 @@ import java.time.Duration
  * [PeerServer] per test class, and per test the production exchange logger raised to INFO with an
  * [AwaitingAppender] attached (through [log]) and the peer's record cleared. A subclass adds the
  * `@SpringBootTest` annotation with its own properties and its own scenarios.
+ *
+ * One instance per class (inherited), so the peer is a field of the suite instance rather than one
+ * static slot every suite reassigns - correct whether or not suite classes ever run in parallel.
  */
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 abstract class IntegrationFixture {
     @Autowired
     internal lateinit var webClientBuilder: WebClient.Builder
+
+    /** The foreign party of the suite, started once per test class and stopped after its last test. */
+    internal lateinit var peer: PeerServer
+
+    @BeforeAll
+    fun startPeer() {
+        peer = PeerServer()
+    }
+
+    @AfterAll
+    fun stopPeer() {
+        peer.close()
+    }
 
     /**
      * The production logger of this test, captured at INFO. Attached in `@BeforeEach`, not in an
@@ -40,20 +58,5 @@ abstract class IntegrationFixture {
     companion object {
         /** The timeout where the timeout is the subject - well under [PeerServer.SLOW_ROUTE_DELAY]. */
         internal val SHORT: Duration = Duration.ofMillis(200)
-
-        /** The foreign party of the suite, started once per test class and stopped after its last test. */
-        internal lateinit var peer: PeerServer
-
-        @JvmStatic
-        @BeforeAll
-        fun startPeer() {
-            peer = PeerServer()
-        }
-
-        @JvmStatic
-        @AfterAll
-        fun stopPeer() {
-            peer.close()
-        }
     }
 }

@@ -286,8 +286,9 @@ class ClientRequestLoggingMetricsTest {
             //   interceptor hands the capture a length of zero at handover (the rule of Spring's own
             //   hasMessageBody(): 1xx, 204, 304), and the response is closed without the body ever
             //   being opened, exactly as RestClient and RestTemplate do for such answers.
-            // Success criteria: adapter.response.body.read counts 1 under state=complete for the 204
-            //   and nothing under state=unread; the same for a 200 with Content-Length: 0.
+            // Success criteria: adapter.response.body.read counts 1 under state=complete for each of a
+            //   204, a 304 and a 100, and nothing under state=unread; the same for a 200 with
+            //   Content-Length: 0.
             // Why it matters: before this rule every 204 counted as unread, so a route of deletes and
             //   updates showed 100 % "discarded payload" on the counter that exists to flag exactly
             //   that - and the same answer counted complete on the reactive twin, breaking the twin
@@ -295,12 +296,14 @@ class ClientRequestLoggingMetricsTest {
             // Given
             val measuring = interceptorWith(properties.copy(measureResponseBodySize = true), ticker, registry)
 
-            // When: a 204 and a declared-empty 200, both closed unopened
+            // When: the three bodiless statuses and a declared-empty 200, all closed unopened
             measuring.intercept(request(), ByteArray(0), answering(status = HttpStatus.NO_CONTENT)).close()
+            measuring.intercept(request(), ByteArray(0), answering(status = HttpStatus.NOT_MODIFIED) { it.headers.contentLength = 1234 }).close()
+            measuring.intercept(request(), ByteArray(0), answering(status = HttpStatus.CONTINUE)).close()
             measuring.intercept(request(), ByteArray(0), answering { it.headers.contentLength = 0 }).close()
 
             // Then
-            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(2.0)
+            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(4.0)
             assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "unread").counter()).isNull()
         }
 

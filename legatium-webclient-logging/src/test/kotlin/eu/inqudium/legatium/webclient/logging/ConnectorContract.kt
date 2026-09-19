@@ -105,6 +105,37 @@ abstract class ConnectorContract : IntegrationFixture() {
     }
 
     @Test
+    fun `should log a body consumed inside exchangeToMono as success through this connector`() {
+        // What is tested: the exactly-once completion against THIS engine's body publisher when Spring
+        //   subscribes to the body a second time - exchangeToMono releases the body after the handler
+        //   returned (releaseIfNotConsumed), and the JDK, Jetty and HttpComponents responses answer
+        //   that second subscription with an error ("can only be consumed once"), which Spring itself
+        //   swallows. Reactor Netty completes it empty, so the Reactor Netty suite is the control.
+        // Success criteria: the handler's body arrives; exactly one INFO event with outcome success,
+        //   without a cause, after the first consumption completed the exchange.
+        // Why it matters: a second subscription that could set the exchange's failure after the first
+        //   one completed it logged every healthy exchangeToMono call at ERROR on three of the four
+        //   connectors - with a status, duration and read state that all looked right.
+        // Given/When
+        val body =
+            client(peer.baseUrl)
+                .get()
+                .uri("/things/{id}", 7)
+                .exchangeToMono { it.bodyToMono(String::class.java) }
+                .block()
+
+        // Then
+        assertThat(body).isEqualTo("""{"id":7,"echo":""}""")
+        val event = log.awaitEvents(1).single()
+        assertThat(event.level).describedAs("event %s", event.formattedMessage).isEqualTo(Level.INFO)
+        assertThat(keyValues(event))
+            .containsEntry("adapter_outcome", "success")
+            .containsEntry("adapter_response_status_code", 200)
+            .containsEntry("adapter_response_body", """{"id":7,"echo":""}""")
+        assertThat(event.throwableProxy).isNull()
+    }
+
+    @Test
     fun `should log this connector's response timeout as WARN timeout`() {
         // What is tested: the classification against the exception this engine really raises when the
         //   peer's status line does not arrive in time.

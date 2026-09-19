@@ -70,7 +70,7 @@ class ClientRequestLoggingInterceptorIntegrationTest : PeerIntegrationSuite() {
     private fun clientAgainstClosedPort(): RestClient =
         restClientBuilder
             .baseUrl("http://127.0.0.1:1")
-            .requestFactory(JdkClientHttpRequestFactory(HttpClient.newBuilder().connectTimeout(CONNECT_GUARD).build()))
+            .requestFactory(JdkClientHttpRequestFactory(closing(HttpClient.newBuilder().connectTimeout(CONNECT_GUARD).build())))
             .build()
 
     @Test

@@ -5,9 +5,6 @@ import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
-import org.reactivestreams.Publisher
-import org.reactivestreams.Subscriber
-import org.reactivestreams.Subscription
 import org.springframework.core.io.buffer.DataBuffer
 import org.springframework.core.io.buffer.DefaultDataBufferFactory
 import reactor.core.publisher.Flux
@@ -293,22 +290,4 @@ class BoundedBodyCaptureTest {
             assertThat(capture.readState).isEqualTo(BodyReadState.PARTIAL)
         }
     }
-}
-
-/** A publisher that ignores cancellation - the Reactive-Streams-permitted late onNext, made deterministic. */
-private class ManualPublisher : Publisher<DataBuffer> {
-    private lateinit var subscriber: Subscriber<in DataBuffer>
-
-    override fun subscribe(s: Subscriber<in DataBuffer>) {
-        subscriber = s
-        s.onSubscribe(
-            object : Subscription {
-                override fun request(n: Long) = Unit
-
-                override fun cancel() = Unit
-            },
-        )
-    }
-
-    fun emit(buffer: DataBuffer) = subscriber.onNext(buffer)
 }

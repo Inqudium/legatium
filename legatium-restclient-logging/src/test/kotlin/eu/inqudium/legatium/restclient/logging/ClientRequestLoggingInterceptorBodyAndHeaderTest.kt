@@ -386,6 +386,29 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
         }
 
         @Test
+        fun `should fall back to UTF-8 and keep the event when the peer's Content-Type does not parse`() {
+            // What is tested: declaredCharsetOrUtf8's InvalidMediaTypeException branch at emission - a
+            //   response Content-Type Spring's MediaType cannot parse (no slash).
+            // Success criteria: the body logs decoded as UTF-8; no fail-open stage is counted.
+            // Why it matters: a malformed header is the peer's problem; thrown inside the emission it
+            //   would cost the event (stage=emission) of every call to that peer.
+            // Given
+            val registry = SimpleMeterRegistry()
+            val interceptor = interceptorWith(base.copy(logResponseBody = BodyLogMode.ALWAYS), ticker, registry)
+            val garbled =
+                ClientHttpRequestExecution { _, _ ->
+                    MockClientHttpResponse("payload".toByteArray(StandardCharsets.UTF_8), HttpStatus.OK).also { it.headers.set("Content-Type", "garbage") }
+                }
+
+            // When
+            interceptor.intercept(request(), ByteArray(0), garbled).consumeAndClose()
+
+            // Then
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_response_body", "payload")
+            assertThat(registry.get(ClientLoggingMetrics.FAIL_OPEN_METER).counters().sumOf { it.count() }).isZero()
+        }
+
+        @Test
         fun `should record the read state of the response body as unread, partial or complete`() {
             // What is tested: the observation points of the read state - opening the stream marks
             //   PARTIAL, observing EOF marks COMPLETE, never opening it leaves UNREAD.
