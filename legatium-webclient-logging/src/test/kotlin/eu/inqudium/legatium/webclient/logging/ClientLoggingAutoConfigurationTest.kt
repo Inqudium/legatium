@@ -6,6 +6,7 @@ import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.NanoTimeSource
+import io.micrometer.context.ContextSnapshotFactory
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
@@ -134,6 +135,36 @@ class ClientLoggingAutoConfigurationTest {
                         .contains("maskingKey=<redacted>")
                         .doesNotContain("maskingKey=k")
                 }
+            }
+        } finally {
+            log.detach()
+        }
+    }
+
+    @Test
+    fun `should report at DEBUG that the caller's MDC is not restored when context-propagation is absent`() {
+        // What is tested: the restore line of the wiring report against a context whose class loader
+        //   cannot see io.micrometer:context-propagation - the detection runs against the context's
+        //   loader, not the module's.
+        // Success criteria: the absent variant of the line, and the filter's emitter holds the no-op
+        //   restorer; the present variant nowhere.
+        // Why it matters: a host without the optional library reads from its log why client lines lack
+        //   the inbound identity - and the test proves the line follows the classpath the host has, not
+        //   the one this module was built with.
+        // Given: the auto-configuration's logger captured at DEBUG
+        val log = CapturedLogger(ClientLoggingAutoConfiguration::class.java.name, Level.DEBUG)
+        try {
+            // When
+            contextRunner.withClassLoader(FilteredClassLoader(ContextSnapshotFactory::class.java)).run { context ->
+                assertThat(context).hasNotFailed()
+
+                // Then
+                assertThat(context.getBean(ClientRequestLoggingFilter::class.java).emitter.ambientRestorer).isSameAs(AmbientContextRestorer.NONE)
+                val messages = log.events.map { it.formattedMessage }
+                assertThat(messages).contains(
+                    "Adapter logging emits every exchange line with the completing thread's MDC only - io.micrometer:context-propagation is not on the classpath, so the caller's thread-locals are not restored",
+                )
+                assertThat(messages).noneMatch { it.contains("context-propagation is on the classpath") }
             }
         } finally {
             log.detach()

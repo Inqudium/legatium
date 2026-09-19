@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - WebClient twin: the wiring report also states whether the caller's thread-locals (its MDC) are
   restored around every exchange line - the outcome of the classpath detection of ADR-0010, which has
   no property and was so far readable nowhere: one line when `io.micrometer:context-propagation` is
-  present, another when it is absent. Pinned by the auto-configuration test.
+  present, another when it is absent. The detection runs against the context's class loader, so the
+  line follows the host's classpath; both variants are pinned by the auto-configuration test.
 - Both twins: the wiring report states whether Boot's **client observation** and Micrometer Tracing
   are wired next to the module - the decision behind the identity contract of ADR-0002 (a traced call
   takes the trace id as its request id and gets no `X-Correlation-Id`), which has no property and was

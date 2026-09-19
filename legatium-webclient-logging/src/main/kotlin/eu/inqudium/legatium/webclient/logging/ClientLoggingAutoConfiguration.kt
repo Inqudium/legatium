@@ -24,6 +24,7 @@ import org.springframework.context.annotation.Configuration
 import org.springframework.core.Ordered
 import org.springframework.core.annotation.Order
 import org.springframework.core.env.Environment
+import org.springframework.core.io.ResourceLoader
 
 /**
  * Registers the [ClientRequestLoggingFilter] in a Spring Boot application and attaches it to every
@@ -94,6 +95,7 @@ class ClientLoggingAutoConfiguration {
         meterRegistry: ObjectProvider<MeterRegistry>,
         environment: Environment,
         boundProperties: ObjectProvider<BoundConfigurationProperties>,
+        resourceLoader: ResourceLoader,
     ): ClientRequestLoggingFilter {
         log.debug("Adapter logging registered its ClientRequestLoggingFilter bean with {}", properties)
         if (log.isTraceEnabled) {
@@ -109,7 +111,11 @@ class ClientLoggingAutoConfiguration {
             }
         }
         val filter = ClientRequestLoggingFilter(properties, nanoTime, correlationIds, meterRegistry.getIfAvailable { CompositeMeterRegistry() }, masker)
-        // The classpath opt-in of ADR-0010 has no property; the report is the only place a host can read the outcome.
+        // The classpath opt-in of ADR-0010 is decided against the CONTEXT's class loader - the one the
+        // host's optional dependencies are visible through, and the one a test can narrow - not against
+        // the module's own; the filter's constructor default serves manual wiring, where the two coincide.
+        // The opt-in has no property; the report is the only place a host can read the outcome.
+        filter.emitter.ambientRestorer = AmbientContextRestorer.detect(resourceLoader.classLoader)
         if (filter.emitter.ambientRestorer is ContextPropagationRestorer) {
             log.debug("Adapter logging restores the caller's thread-locals (its MDC) around every exchange line from the Reactor Context - io.micrometer:context-propagation is on the classpath")
         } else {

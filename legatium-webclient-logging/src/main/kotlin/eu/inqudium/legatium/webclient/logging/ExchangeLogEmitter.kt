@@ -51,7 +51,9 @@ internal class ExchangeLogEmitter(
     private val masker: HeaderValueMasker,
     /**
      * Restores the caller's thread-locals from the exchange's Reactor Context around each emission
-     * (ADR-0010). Mutable for the tests only, which swap in a throwing restorer to drive the fail-open path.
+     * (ADR-0010). Detected against this module's class loader by default (manual wiring); mutable for
+     * the auto-configuration, which re-detects against the context's class loader, and for the tests,
+     * which swap in a throwing restorer to drive the fail-open path.
      */
     internal var ambientRestorer: AmbientContextRestorer = AmbientContextRestorer.detect(),
 ) {
