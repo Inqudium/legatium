@@ -15,7 +15,8 @@ import java.nio.charset.StandardCharsets
 /**
  * The tee stream's transparency towards the application: the engine stream's `mark`/`reset` contract is
  * forwarded as it is - present on a buffered response, absent on an engine stream - and a rewind moves
- * the capture with the stream. The read and close guards are proved through the interceptor.
+ * the capture with the stream - plus the guard on the tee stream's own close. The read guards and the
+ * response close guard are proved through the interceptor.
  */
 class CapturingClientHttpResponseTest {
     private val failures = mutableListOf<Exception>()
@@ -37,6 +38,12 @@ class CapturingClientHttpResponseTest {
             override fun markSupported(): Boolean = false
 
             override fun reset(): Unit = throw IOException("mark/reset not supported")
+        }
+
+    /** An engine stream that reads fine and refuses to close - a connection that broke while it was being released. */
+    private fun refusingToClose(text: String): InputStream =
+        object : FilterInputStream(ByteArrayInputStream(text.toByteArray(StandardCharsets.UTF_8))) {
+            override fun close(): Unit = throw IOException("connection broke on release")
         }
 
     @Test
@@ -93,6 +100,32 @@ class CapturingClientHttpResponseTest {
         assertThat(thrown).isInstanceOf(IOException::class.java).hasMessageContaining("not supported")
         assertThat(failures).containsExactly(thrown as Exception)
         assertThat(capture.totalBytes).isEqualTo(1L)
+    }
+
+    @Test
+    fun `should report a body stream whose close throws and rethrow it unchanged`() {
+        // What is tested: the guard on the tee stream's close - the engine stream's close throws after
+        //   the body was read to its end; the exception is reported as the exchange's failure like a
+        //   refused read and reaches the caller unchanged.
+        // Success criteria: close() throws the engine's IOException; it is the one failure reported;
+        //   the bytes read before it stay captured and the read state stays COMPLETE.
+        // Why it matters: the converters close the body stream in a finally - unguarded, a close the
+        //   caller sees fail would leave the exchange to log `success`; swallowed, it would hide from
+        //   the caller a failure the exchange line reports.
+        // Given
+        val capture = BoundedBodyCapture(16)
+        val body = wrapping(refusingToClose("hello"), capture).body
+
+        // When: the full read, then the close the converter's finally performs
+        val text = body.readAllBytes().toString(StandardCharsets.UTF_8)
+        val thrown = catchThrowable { body.close() }
+
+        // Then
+        assertThat(text).isEqualTo("hello")
+        assertThat(thrown).isInstanceOf(IOException::class.java).hasMessage("connection broke on release")
+        assertThat(failures).containsExactly(thrown as Exception)
+        assertThat(capture.loggedValue(StandardCharsets.UTF_8)).isEqualTo("hello")
+        assertThat(capture.readState).isEqualTo(BodyReadState.COMPLETE)
     }
 
     @Test

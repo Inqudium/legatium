@@ -84,7 +84,7 @@ abstract class ConnectorContract : IntegrationFixture() {
                 .bodyValue("hello")
                 .retrieve()
                 .bodyToMono(String::class.java)
-                .block()
+                .block(AWAIT)
 
         // Then
         assertThat(body).isEqualTo("""{"id":7,"echo":"hello"}""")
@@ -122,7 +122,7 @@ abstract class ConnectorContract : IntegrationFixture() {
                 .get()
                 .uri("/things/{id}", 7)
                 .exchangeToMono { it.bodyToMono(String::class.java) }
-                .block()
+                .block(AWAIT)
 
         // Then
         assertThat(body).isEqualTo("""{"id":7,"echo":""}""")
@@ -150,7 +150,7 @@ abstract class ConnectorContract : IntegrationFixture() {
                     .uri("/slow")
                     .retrieve()
                     .bodyToMono(String::class.java)
-                    .block()
+                    .block(AWAIT)
             }
 
         // Then
@@ -180,7 +180,7 @@ abstract class ConnectorContract : IntegrationFixture() {
                     .uri("/things/1")
                     .retrieve()
                     .bodyToMono(String::class.java)
-                    .block()
+                    .block(AWAIT)
             }
 
         // Then
@@ -206,7 +206,7 @@ abstract class ConnectorContract : IntegrationFixture() {
                     .uri("/things/1")
                     .retrieve()
                     .bodyToMono(String::class.java)
-                    .block()
+                    .block(AWAIT)
             }
 
         // Then

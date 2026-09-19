@@ -85,6 +85,38 @@ class ClientActivationTest {
     }
 
     @Test
+    fun `should exclude by prefix alone, every other path staying active`() {
+        // What is tested: exclude-path-prefixes WITHOUT include-path-patterns - the shipped shape for
+        //   "log every call except the probes".
+        // Success criteria: `/actuator/health` is excluded; `/api/things` and the root path are active.
+        // Why it matters: the "nothing configured" short-circuit must not fire when only prefixes are
+        //   set - inverted, every exclusion would silently be ignored, and a test that also sets a
+        //   pattern cannot see it.
+        // Given
+        val activation = activation(excludePathPrefixes = listOf("/actuator/"))
+
+        // When/Then
+        assertThat(activation.shouldNotFilter(URI.create("https://h/actuator/health"))).isTrue()
+        assertThat(activation.shouldNotFilter(URI.create("https://h/api/things"))).isFalse()
+        assertThat(activation.shouldNotFilter(URI.create("https://h/"))).isFalse()
+    }
+
+    @Test
+    fun `should include by pattern alone, every other path being inactive`() {
+        // What is tested: include-path-patterns WITHOUT exclude-path-prefixes.
+        // Success criteria: `/api/things` is active; `/other` and the root path are not.
+        // Why it matters: the mirror image of the prefix-only case - with only patterns set the
+        //   short-circuit must not answer "active for every call".
+        // Given
+        val activation = activation(includePathPatterns = listOf("/api/**"))
+
+        // When/Then
+        assertThat(activation.shouldNotFilter(URI.create("https://h/api/things"))).isFalse()
+        assertThat(activation.shouldNotFilter(URI.create("https://h/other"))).isTrue()
+        assertThat(activation.shouldNotFilter(URI.create("https://h/"))).isTrue()
+    }
+
+    @Test
     fun `should fail construction for an invalid include pattern`() {
         // What is tested: the include patterns are parsed once at construction.
         // Success criteria: an unbalanced pattern throws Spring's PatternParseException from the

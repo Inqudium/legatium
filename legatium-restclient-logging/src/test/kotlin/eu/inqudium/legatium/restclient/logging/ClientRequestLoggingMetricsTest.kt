@@ -396,6 +396,29 @@ class ClientRequestLoggingMetricsTest {
         }
 
         @Test
+        fun `should keep trusting the declared length under Content-Encoding identity`() {
+            // What is tested: the one encoding the rule exempts - `identity` names the bytes as they
+            //   are, so no engine can decode them to another length and Content-Length stays the
+            //   length the application reads.
+            // Success criteria: the same length-exact read as above, with `Content-Encoding: identity`
+            //   on the response, counts state=complete and nothing under state=partial.
+            // Why it matters: a rule reading "any Content-Encoding -> unknown" passes the gzip case
+            //   above and would turn every byte[] answer of a peer that declares identity into a
+            //   partial read - the false alarm the declared-length rule exists to prevent.
+            // Given: measuring, a response declaring length AND the identity encoding, on an engine-like stream
+            val measuring = interceptorWith(properties.copy(measureResponseBodySize = true), ticker, registry)
+            val response = measuring.intercept(request(), ByteArray(0), answeringLikeAnEngine("world!", mapOf("Content-Encoding" to "identity")))
+
+            // When: exactly the declared length is read, no EOF asked for
+            response.body.readNBytes(6)
+            response.close()
+
+            // Then
+            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(1.0)
+            assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "partial").counter()).isNull()
+        }
+
+        @Test
         fun `should fold a malformed Content-Length to unknown without counting a wiring failure`() {
             // What is tested: the peer-controlled header at the completeness seam - Spring parses
             //   Content-Length with Long.parseLong, so a non-numeric value throws; declaredBodyLength
@@ -466,6 +489,35 @@ class ClientRequestLoggingMetricsTest {
             assertThat(body).isEqualTo("served")
             assertThat(log.events).isEmpty()
             assertThat(counter(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
+            assertThat(gauge()).isZero()
+        }
+
+        @Test
+        fun `should leave the request and the correlation counter untouched when the time source throws at wiring`() {
+            // What is tested: the ORDER inside the wiring - the steps without side effects (the
+            //   coordinates, the captures, the time source, the caller's MDC) run before the header
+            //   mutation and the origin count, so a host time source that throws degrades the call
+            //   with nothing stamped on the wire and nothing counted.
+            // Success criteria: the call passes with the body served; the request carries neither the
+            //   correlation header nor the generated-id attribute; correlation.id{source=generated}
+            //   stays at zero; wiring=1, no event, gauge untouched.
+            // Why it matters: observational neutrality - a pass-through that still stamped a header no
+            //   line mentions would hand the peer an id nothing explains, and an origin counted for an
+            //   exchange that was never opened would let the correlation sum drift from the events sum.
+            // Given: a time source that throws on its wiring-time read, a traceless request without headers
+            val broken = ClientRequestLoggingInterceptor(properties, NanoTimeSource { throw IllegalStateException("no clock") }, CorrelationIdGenerator { "generated-42" }, registry)
+            val request = request()
+
+            // When
+            val body = broken.intercept(request, ByteArray(0), answering(body = "served")).consumeAndClose()
+
+            // Then
+            assertThat(body).isEqualTo("served")
+            assertThat(request.headers.getFirst(properties.correlationIdHeader)).isNull()
+            assertThat(request.attributes).isEmpty()
+            assertThat(counter(ClientLoggingMetrics.CORRELATION_METER, "source", "generated")).isZero()
+            assertThat(counter(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
+            assertThat(log.events).isEmpty()
             assertThat(gauge()).isZero()
         }
 

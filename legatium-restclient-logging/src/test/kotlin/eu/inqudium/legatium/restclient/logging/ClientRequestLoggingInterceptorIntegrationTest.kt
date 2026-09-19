@@ -275,7 +275,7 @@ class ClientRequestLoggingInterceptorIntegrationTest : PeerIntegrationSuite() {
         val client =
             restClientBuilder
                 .baseUrl(peer.baseUrl)
-                .requestFactory(JdkClientHttpRequestFactory().apply { setReadTimeout(SHORT) })
+                .requestFactory(JdkClientHttpRequestFactory(closing(HttpClient.newBuilder().build())).apply { setReadTimeout(SHORT) })
                 .build()
 
         // When

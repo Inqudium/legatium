@@ -26,6 +26,7 @@ jobs:
       matrix:
         target:
           - BoundedBodyCaptureFuzzTest
+          - BoundedByteBufferFuzzTest
           - HeaderMaskingFuzzTest
           - TraceparentFuzzTest
     steps:

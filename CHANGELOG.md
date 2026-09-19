@@ -64,8 +64,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deduplicating lookup. Measured (`benchmarks/`, `BodyMeterRecordBenchmark`;
   `docs/assessment/BENCH_REPORT-2026-09-19T19-11-09.md`): 85 ns and 448 B per
   sample before, 35 ns and 32 B after, three samples per measured exchange. A host that removes one of
-  these meters from its registry gets it registered anew on the next exchange. No observable change
-  to the meters themselves.
+  these meters from its registry gets it registered anew on the next exchange. The cache holds only
+  meters the registry holds: a meter a denying `MeterFilter` (Boot's `management.metrics.enable.*`, a
+  tag cap) or a closed registry answered with a no-op is used for its exchange and not kept, so the
+  cache cannot grow where the operator bounded the registry. A miss registers the meter OUTSIDE the
+  cache's own lock - Micrometer notifies removal listeners under its registry lock, and a registration
+  from inside the map's compute would have waited for that lock while the listener waited for the map's:
+  a deadlock of the exchange thread and the host's registry (defect analysis of 2026-09-19, evening,
+  findings 1 and 2). No observable change to the meters themselves.
 
 ### Fixed
 

@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.DistributionSummary
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Meter
 import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.noop.NoopMeter
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.slf4j.LoggerFactory
 import java.lang.ref.WeakReference
@@ -121,13 +122,27 @@ internal enum class ClientStack(
  *
  * The DYNAMIC body meters (the two size summaries and the read-state counter, tagged per URI template,
  * host and client name) are resolved ONCE per tag set and kept in a cache that mirrors the registry's
- * entries under those three names - one entry per meter the registry holds, so the cache adds no
+ * entries under those three names - one entry per meter the registry HOLDS, so the cache adds no
  * cardinality and needs no size policy of its own; the `uri` folding ([uriTag]) and the documented host
- * precondition bound both alike. Without it every measured exchange rebuilt the builder, the tags and
- * the `Meter.Id` three times only to hit Micrometer's deduplicating lookup (measured in
- * `benchmarks/`: `BodyMeterRecordBenchmark`). The one way cache and registry could drift apart - a host
- * removing a meter - is closed by a removal listener that drops the entry, so the next exchange
- * registers anew instead of recording into a detached instance.
+ * precondition bound both alike. A meter the registry did NOT keep - a denying `MeterFilter` (Boot's
+ * `management.metrics.enable.*`, a tag cap) or a closed registry answers with a detached no-op instance
+ * - is used for its exchange but never cached: nothing would ever release it, and the cache would grow
+ * per tag set exactly where the operator bounded the registry. Without the cache every measured exchange
+ * rebuilt the builder, the tags and the `Meter.Id` three times only to hit Micrometer's deduplicating
+ * lookup (measured in `benchmarks/`: `BodyMeterRecordBenchmark`). The one way cache and registry could
+ * drift apart - a host removing one of the dynamic meters - is closed by a removal listener that drops
+ * the entry, so the next exchange registers anew instead of recording into a detached instance. The
+ * listener covers the dynamic meters ONLY: the fixed meters are registered once at construction, and a
+ * host that removes one of them (a `clear()` on a test registry) has decided against it - the owner
+ * keeps counting into the detached instance rather than re-registering behind the host's back.
+ *
+ * LOCK ORDER: Micrometer notifies removal listeners while holding its registry-wide meter-map lock, and
+ * registering a new id takes that same lock. The cache is therefore never written from inside a
+ * `ConcurrentHashMap.computeIfAbsent` - its mapping function runs under the map's bin lock, and a
+ * registration in there would wait for the registry lock while the listener, holding it, waits for the
+ * bin lock to drop the removed entry. A miss resolves the meter OUTSIDE the map and publishes it with
+ * `putIfAbsent` ([cacheBodyMeter]); a lost race registers the same id twice, which Micrometer
+ * deduplicates to one instance anyway.
  */
 internal class ClientLoggingMetrics private constructor(
     private val meterRegistry: MeterRegistry,
@@ -158,10 +173,32 @@ internal class ClientLoggingMetrics private constructor(
     init {
         // A host that removes one of the cached meters (`MeterRegistry.remove`) gets it registered anew
         // on the next exchange; without this the owner would keep recording into the detached instance.
+        // Runs UNDER the registry's meter-map lock and takes the maps' bin locks - the lock order the
+        // class KDoc fixes; the registry also holds this lambda, and with it the owner, as long as it lives.
         meterRegistry.config().onMeterRemoved { removed ->
             bodySizeSummaries.values.removeIf { it === removed }
             readStateCounters.values.removeIf { it === removed }
         }
+    }
+
+    /**
+     * The miss path of the body-meter caches: resolves the meter through [resolve] OUTSIDE [cache] and
+     * publishes it with `putIfAbsent`, never `computeIfAbsent` (the lock order of the class KDoc); a
+     * racing resolver's instance is the same registry-deduplicated meter, so either one serves. A meter
+     * the host registry did not keep ([NoopMeter]: a denying filter or a closed registry) is returned
+     * for this exchange but NOT cached - the removal listener could never release it, and one entry per
+     * denied tag set would grow the cache exactly where the operator bounded the registry.
+     */
+    private fun <M : Meter> cacheBodyMeter(
+        cache: ConcurrentHashMap<BodyMeterKey, M>,
+        key: BodyMeterKey,
+        resolve: () -> M,
+    ): M {
+        val meter = resolve()
+        if (meter is NoopMeter) {
+            return meter
+        }
+        return cache.putIfAbsent(key, meter) ?: meter
     }
 
     /** [FAIL_OPEN_METER], pre-registered per stage. */
@@ -289,9 +326,9 @@ internal class ClientLoggingMetrics private constructor(
     ) = updateQuietly(RESPONSE_BODY_READ_METER) {
         val key = BodyMeterKey(RESPONSE_BODY_READ_METER, uriTag(template), host ?: UNKNOWN_HOST, name ?: UNNAMED_ADAPTER, state.tagValue)
         // The plain get first: on the hit path - every exchange but the first per tag set - the key is
-        // then the only allocation; computeIfAbsent's lambdas are built on a miss alone.
+        // then the only allocation; the resolver's lambdas are built on a miss alone.
         val counter =
-            readStateCounters[key] ?: readStateCounters.computeIfAbsent(key) {
+            readStateCounters[key] ?: cacheBodyMeter(readStateCounters, key) {
                 registerOrFallback(RESPONSE_BODY_READ_METER) { registry ->
                     Counter
                         .builder(RESPONSE_BODY_READ_METER)
@@ -390,7 +427,7 @@ internal class ClientLoggingMetrics private constructor(
             val key = BodyMeterKey(meterName, uriTag(template), host ?: UNKNOWN_HOST, name ?: UNNAMED_ADAPTER)
             // The plain get first, as in responseBodyRead: the key is the hit path's only allocation.
             val summary =
-                bodySizeSummaries[key] ?: bodySizeSummaries.computeIfAbsent(key) {
+                bodySizeSummaries[key] ?: cacheBodyMeter(bodySizeSummaries, key) {
                     registerOrFallback(meterName) { registry ->
                         DistributionSummary
                             .builder(meterName)
@@ -409,10 +446,11 @@ internal class ClientLoggingMetrics private constructor(
     companion object {
         private val internalLog = LoggerFactory.getLogger(ClientLoggingMetrics::class.java)
 
-        // Both sides weak: the KEY must not pin a host registry that outlives its context, the VALUE lives
-        // as long as an entry point holds it. Residual (accepted): a NEW entry point wired against a
-        // still-live registry whose earlier owners were all collected meets its own gauge id again and
-        // keeps its gauge private with a warning (the same-type collision case of the class KDoc).
+        // Both sides weak: the KEY must not pin a host registry that outlives its context, and the VALUE
+        // must not pin the owner beyond the registry. The owner lives exactly as long as its registry:
+        // the removal listener the registry holds captures the owner, so the reference here is never
+        // cleared while the registry is reachable, and a new entry point on a live registry always
+        // finds the existing owner (never its own gauge id left behind by a collected one).
         private val perRegistry = WeakHashMap<MeterRegistry, EnumMap<ClientStack, WeakReference<ClientLoggingMetrics>>>()
 
         /**
