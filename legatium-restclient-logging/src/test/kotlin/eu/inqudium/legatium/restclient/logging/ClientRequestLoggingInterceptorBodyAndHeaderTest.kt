@@ -116,6 +116,54 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
         }
 
         @Test
+        fun `should leave the correlation header on the request and count stage wiring when the host masker throws`() {
+            // What is tested: the one wiring step AFTER the header mutation - the header selection,
+            //   which must see the correlation header the peer will see, runs the host masker; a
+            //   masker that throws fails the wiring with the header already on the request.
+            // Success criteria: the call passes with the body served; the request still carries the
+            //   generated correlation header and the generated-id attribute; no event, wiring=1, the
+            //   origin counter at zero (the origin count comes after the selection), gauge untouched.
+            // Why it matters: the documented consequence of the wiring order - a call that proceeds
+            //   unlogged with a correlation id no line mentions - must stay exactly that: the peer
+            //   still gets an id it can quote, and the loss is visible on the fail-open counter.
+            // Given: a masked, selected header and a masker that throws on it
+            val registry = SimpleMeterRegistry()
+            val subject =
+                ClientRequestLoggingInterceptor(
+                    base.copy(requestHeaders = HeaderLogProperties(includes = listOf("Authorization"), masked = listOf("Authorization"))),
+                    NanoTimeSource { ticker.get() },
+                    CorrelationIdGenerator { "generated-42" },
+                    registry,
+                    HeaderValueMasker { throw IllegalStateException("masker broke") },
+                )
+            val request = request().apply { headers.set("Authorization", "Bearer secret-token") }
+
+            // When
+            val body = subject.intercept(request, ByteArray(0), answering(body = "served")).consumeAndClose()
+
+            // Then
+            assertThat(body).isEqualTo("served")
+            assertThat(request.headers.getFirst(base.correlationIdHeader)).isEqualTo("generated-42")
+            assertThat(request.attributes).containsEntry(ClientRequestLoggingInterceptor.GENERATED_ID_ATTRIBUTE, "generated-42")
+            assertThat(log.events).isEmpty()
+            assertThat(
+                registry
+                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
+                    .tags("stage", "wiring")
+                    .counter()
+                    .count(),
+            ).isEqualTo(1.0)
+            assertThat(
+                registry
+                    .get(ClientLoggingMetrics.CORRELATION_METER)
+                    .tags("source", "generated")
+                    .counter()
+                    .count(),
+            ).isZero()
+            assertThat(registry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+        }
+
+        @Test
         fun `should key the built-in fingerprint from the properties when constructed without a masker`() {
             // What is tested: the masker default of the public four-argument constructor - the manual
             //   wiring path the guides recommend - derives from properties.maskingKey through

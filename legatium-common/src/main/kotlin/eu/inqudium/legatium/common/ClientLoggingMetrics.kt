@@ -143,6 +143,15 @@ internal enum class ClientStack(
  * bin lock to drop the removed entry. A miss resolves the meter OUTSIDE the map and publishes it with
  * `putIfAbsent` ([cacheBodyMeter]); a lost race registers the same id twice, which Micrometer
  * deduplicates to one instance anyway.
+ *
+ * ACCEPTED RESIDUE of that order (defect analysis of 2026-09-19, night, finding 1): between the
+ * registration returning and the `putIfAbsent` lies a window of microseconds in which a host removal
+ * of that very meter runs the listener against a cache that holds no entry yet; the detached instance
+ * is then published and takes every later sample of its tag set, unseen by any exporter, until the
+ * owner is recreated. It needs a host that removes meters at runtime (a `clear()`, a pruner) AND the
+ * removal inside that window, and it costs the samples of one tag set - never an event, never a call.
+ * Closing it would take a registry-wide lookup after every first-time registration; the trade against
+ * the deadlock the order removed is deliberate, and the residue is documented rather than paid for.
  */
 internal class ClientLoggingMetrics private constructor(
     private val meterRegistry: MeterRegistry,
@@ -187,7 +196,8 @@ internal class ClientLoggingMetrics private constructor(
      * racing resolver's instance is the same registry-deduplicated meter, so either one serves. A meter
      * the host registry did not keep ([NoopMeter]: a denying filter or a closed registry) is returned
      * for this exchange but NOT cached - the removal listener could never release it, and one entry per
-     * denied tag set would grow the cache exactly where the operator bounded the registry.
+     * denied tag set would grow the cache exactly where the operator bounded the registry. The window
+     * between [resolve] returning and the `putIfAbsent` is the accepted residue of the class KDoc.
      */
     private fun <M : Meter> cacheBodyMeter(
         cache: ConcurrentHashMap<BodyMeterKey, M>,

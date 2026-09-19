@@ -22,6 +22,7 @@ import org.springframework.web.reactive.function.client.ClientResponse
 import org.springframework.web.reactive.function.client.ExchangeFunction
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.util.pattern.PatternParseException
+import reactor.core.CoreSubscriber
 import reactor.core.publisher.BaseSubscriber
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
@@ -1110,6 +1111,50 @@ class ClientRequestLoggingFilterTest {
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.WARN)
             assertThat(keyValues(event)).containsEntry("adapter_outcome", "cancelled").containsEntry("adapter_response_status_code", 200)
+            assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+        }
+
+        @Test
+        fun `should pass a response through unobserved when it arrives after the caller already cancelled`() {
+            // What is tested: the handover's late-arrival branch - the caller cancelled BEFORE any
+            //   response, the exchange completed as cancelled, and the connector emits the response
+            //   anyway (a source may still signal after a cancel; Reactive Streams permits it).
+            // Success criteria: the connector's own response instance reaches the subscriber - not
+            //   wrapped, not dropped - the log still holds exactly the one cancelled event, and the
+            //   gauge stays at zero.
+            // Why it matters: observing that response would complete the exchange a second time (two
+            //   lines, or a gauge below zero); dropping it would starve a downstream that still wants it.
+            // Given: a connector Mono that ignores the cancel and emits when the test says so
+            val downstream = AtomicReference<CoreSubscriber<in ClientResponse>>()
+            val late =
+                object : Mono<ClientResponse>() {
+                    override fun subscribe(actual: CoreSubscriber<in ClientResponse>) {
+                        downstream.set(actual)
+                        actual.onSubscribe(
+                            object : Subscription {
+                                override fun request(n: Long) = Unit
+
+                                override fun cancel() = Unit
+                            },
+                        )
+                    }
+                }
+            val received = AtomicReference<ClientResponse>()
+            val subscriber =
+                object : BaseSubscriber<ClientResponse>() {
+                    override fun hookOnNext(value: ClientResponse) = received.set(value)
+                }
+            filter.filter(request(), ExchangeFunction { late }).subscribe(subscriber)
+            subscriber.cancel()
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_outcome", "cancelled")
+            val response = ClientResponse.create(HttpStatus.OK).build()
+
+            // When: the response arrives after the cancel
+            downstream.get().onNext(response)
+
+            // Then: passed through untouched, nothing logged twice, nothing left open
+            assertThat(received.get()).isSameAs(response)
+            assertThat(log.events).hasSize(1)
             assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
         }
 

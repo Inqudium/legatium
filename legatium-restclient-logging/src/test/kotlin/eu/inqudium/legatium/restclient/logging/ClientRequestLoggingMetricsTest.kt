@@ -223,7 +223,8 @@ class ClientRequestLoggingMetricsTest {
         fun `should record body sizes and the response read state under template and host, independent of the level gate`() {
             // What is tested: the opt-in body meters - sizes per direction tagged by template and host,
             //   plus the response read state; all recorded although the logger is OFF.
-            // Success criteria: request 5 bytes, response 6 bytes, one `complete` count under the tags.
+            // Success criteria: request 5 bytes, response 6 bytes, one `complete` count under the tags;
+            //   no event on the appender and none on the events counter, which counts after the level gate.
             // Why it matters: a metric must not depend on how loud the logger is configured.
             // Given
             val measuring = interceptorWith(properties.copy(measureRequestBodySize = true, measureResponseBodySize = true), ticker, registry)
@@ -255,6 +256,10 @@ class ClientRequestLoggingMetricsTest {
             ).isEqualTo(6.0)
             assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, *tags, "state", BodyReadState.COMPLETE.tagValue)).isEqualTo(1.0)
             assertThat(log.events).isEmpty()
+            // And: the events counter agrees with the appender - it counts after the level gate
+            listOf("success", "rejected", "failure", "timeout").forEach {
+                assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", it)).describedAs(it).isZero()
+            }
         }
 
         @Test

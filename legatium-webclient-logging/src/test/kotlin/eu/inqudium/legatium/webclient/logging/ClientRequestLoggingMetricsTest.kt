@@ -172,7 +172,8 @@ class ClientRequestLoggingMetricsTest {
             //   logger at OFF - the request tee through the inserter wrap, the response tee, and
             //   the read-state counter.
             // Success criteria: 5 request bytes and 6 response bytes recorded under the template
-            //   and host tags, the read counter at 1 for state=complete, and no event emitted.
+            //   and host tags, the read counter at 1 for state=complete, and no event emitted - on
+            //   the appender AND on the events counter, which counts after the level gate.
             // Why it matters: metrics run before the level gate; a size sample that vanished when
             //   the logger is quiet would make the meters depend on log configuration.
             // Given
@@ -213,6 +214,51 @@ class ClientRequestLoggingMetricsTest {
             ).isEqualTo(6.0)
             assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, *tags, "state", "complete")).isEqualTo(1.0)
             assertThat(log.events).isEmpty()
+            // And: the events counter agrees with the appender - it counts after the level gate
+            outcomes.forEach { assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", it)).describedAs(it).isZero() }
+        }
+
+        @Test
+        fun `should record the request sample of a call that failed after sending, without a response`() {
+            // What is tested: the stack difference the properties document - the reactive twin tees the
+            //   request body at the connector's write, so its size sample needs no response, unlike
+            //   the blocking twin's copy-before-the-call, which records only with a response.
+            // Success criteria: a connector that writes the body and then fails without a response
+            //   leaves 5 request bytes in the summary under the template and host tags, no
+            //   response-side meter at all, and one failure event.
+            // Why it matters: silently adding the blocking twin's "only with a response" rule here
+            //   would make the guide's per-stack table wrong and hide the upload size of exactly the
+            //   calls whose upload is the only evidence there is.
+            // Given: measuring both directions, a connector that takes the body and then fails
+            val measuring = filterWith(properties.copy(measureRequestBodySize = true, measureResponseBodySize = true), ticker, registry)
+            val request =
+                request(method = HttpMethod.POST, uri = "https://api.example.com/things/7") {
+                    attribute(ClientRequestLoggingFilter.URI_TEMPLATE_ATTRIBUTE, "https://api.example.com/things/{id}")
+                    body(BodyInserters.fromValue("hello"))
+                }
+            val failingAfterWrite =
+                ExchangeFunction { req ->
+                    req
+                        .writeTo(MockClientHttpRequest(req.method(), req.url()), ExchangeStrategies.withDefaults())
+                        .then(Mono.error<ClientResponse>(IOException("Connection reset")))
+                }
+
+            // When
+            val thrown = catchThrowable { measuring.filter(request, failingAfterWrite).block() }
+
+            // Then: the request sample exists, no response-side meter does
+            assertThat(Exceptions.unwrap(thrown)).isInstanceOf(IOException::class.java)
+            val tags = arrayOf("uri", "https://api.example.com/things/{id}", "host", "api.example.com")
+            assertThat(
+                registry
+                    .get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER)
+                    .tags(*tags)
+                    .summary()
+                    .totalAmount(),
+            ).isEqualTo(5.0)
+            assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_SIZE_METER).summary()).isNull()
+            assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).counter()).isNull()
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_outcome", "failure")
         }
 
         @Test
