@@ -122,7 +122,7 @@ class ClientLoggingAutoConfiguration {
      * context, and appears also when a host replaced the bean.
      */
     @Bean
-    fun clientLoggingObservationReport(beanFactory: ListableBeanFactory): SmartInitializingSingleton =
+    fun clientLoggingRestClientObservationReport(beanFactory: ListableBeanFactory): SmartInitializingSingleton =
         SmartInitializingSingleton {
             if (log.isDebugEnabled) {
                 log.debug(ClientObservationWiring.describe(beanFactory, OBSERVATION_CUSTOMIZERS))
