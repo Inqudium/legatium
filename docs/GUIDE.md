@@ -524,7 +524,7 @@ Severity and semantic are decoupled: the level only decides how loud — and whe
 | `adapter-http-exchange` level | Emitted |
 |---|---|
 | `INFO` | every call |
-| `WARN` | failures (5xx), timeouts, slow calls, cancellations (reactive stack) — and thrown or errored calls |
+| `WARN` | failures (5xx), the four escalated rejections (401, 403, 408, 429 — [§7.3](#73-levels-and-outcomes)), timeouts, slow calls, cancellations (reactive stack) — and thrown or errored calls |
 | `ERROR` | only calls that threw or errored (no response, or the body read failed) |
 | `OFF` | nothing — and no event is even assembled |
 
