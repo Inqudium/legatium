@@ -481,7 +481,9 @@ both clients record whatever string was passed to `uri(String, ...)`, so a conca
 `uri("/things/" + id)` would otherwise put one tag value per id on the meter; such values fold to
 `UNKNOWN` (as does every `RestTemplate` call, which records no template). The `host` tag is
 caller-controlled and is **not** folded: a host that fans out to many peer hosts (webhooks, per-tenant
-endpoints) should leave the measuring properties off or accept one tag set per host in its registry.
+endpoints) should leave the measuring properties off or accept one tag set per host in its registry. A
+Micrometer `MeterFilter` can cap the tag instead, at a per-sample cost the denied tag sets then pay
+([§7.4](#74-meters), "Switching meters off").
 
 ### 6.4 Activation: hosts and paths
 
@@ -874,6 +876,24 @@ same id already registered by the host or by another copy of the library (anothe
 returned as-is and the module's state silently dropped — the gauge would show the foreign value. The
 registration therefore checks for an existing meter under its exact name and `client` tag first and takes
 the same private-registry path with the same warning: visibly degraded, never silently wrong.
+
+**Switching meters off.** The switch for the body meters is the module's own properties:
+`measure-request-body-size` and `measure-response-body-size` default to `false`, and while they are off
+no sample is taken and nothing is registered — zero cost. Micrometer's `MeterFilter` is the second,
+generic way — Boot binds `management.metrics.enable.<prefix>` to one (`adapter.request.body: false`
+denies the one summary, `adapter: false` every meter of the module, the failopen counter and the gauge
+included), and a `MeterFilter` bean in the host can deny by tag, for example
+`MeterFilter.maximumAllowableTags("adapter.request.body", "host", 50, MeterFilter.deny())` as a cap on
+the caller-controlled `host` tag of [§6.3](#63-body-logging-and-body-measuring). A denied meter is a
+Micrometer no-op: nothing is exported, nothing throws, and the module keeps working. But denying is not
+the same as switching off. The fixed meters become no-ops once, at construction, and cost nothing
+further; a denied **body** meter is asked for again on every sample, because Micrometer keeps no record
+of a denied id and the module does not cache the no-op it gets back (caching it would grow one entry per
+denied tag set, unbounded by exactly the filter meant to bound the registry). Every such sample therefore
+pays the registration it would have paid before caching — the builder, the tags, the id, and a pass
+through the registry's lock — instead of the cached hit. In short: leave the measuring properties off
+where the body meters are not wanted; use a filter to trim or cap the meters where they are wanted in
+general, and expect the trimmed tag sets to cost a little more per sample, not less.
 
 ### 7.5 Reading the meters together
 
