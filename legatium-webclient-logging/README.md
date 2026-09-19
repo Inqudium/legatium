@@ -99,7 +99,11 @@ The long form is the guide's [§3.1](docs/GUIDE.md#31-automatic-wiring).
 With `spring-boot-webclient` on the classpath (it comes with `spring-boot-starter-webclient` and
 `spring-boot-starter-webflux`) the auto-configuration registers the filter bean **and** a late
 `WebClientCustomizer` that appends it to every `WebClient.Builder` Boot hands out — and thereby to every
-HTTP service client group built from one.
+HTTP service client group built from one. At DEBUG on
+`eu.inqudium.legatium.webclient.logging.ClientLoggingAutoConfiguration` it reports each of these steps
+and every builder it attached the filter to, so the host's own log answers whether the module is on and
+configured a client; at TRACE it adds where each `adapter-logging.*` value came from and which values
+were shadowed (the guide's [§2.2](docs/GUIDE.md#22-auto-configuration-and-registration)).
 
 The hook is Boot's **`WebClient.Builder` Spring bean**: Boot's `WebClientAutoConfiguration` defines it
 (prototype-scoped, one fresh builder per injection point) and applies every `WebClientCustomizer` to it,
@@ -175,7 +179,9 @@ fun billingClient(builder: WebClient.Builder): WebClient =
 ```
 
 The attribute string is the same on both twins, a blank value counts as no name, and a client nobody
-named simply logs no `adapter_name`. The why and the alternatives are
+named simply logs no `adapter_name`. The message of a named client's arrival line and completion event
+names the call by the name in place of the target; the target stays on `adapter_route` and the
+`adapter_url_*` fields. The why and the alternatives are
 [ADR-0009](../docs/adr/ADR-0009-adapter-name-is-a-request-attribute.md); the long form, with the
 verification steps, is the guide's [§3.5](docs/GUIDE.md#35-naming-a-client), and the field itself is
 in the [Common guide §7.7](../docs/GUIDE.md#77-naming-a-client).
@@ -189,6 +195,13 @@ the message shows; it repeats the gist inline for exactly that case:
 Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
 ```
 
+A client the host [named](#naming-a-client) reads by its name in place of the target — the same event
+of a client named `things`, as the JSON below shows it:
+
+```
+Adapter http exchange POST things -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
+```
+
 With Spring Boot's structured logging (`logging.structured.format.console=ecs`) the same event is one
 JSON document: the `adapter_*` key-values and the MDC-carried identity become flat, typed top-level
 fields next to the encoder's own envelope:
@@ -199,7 +212,7 @@ fields next to the encoder's own envelope:
   "log": { "level": "INFO", "logger": "adapter-http-exchange" },
   "process": { "pid": 4711, "thread": { "name": "reactor-http-epoll-2" } },
   "service": { "name": "things-service" },
-  "message": "Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
+  "message": "Adapter http exchange POST things -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
   "adapter_request_id": "4bf92f3577b34da6a3ce929d0e0e4736",
   "adapter_method": "POST",
   "adapter_route": "https://api.example.com/things/42",

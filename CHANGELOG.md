@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Both twins: a **wiring report** at DEBUG on the auto-configuration's own logger
+  (`eu.inqudium.legatium.<twin>.logging.ClientLoggingAutoConfiguration`), so a host can read from
+  its log whether the library is switched on and actually configured a client: one line when the
+  auto-configuration is active, one when the interceptor resp. filter bean is registered (with the
+  bound properties, masking key redacted), one per customizer registered, and one per
+  `RestClient.Builder`, `RestTemplate` or `WebClient.Builder` the customizer attached the module to,
+  with the number of earlier interceptors or filters in front of it. At TRACE the bean line is
+  followed by the **origin** of every `adapter-logging.*` value Boot bound - file and line,
+  environment variable, property source - and by every value of the same name a lower-precedence
+  source also holds, marked as shadowed; the masking key is redacted, unset keys are not listed
+  (`ClientLoggingPropertyOrigins` in `legatium-common`, one rendering for both twins). Nothing is
+  logged with `adapter-logging.enabled=false`. The auto-configuration tests pin the lines and the
+  silence, the common module's test the rendering.
+- WebClient twin: the wiring report also states whether the caller's thread-locals (its MDC) are
+  restored around every exchange line - the outcome of the classpath detection of ADR-0010, which has
+  no property and was so far readable nowhere: one line when `io.micrometer:context-propagation` is
+  present, another when it is absent. The detection runs against the context's class loader, so the
+  line follows the host's classpath; both variants are pinned by the auto-configuration test.
+- Both twins: the wiring report states whether Boot's **client observation** and Micrometer Tracing
+  are wired next to the module - the decision behind the identity contract of ADR-0002 (a traced call
+  takes the trace id as its request id and gets no `X-Correlation-Id`), which has no property and was
+  so far readable only per call. One of three lines, logged once every singleton exists: observation
+  with tracing, observation without a tracing bridge, no observation (`ClientObservationWiring` in
+  `legatium-common`, matching by class name so the optional libraries stay optional). Pinned by the
+  auto-configuration tests against Boot's real observation and Brave auto-configurations.
+
+### Changed
+
+- Both twins: the message of a **named** client's arrival line and completion event names the call
+  by the client's name in place of the request target
+  (`Adapter http exchange POST billing -> 200 [...]`), because behind an egress sidecar the target
+  is the same for every dependency and a plain-text appender shows nothing else. An unnamed client's
+  message keeps the target; the target of a named one stays on the `adapter_route` MDC entry and the
+  `adapter_url_*` fields. `TwinContractTest` pins both forms; ADR-0009's message section is amended.
+
 ## [1.1.0] - 2026-09-17
 
 ### Added

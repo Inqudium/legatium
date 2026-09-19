@@ -146,8 +146,9 @@ class ClientRequestLoggingInterceptorTest {
         fun `should log the client's name from the request attribute and leave the field off otherwise`() {
             // What is tested: adapter_name, read from the ADAPTER_NAME_ATTRIBUTE the host sets once per
             //   client (ADR-0009) - present with the attribute, absent without it, absent for a blank one.
-            // Success criteria: "billing" lands in adapter_name and the URL host stays the sidecar's; a
-            //   request without the attribute and one with a blank name carry no adapter_name at all.
+            // Success criteria: "billing" lands in adapter_name, replaces the target in the message, and
+            //   the URL host stays the sidecar's; a request without the attribute and one with a blank
+            //   name carry no adapter_name at all and keep the target in the message.
             // Why it matters: behind an egress sidecar every dependency shares one adapter_url_host; the
             //   name is the field that tells the clients apart, and an empty bucket would only look
             //   like a client.
@@ -163,13 +164,20 @@ class ClientRequestLoggingInterceptorTest {
             interceptor.intercept(unnamed, ByteArray(0), answering()).consumeAndClose()
             interceptor.intercept(blank, ByteArray(0), answering()).consumeAndClose()
 
-            // Then: the name beside the shared host; no field without a usable name
+            // Then: the name beside the shared host and in place of the target in the message; no field
+            //   and the target in the message without a usable name
             assertThat(log.events).hasSize(3)
             assertThat(keyValues(log.events[0]))
                 .containsEntry("adapter_name", "billing")
                 .containsEntry("adapter_url_host", "localhost:15001")
+            assertThat(log.events[0].formattedMessage)
+                .isEqualTo("Adapter http exchange GET billing -> 200 [adapter_request_id=generated-42]")
             assertThat(keyValues(log.events[1])).doesNotContainKey("adapter_name")
+            assertThat(log.events[1].formattedMessage)
+                .isEqualTo("Adapter http exchange GET http://localhost:15001/geo/lookup -> 200 [adapter_request_id=generated-42]")
             assertThat(keyValues(log.events[2])).doesNotContainKey("adapter_name")
+            assertThat(log.events[2].formattedMessage)
+                .isEqualTo("Adapter http exchange GET http://localhost:15001/geo/lookup -> 200 [adapter_request_id=generated-42]")
         }
 
         @Test

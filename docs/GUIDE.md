@@ -31,8 +31,9 @@ two disagree, the code wins.
    3. [Body logging and body measuring](#63-body-logging-and-body-measuring)
    4. [Activation: hosts and paths](#64-activation-hosts-and-paths)
    5. [Logger levels](#65-logger-levels)
-   6. [Validation at startup](#66-validation-at-startup)
-   7. [Example configurations](#67-example-configurations)
+   6. [The configuration report at DEBUG and TRACE](#66-the-configuration-report-at-debug-and-trace)
+   7. [Validation at startup](#67-validation-at-startup)
+   8. [Example configurations](#68-example-configurations)
 7. [Metrics and observation](#7-metrics-and-observation)
    1. [Log fields](#71-log-fields)
    2. [MDC keys](#72-mdc-keys)
@@ -206,6 +207,17 @@ Adapter http exchange started POST https://api.example.com/things/42 [adapter_re
 The arrival line carries no outcome, status or duration, so a dashboard keyed on `adapter_outcome` still
 sees exactly one event per call.
 
+For a client the host **named** ([§7.7](#77-naming-a-client)) both messages carry the name in place of
+the target — behind a sidecar the target is the same for every dependency, the name is what tells a
+reader of a plain-text appender which client called:
+
+```
+Adapter http exchange POST things -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
+```
+
+The target then still rides the `adapter_route` MDC entry and the `adapter_url_*` fields. The examples
+that follow show this named client.
+
 The modules emit through SLF4J's fluent API. Every exchange event carries its data in **two places**,
 and an encoder treats them differently:
 
@@ -229,7 +241,7 @@ rest; which one fits depends on where the output goes.
 ```
 
 ```
-13:54:58.534 INFO  [http-nio-8080-exec-3] adapter-http-exchange - Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf9… traceId=4bf9… spanId=00f0…] adapter_outcome=success adapter_duration_ms=17 adapter_request_method=POST adapter_response_status_code=200 adapter_name=things adapter_url_host=api.example.com adapter_url_path=/things/42 adapter_url_template=https://api.example.com/things/{id} [adapter_method=POST, adapter_request_id=4bf9…, adapter_route=https://api.example.com/things/42, endpoint_request_id=4bf9…, traceId=4bf9…, spanId=00f0…]
+13:54:58.534 INFO  [http-nio-8080-exec-3] adapter-http-exchange - Adapter http exchange POST things -> 200 [adapter_request_id=4bf9… traceId=4bf9… spanId=00f0…] adapter_outcome=success adapter_duration_ms=17 adapter_request_method=POST adapter_response_status_code=200 adapter_name=things adapter_url_host=api.example.com adapter_url_path=/things/42 adapter_url_template=https://api.example.com/things/{id} [adapter_method=POST, adapter_request_id=4bf9…, adapter_route=https://api.example.com/things/42, endpoint_request_id=4bf9…, traceId=4bf9…, spanId=00f0…]
 ```
 
 (On the reactive stack the thread reads `reactor-http-epoll-2` or the like; the line is otherwise identical.)
@@ -276,11 +288,11 @@ declares in `ClientLogField` and the component template maps. This is the shape 
 [§5](#5-index-mapping-elk) is written for. `logging.structured.json.include` / `exclude` / `rename`
 control the field selection (e.g. to drop `adapter_route`, which duplicates host and path).
 
-The exchange at the top of this section becomes this document:
+The named exchange of this section becomes this document:
 
 ```json
 {
-  "message": "Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
+  "message": "Adapter http exchange POST things -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]",
   "level": "INFO",
   "logger": "adapter-http-exchange",
   "adapter_outcome": "success",
@@ -520,7 +532,160 @@ Level and outcome are resolved **before** the event is built, so a disabled leve
 header selection, no body decoding. Metrics are recorded **before** the level gate and are unaffected by
 it — except `adapter.logging.events`, which by definition counts emitted events only.
 
-### 6.6 Validation at startup
+Two further loggers are the modules' own, under `eu.inqudium.legatium`, and never carry an exchange:
+
+| Logger | Level | Says |
+|---|---|---|
+| `…ClientLoggingAutoConfiguration` (one per twin) | DEBUG | the **wiring report**: that the module is enabled, the interceptor or filter bean with its bound properties (masking key redacted), each customizer registered, and one line per builder the customizer attached the module to — how a host verifies from its own log that the library is on and actually configured a client (the twins' guides, §2.2 and §3.4). Nothing at all with `adapter-logging.enabled=false`; Boot's condition report (DEBUG on `org.springframework.boot.autoconfigure`) then names the property |
+| the same logger | TRACE | additionally the **origin** of every `adapter-logging.*` value Boot bound — file and line, environment variable, property source — and every value of the same name a lower-precedence source also holds, marked as shadowed; masking key redacted, unset keys not listed (`ClientLoggingPropertyOrigins`, [§9.1](#91-the-shared-classes)) |
+| the interceptor, filter, emitter and metrics classes | WARN / ERROR | the fail-open diagnostics: a breadcrumb for a call that threw, an emission that failed, a tee that broke ([§8.2](#82-fail-open-contract)) |
+
+`logging.level.eu.inqudium.legatium=DEBUG` switches the wiring report on for both twins, `TRACE` adds
+the property origins; the exchange lines are unaffected, they live on `logger-name`.
+
+### 6.6 The configuration report at DEBUG and TRACE
+
+Both twins report their own configuration once at context start, on the auto-configuration logger of
+[§6.5](#65-logger-levels), in two stages that answer two different questions:
+
+| Level | Question answered | Lines |
+|---|---|---|
+| DEBUG | **What** is in effect — is the module on, did it configure my clients, which values does it run with, will my calls be traced? | the wiring report: the "enabled" line, the bean line with every bound property, the customizer lines, the observation line, one attach line per builder |
+| TRACE | **Where** did each value come from — which file and line, which environment variable, which command-line argument, and which value lost against which? | one line per set `adapter-logging.*` key with its origin, shadowed values indented beneath it |
+
+Switch the report on for both twins at once, or per stack:
+
+```yaml
+logging:
+  level:
+    eu.inqudium.legatium: DEBUG                 # or TRACE; both twins
+    # eu.inqudium.legatium.restclient.logging.ClientLoggingAutoConfiguration: TRACE   # RestClient / RestTemplate only
+    # eu.inqudium.legatium.webclient.logging.ClientLoggingAutoConfiguration: TRACE    # WebClient only
+```
+
+For a one-off diagnosis the same works from the command line without touching a file:
+`java -jar app.jar --logging.level.eu.inqudium.legatium=TRACE`. The report is computed once, only
+when the level is enabled, and never per call; the exchange lines on `logger-name` are unaffected.
+
+**DEBUG — what is in effect.** A RestClient host started with the "minimal production profile" of
+[§6.8](#68-example-configurations) logs (`eu.inqudium.legatium.restclient.logging.ClientLoggingAutoConfiguration`):
+
+```
+Adapter logging is enabled - the auto-configuration is active (adapter-logging.enabled is not false)
+Adapter logging registered its ClientRequestLoggingInterceptor bean with ClientLoggingProperties(enabled=true, loggerName=adapter-http-exchange, correlationIdHeader=X-Correlation-Id, includeQueryString=true, logRequestStart=false, includePathPatterns=[], excludePathPrefixes=[], excludeHosts=[pushgateway.monitoring.svc], slowRequestThreshold=PT2S, requestHeaders=HeaderLogProperties(includes=[], excludes=[], masked=[*], unmasked=[]), responseHeaders=HeaderLogProperties(includes=[], excludes=[], masked=[*], unmasked=[]), logRequestBody=NEVER, logResponseBody=NEVER, measureRequestBodySize=false, measureResponseBodySize=false, maxBodyBytes=16384, maskingKey=)
+Adapter logging registered its RestClientCustomizer - the interceptor is attached to every RestClient.Builder Boot hands out
+Adapter logging registered its RestTemplateCustomizer - the interceptor is attached to every RestTemplate built through RestTemplateBuilder
+Adapter logging found Boot's client observation with Micrometer Tracing wired for RestClient.Builder and RestTemplate - every call built there goes out with a traceparent, its trace id is the request id and no X-Correlation-Id is generated
+Adapter logging attached its interceptor to a RestClient.Builder behind 0 earlier interceptor(s)
+```
+
+A WebClient host with the same profile logs
+(`eu.inqudium.legatium.webclient.logging.ClientLoggingAutoConfiguration`):
+
+```
+Adapter logging is enabled - the auto-configuration is active (adapter-logging.enabled is not false)
+Adapter logging registered its ClientRequestLoggingFilter bean with ClientLoggingProperties(enabled=true, loggerName=adapter-http-exchange, correlationIdHeader=X-Correlation-Id, includeQueryString=true, logRequestStart=false, includePathPatterns=[], excludePathPrefixes=[], excludeHosts=[pushgateway.monitoring.svc], slowRequestThreshold=PT2S, requestHeaders=HeaderLogProperties(includes=[], excludes=[], masked=[*], unmasked=[]), responseHeaders=HeaderLogProperties(includes=[], excludes=[], masked=[*], unmasked=[]), logRequestBody=NEVER, logResponseBody=NEVER, measureRequestBodySize=false, measureResponseBodySize=false, maxBodyBytes=16384, maskingKey=)
+Adapter logging restores the caller's thread-locals (its MDC) around every exchange line from the Reactor Context - io.micrometer:context-propagation is on the classpath
+Adapter logging registered its WebClientCustomizer - the filter is attached to every WebClient.Builder Boot hands out
+Adapter logging found Boot's client observation with Micrometer Tracing wired for WebClient.Builder - every call built there goes out with a traceparent, its trace id is the request id and no X-Correlation-Id is generated
+Adapter logging attached its filter to a WebClient.Builder behind 0 earlier filter(s)
+```
+
+The bean line is identical on both stacks — one properties class, one namespace — and only the entry
+point differs: an interceptor with two customizers (`RestClient.Builder` and `RestTemplateBuilder`) on
+the one side, a filter with one customizer (`WebClient.Builder`) on the other (the twins' guides,
+§2.2). The WebClient twin adds one line the RestClient twin has no need for: whether it restores the
+caller's MDC around the exchange line — on the blocking stack the caller's thread is the emitting
+thread, on the reactive stack it is not, and the restore depends on an optional library
+([WebClient guide §2.6](https://github.com/Inqudium/legatium/blob/main/legatium-webclient-logging/docs/GUIDE.md#26-mdc-and-the-reactive-call)).
+How to read it:
+
+- The bean line is the **complete effective configuration**: every key of the
+  [reference configuration](adapter-logging-reference.yml), whether set by the host or left at its
+  default — the two set values above are `excludeHosts` and `slowRequestThreshold`, everything else is
+  the default. A value you set that does not show up here was never bound: a typo in the key, a profile
+  that is not active, a file that is not on the config path.
+- `maskingKey` renders empty when unkeyed and `<redacted>` when a key is set, whatever its source
+  ([§6.2](#62-header-sections)); the bean line is safe to keep in a startup log.
+- The **attach lines** are the proof that a client actually carries the module: one per builder Boot
+  handed out, with the module's position behind the host's own interceptors or filters. No attach line
+  means no client was built through Boot's builder — a hand-built client needs manual wiring (the
+  twins' guides, §3.2).
+- The **restore line** (WebClient twin only) names the outcome of a classpath detection that has no
+  property: with `io.micrometer:context-propagation` present the exchange line carries the caller's
+  MDC, without it the line reads
+  `Adapter logging emits every exchange line with the completing thread's MDC only - io.micrometer:context-propagation is not on the classpath, so the caller's thread-locals are not restored`
+  and the exchange line carries only what the module itself puts there. A reactive host whose client
+  lines lack the inbound `endpoint_*` keys checks this line first.
+- The **observation line** states whether Boot's client observation and Micrometer Tracing are wired
+  next to the module — the decision behind the identity contract of [§7.6](#76-trace-correlation),
+  which has no property of its own. 
+  - Three renderings: observation **with tracing** (above — every call Boot builds goes out with a `traceparent`, the trace id is its `adapter_request_id`, the peer gets no `X-Correlation-Id`):
+    `Adapter logging found Boot's client observation with Micrometer Tracing wired for WebClient.Builder - every call built there goes out with a traceparent, its trace id is the request id and no X-Correlation-Id is generated`
+  - observation **without tracing**, when `ObservationRegistry` exists but no tracing bridge does:
+    `Adapter logging found Boot's client observation wired for RestClient.Builder and RestTemplate but no Micrometer Tracing - calls are observed, not traced, so the module generates the request id and sends X-Correlation-Id on every call that carries no traceparent`;
+  - and **no observation**, when Boot's observation auto-configuration is not active:
+    `Adapter logging found no client observation - Boot's observation auto-configuration for RestClient.Builder and RestTemplate is not active (no ObservationRegistry bean, or the observation module is absent); the module generates the request id and sends X-Correlation-Id on every call that carries no traceparent`.
+    The line is logged once every singleton exists — after the customizer lines, before the attach
+    lines — and appears also when a host replaced the interceptor or filter bean. It describes the
+    wiring, not the fate of a call: a host can still switch the observation off per client, filter it
+    with an `ObservationPredicate` or build a client by hand; the exchange line stays the per-call truth.
+    An operator whose peer sees no `X-Correlation-Id`, or whose `adapter_request_id` looks like a trace
+    id, reads the reason here.
+- **No report at all** means the auto-configuration did not run: `adapter-logging.enabled=false`, or
+  the module not on the classpath. Boot's condition evaluation report (DEBUG on
+  `org.springframework.boot.autoconfigure`) then names the reason.
+- The bean line is missing while the other lines appear when a host supplies its own interceptor or
+  filter bean ([§3](#3-overriding-beans)): the module's bean method did not run, and with it neither
+  the bean line nor the TRACE origins below.
+
+**TRACE — where each value came from.** The same host, now with an `application-prod.yml` that
+renames the logger, a masking key from the container environment and a body limit passed on the
+command line, additionally logs — directly after the bean line:
+
+```
+Adapter logging property adapter-logging.exclude-hosts[0] = pushgateway.monitoring.svc (origin: class path resource [application.yml] - 3:7)
+Adapter logging property adapter-logging.logger-name = outbound (origin: class path resource [application-prod.yml] - 2:16)
++- Adapter logging property adapter-logging.logger-name = adapter-http-exchange (origin: class path resource [application.yml] - 5:16) is shadowed by class path resource [application-prod.yml] - 2:16
+Adapter logging property adapter-logging.masking-key = <redacted> (origin: System Environment Property "ADAPTER_LOGGING_MASKING_KEY")
+Adapter logging property adapter-logging.max-body-bytes = 4096 (origin: "adapter-logging.max-body-bytes" from property source "commandLineArgs")
+Adapter logging property adapter-logging.slow-request-threshold = 2s (origin: class path resource [application.yml] - 4:27)
+```
+
+How to read it:
+
+- **One line per key that some source sets**, sorted by name, so the report reads like the reference
+  configuration. The value is the raw text of the source (`2s`, not `PT2S`); the bean line above shows
+  the converted value.
+- The **origin** is Boot's: file and `line:column` for a YAML or properties file, the variable name
+  for the environment, `"key" from property source "…"` for command-line arguments, test properties
+  and other programmatic sources.
+- A line indented with `+- ` is a value that **lost**: a lower-precedence source also sets the key,
+  and the line names the origin that won. This is the answer to "why is my `application.yml` value not
+  in effect" — here the profile file overrides the logger name. Several shadowed values of one key
+  appear as several `+- ` lines under the same winner.
+- **Keys no source sets are not listed** — their defaults are in the bean line. A host that sets
+  nothing gets one line instead of the list:
+  `Adapter logging properties: no adapter-logging.* key is set in any property source - every key is at its default`.
+- The masking key is redacted here too; the raw secret never reaches the log, whichever source holds it.
+
+**When the origins are unavailable.** A host that binds `ClientLoggingProperties` by hand — without
+`@EnableConfigurationProperties` or `@ConfigurationPropertiesScan` — has no origin tracking, and the
+TRACE stage says so instead of staying silent:
+
+```
+Adapter logging cannot tell where its adapter-logging.* values came from (which file, environment variable or command-line argument set them); the values above are in effect nonetheless. Adapter logging property origins are unavailable - no BoundConfigurationProperties bean in this context
+```
+
+The DEBUG stage is unaffected: the bean line still shows what is in effect, only the "where from" is
+missing. Silence at TRACE therefore always means "TRACE is off", never "nothing to report".
+
+The TRACE report carries the same information the actuator's `env` endpoint shows per property
+source (`/actuator/env/adapter-logging.logger-name`); the lines put it into the startup log of a host
+without the actuator. The origin rendering lives once in `legatium-common`
+([§9.1](#91-the-shared-classes)).
+
+### 6.7 Validation at startup
 
 `ClientLoggingProperties.init` and `HeaderLogProperties.init` reject, with a message naming the property:
 
@@ -535,7 +700,7 @@ it — except `adapter.logging.events`, which by definition counts emitted event
 - `*` in an `excludes` or an `unmasked` list;
 - an unparsable `include-path-patterns` entry (parsed once at construction of the entry point).
 
-### 6.7 Example configurations
+### 6.8 Example configurations
 
 **Minimal production profile** — everything logged, telemetry peers excluded, slow threshold tightened:
 
@@ -604,7 +769,7 @@ component template; `ClientLogFieldTest` in `legatium-common` keeps the shared e
 | `adapter_duration_ms` | long | yes | on | always | from the injected monotonic source; until response close (RestClient — after the converter's read) resp. until the body's terminal signal was handed on to the consumer (WebClient — after the decoder's synchronous work in it) |
 | `adapter_request_method` | keyword | yes | on | always | |
 | `adapter_response_status_code` | short | yes | on | when a response arrived | absent for a refused connection, a timeout before the status line, or a cancellation before the response (`-> -`) |
-| `adapter_name` | keyword | yes | on | when the host named the client | the client's logical name (`billing`, `geo-lookup`) from the `ADAPTER_NAME_ATTRIBUTE` request attribute — see [§7.7](#77-naming-a-client); the coordinate `adapter_url_host` cannot provide behind an egress sidecar (ADR-0009) |
+| `adapter_name` | keyword | yes | on | when the host named the client | the client's logical name (`billing`, `geo-lookup`) from the `ADAPTER_NAME_ATTRIBUTE` request attribute — see [§7.7](#77-naming-a-client); the coordinate `adapter_url_host` cannot provide behind an egress sidecar, and what the message names the call by in place of the target (ADR-0009) |
 | `adapter_url_host` | keyword | yes | on | when the URI has a host | `host` or `host:port` — the outbound coordinate |
 | `adapter_url_template` | keyword | yes | on | when the client recorded a template | the aggregation half of the path pair, e.g. `https://api.example.com/things/{id}`; never for `RestTemplate` |
 | `adapter_url_path` | keyword | yes | **off** | always | the **raw** path as sent, ids and all — filter exactly, never group |
@@ -770,7 +935,9 @@ the reactive stack: none on the subscribing context), so this holds for every ca
 unsampled trace still propagates, with flags `00`. Consequence: in a host with tracing configured,
 **every call is traced**, the module never generates an id there — the `generated` share of
 `adapter.logging.correlation.id` reads zero by construction — and the peer never receives an
-`X-Correlation-Id` from this module. A peer without tracing that needs a quotable id in that setup is a
+`X-Correlation-Id` from this module. Whether a host is in that setup is readable at startup: the
+observation line of the wiring report ([§6.6](#66-the-configuration-report-at-debug-and-trace))
+names the builders Boot observes and whether a tracing bridge is present. A peer without tracing that needs a quotable id in that setup is a
 matter for the host's propagation configuration (baggage), not for the modules, which stay neutral.
 
 ### 7.7 Naming a client
@@ -799,8 +966,10 @@ fun geoClient(builder: WebClient.Builder): WebClient =
 
 The attribute string is the same on both twins (`eu.inqudium.legatium.adapterName`), so a host carrying
 both jars uses one literal. Every call of a named client then carries `adapter_name` on the completion
-event and the arrival line, and the body meters tag it as `name` ([§7.4](#74-meters)); a client nobody
-named carries no field and meters under `name=UNNAMED`. A blank value counts as no name. A per-call
+event and the arrival line, its messages name the call by the name instead of the target
+(`Adapter http exchange POST billing -> 200 [...]`, [§4](#4-logging-backend-and-structured-output)),
+and the body meters tag it as `name` ([§7.4](#74-meters)); a client nobody named carries no field, keeps
+the target in the message, and meters under `name=UNNAMED`. A blank value counts as no name. A per-call
 `attribute(...)` on the request spec overrides the builder default. `RestTemplate` has no
 `defaultRequest`: an interceptor of the host's own, registered before the logging interceptor, sets
 `request.attributes[ADAPTER_NAME_ATTRIBUTE]` instead. The value is not folded or validated — it is the
@@ -928,7 +1097,9 @@ near-identical code.
 
 | Class | Responsibility |
 |---|---|
-| `ClientLoggingProperties` / `HeaderLogProperties` | The `adapter-logging.*` binding, validated in `init` ([§6.6](#66-validation-at-startup)) — one class for both twins. `HeaderLogProperties` is one header section with `includes` / `excludes` / `masked` / `unmasked` and the masking fingerprint ([§6.2](#62-header-sections)); unit-tested and fuzzed here. |
+| `ClientLoggingProperties` / `HeaderLogProperties` | The `adapter-logging.*` binding, validated in `init` ([§6.7](#67-validation-at-startup)) — one class for both twins. `HeaderLogProperties` is one header section with `includes` / `excludes` / `masked` / `unmasked` and the masking fingerprint ([§6.2](#62-header-sections)); unit-tested and fuzzed here. |
+| `ClientObservationWiring` | The observation line of the auto-configurations' wiring report ([§6.6](#66-the-configuration-report-at-debug-and-trace)): whether Boot's client observation and a Micrometer `Tracer` are wired next to the module, rendered from the context's beans in one of three lines — the classes are named as strings, so the common module compiles without the optional observation and tracing libraries. |
+| `ClientLoggingPropertyOrigins` | The TRACE half of the auto-configurations' wiring report ([§6.5](#65-logger-levels)): renders every `adapter-logging.*` value Boot bound with its origin, plus the shadowed values of lower-precedence sources, masking key redacted — one rendering for both twins. |
 | `ClientLogField` | The wire names and the exact JVM type of each structured field ([§7.1](#71-log-fields)), with the builder extensions the emitters write through; a wrongly typed value drops the field with a warning, never the event. One enum for both twins. |
 | `AdapterName` | The request attribute a host names a client with and the rule that reads it (blank is no name) — the source of `adapter_name` and the `name` meter tag ([§7.7](#77-naming-a-client), ADR-0009); one string for both twins. |
 | `ClientLoggingMetrics` | The six meters ([§7.4](#74-meters)), one implementation parameterised by the `ClientStack` (outcome vocabulary, `client` tag) — the fixed-tag meters pre-registered, the body meters created lazily per tag, per-meter fallback to a private registry on a registration conflict. Shared since the amendment of 2026-09-04 to ADR-0003, when the twin copies had converged to near-identity. |

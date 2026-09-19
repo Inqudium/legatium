@@ -60,10 +60,10 @@ internal class ExchangeLogEmitter(
 
     /**
      * The optional arrival line ([ClientLoggingProperties.logRequestStart]): what is known BEFORE the
-     * wire call - method, target, query, selected request headers - at INFO on the exchange logger, under
-     * the exchange's MDC with the traceparent-derived trace overlay: the scope OWNS the trace keys here
-     * exactly as at emission, so the arrival line carries the same `traceId`/`spanId` pair as the
-     * completion event. Deliberately WITHOUT `adapter_outcome`, status or duration: those exist only at
+     * wire call - method, subject (the client's name, or the target), query, selected request headers -
+     * at INFO on the exchange logger, under the exchange's MDC with the traceparent-derived trace
+     * overlay: the scope OWNS the trace keys here exactly as at emission, so the arrival line carries
+     * the same `traceId`/`spanId` pair as the completion event. Deliberately WITHOUT `adapter_outcome`, status or duration: those exist only at
      * completion, and their absence is what keeps outcome-keyed dashboards blind to this extra line.
      */
     fun logRequestStart(exchange: Exchange) {
@@ -95,7 +95,7 @@ internal class ExchangeLogEmitter(
                 exchangeLog
                     .atInfo()
                     .setMessage(
-                        "Adapter http exchange started ${exchange.method} ${exchange.target} " +
+                        "Adapter http exchange started ${exchange.method} ${exchange.subject} " +
                             "[${MdcKeys.REQUEST_ID}=${exchange.requestId}]",
                     ).addKeyValue(ClientLogField.REQUEST_METHOD, exchange.method)
                     .addKeyValueIfPresent(ClientLogField.NAME, exchange.name)
@@ -117,9 +117,9 @@ internal class ExchangeLogEmitter(
      *
      * The emission runs under the exchange's MDC (an ADDITIVE overlay: an inbound request's identity or
      * a bridge's keys on the thread stay visible beside it), so the encoder emits the request id as an
-     * MDC field rather than as a structured key-value; the message repeats method/target/status and the
-     * request id inline, so a plain-text appender that drops key-values and MDC still shows the gist of
-     * the exchange.
+     * MDC field rather than as a structured key-value; the message repeats method, [Exchange.subject]
+     * (the client's name, or the target for an unnamed client), status and the request id inline, so a
+     * plain-text appender that drops key-values and MDC still shows the gist of the exchange.
      */
     fun logExchange(exchange: Exchange) {
         // The fail-open guard covers EVERYTHING after the interceptor's exactly-once CAS: the pre-gate section reads
@@ -252,7 +252,7 @@ internal class ExchangeLogEmitter(
         exchangeLog
             .atLevel(level)
             .setMessage(
-                "Adapter http exchange ${exchange.method} ${exchange.target} -> ${status ?: "-"} " +
+                "Adapter http exchange ${exchange.method} ${exchange.subject} -> ${status ?: "-"} " +
                     "[${MdcKeys.REQUEST_ID}=${exchange.requestId}$traceSuffix]",
             ).addKeyValue(ClientLogField.OUTCOME, classification.outcome.tagValue)
             .addKeyValue(ClientLogField.DURATION_MS, durationMs)

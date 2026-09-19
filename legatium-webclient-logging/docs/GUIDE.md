@@ -164,6 +164,59 @@ five layers:
 Because the filter is its own bean, a host can replace it while keeping the customizer
 ([Common guide §3](../../docs/GUIDE.md#3-overriding-beans)). Boot's `spring-boot-webclient` module is an **optional** dependency:
 without it the filter bean still exists and the host attaches it by hand ([§3.2](#32-manual-wiring)).
+
+**Observing the wiring.** At DEBUG on the logger
+`eu.inqudium.legatium.webclient.logging.ClientLoggingAutoConfiguration` the auto-configuration reports
+what it did — the answer to "is the module on, and did it configure my client?" from the host's own log:
+
+```
+Adapter logging is enabled - the auto-configuration is active (adapter-logging.enabled is not false)
+Adapter logging registered its ClientRequestLoggingFilter bean with ClientLoggingProperties(enabled=true, loggerName=adapter-http-exchange, …, maskingKey=<redacted>)
+Adapter logging restores the caller's thread-locals (its MDC) around every exchange line from the Reactor Context - io.micrometer:context-propagation is on the classpath
+Adapter logging registered its WebClientCustomizer - the filter is attached to every WebClient.Builder Boot hands out
+Adapter logging found Boot's client observation with Micrometer Tracing wired for WebClient.Builder - every call built there goes out with a traceparent, its trace id is the request id and no X-Correlation-Id is generated
+Adapter logging attached its filter to a WebClient.Builder behind 0 earlier filter(s)
+```
+
+The first five appear once at context start (the bean line and the restore line only when the bean is
+the module's own, not a host's — [Common guide §3](../../docs/GUIDE.md#3-overriding-beans)). The
+observation line is logged once every singleton exists and states whether Boot's client observation
+and Micrometer Tracing are wired next to the module — the decision behind the identity contract of
+[Common guide §7.6](../../docs/GUIDE.md#76-trace-correlation), which has no property: without a
+tracing bridge it reads
+`Adapter logging found Boot's client observation wired for WebClient.Builder but no Micrometer Tracing - calls are observed, not traced, so the module generates the request id and sends X-Correlation-Id on every call that carries no traceparent`,
+without Boot's observation at all
+`Adapter logging found no client observation - Boot's observation auto-configuration for WebClient.Builder is not active (no ObservationRegistry bean, or the observation module is absent); the module generates the request id and sends X-Correlation-Id on every call that carries no traceparent`.
+It describes the wiring, not the fate of a call — a host can still switch the observation off per
+client or build a client by hand. The restore
+line is the outcome of the classpath detection of [§2.6](#26-mdc-and-the-reactive-call): without
+`io.micrometer:context-propagation` it reads
+`Adapter logging emits every exchange line with the completing thread's MDC only - io.micrometer:context-propagation is not on the classpath, so the caller's thread-locals are not restored`
+— the one place a host can read this, since the opt-in has no property. The attach line appears once
+per `WebClient.Builder` Boot hands out, and its count of earlier filters is the position the customizer
+order gave the module ([§3.3](#33-filter-order-and-other-filters)). With `adapter-logging.enabled=false`
+none of them appears; Boot's condition evaluation report (DEBUG on
+`org.springframework.boot.autoconfigure`) then names the property as the reason. Enable it with
+`logging.level.eu.inqudium.legatium.webclient.logging.ClientLoggingAutoConfiguration=DEBUG`, or
+`logging.level.eu.inqudium.legatium=DEBUG` for both twins at once.
+
+At **TRACE** the bean line is followed by where every `adapter-logging.*` value came from — Boot's
+origin of each value it bound, one line per key, then every value of the same name a lower-precedence
+source also holds, marked as shadowed and indented with `+- ` under the winner. The masking key is rendered redacted whatever its source; keys
+no source sets are the class defaults and are not listed:
+
+```
+Adapter logging property adapter-logging.exclude-hosts[0] = pushgateway (origin: class path resource [application.yml] - 20:7)
+Adapter logging property adapter-logging.logger-name = outbound (origin: class path resource [application-prod.yml] - 3:16)
++- Adapter logging property adapter-logging.logger-name = adapter-http-exchange (origin: class path resource [application.yml] - 12:16) is shadowed by class path resource [application-prod.yml] - 3:16
+Adapter logging property adapter-logging.masking-key = <redacted> (origin: System Environment Property "ADAPTER_LOGGING_MASKING_KEY")
+```
+
+With no `adapter-logging.*` key anywhere the report is one line saying so. The same information, per
+property source, is what the actuator's `env` endpoint shows for a key
+(`/actuator/env/adapter-logging.logger-name`); the TRACE lines put it into the startup log of a host
+without the actuator. The rendering lives once in `legatium-common`
+([Common guide §9.1](../../docs/GUIDE.md#91-the-shared-classes)).
 The same property namespace and
 the same bean names as the RestClient twin — the two auto-configurations never clash, and both may be
 active in one application.
@@ -639,6 +692,15 @@ the RestClient twin.
 
 ### 3.4 Verifying the integration
 
+0. Before the first call, start the application with
+   `logging.level.eu.inqudium.legatium.webclient.logging.ClientLoggingAutoConfiguration=DEBUG` and
+   expect the wiring report of [§2.2](#22-auto-configuration-and-registration): the "enabled" line, the
+   bean line with the bound properties, the customizer line — and, as soon as the host's first client
+   is built, `Adapter logging attached its filter to a WebClient.Builder behind N earlier filter(s)`.
+   No attach line for a client means Boot never handed that client a customized builder: it was built
+   by hand ([§3.2](#32-manual-wiring)). At TRACE instead of DEBUG the report also names the file, line
+   or environment variable each `adapter-logging.*` value came from, and which values were shadowed.
+
 1. Make any call through a Boot-built `WebClient`:
 
    ```kotlin
@@ -705,8 +767,10 @@ completion event and on the arrival line, and the three body meters carry the na
 host's vocabulary and is neither folded nor validated.
 
 **Verifying it:** make one call through a named client and expect `adapter_name=billing` beside
-`adapter_url_host=localhost:15001` on the exchange line; a call through an unnamed client carries no
-`adapter_name` at all. With `measure-response-body-size` on,
+`adapter_url_host=localhost:15001` on the exchange line, whose message then reads
+`Adapter http exchange GET billing -> 200 [...]` — the name in place of the target, which stays on
+`adapter_route` and the `adapter_url_*` fields; a call through an unnamed client carries no
+`adapter_name` at all and keeps the target in the message. With `measure-response-body-size` on,
 `curl -s localhost:8080/actuator/metrics/adapter.response.body.read` lists `name` among the available
 tags.
 

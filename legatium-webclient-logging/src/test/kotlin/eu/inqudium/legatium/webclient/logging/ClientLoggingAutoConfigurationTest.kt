@@ -1,22 +1,29 @@
 package eu.inqudium.legatium.webclient.logging
 
+import ch.qos.logback.classic.Level
 import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.NanoTimeSource
+import io.micrometer.context.ContextSnapshotFactory
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.boot.autoconfigure.AutoConfigurations
+import org.springframework.boot.micrometer.observation.autoconfigure.ObservationAutoConfiguration
+import org.springframework.boot.micrometer.tracing.autoconfigure.MicrometerTracingAutoConfiguration
+import org.springframework.boot.micrometer.tracing.brave.autoconfigure.BraveAutoConfiguration
 import org.springframework.boot.test.context.FilteredClassLoader
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
 import org.springframework.boot.webclient.WebClientCustomizer
 import org.springframework.boot.webclient.autoconfigure.WebClientAutoConfiguration
+import org.springframework.boot.webclient.autoconfigure.WebClientObservationAutoConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.annotation.Order
+import org.springframework.core.env.MapPropertySource
 import org.springframework.web.reactive.function.client.ExchangeFilterFunction
 import org.springframework.web.reactive.function.client.WebClient
 
@@ -87,6 +94,192 @@ class ClientLoggingAutoConfigurationTest {
 
             // Then
             assertThat(filters).containsExactly(CompetingCustomizersConfig.EARLIER, filter, CompetingCustomizersConfig.UNORDERED)
+        }
+    }
+
+    @Test
+    fun `should report at DEBUG that it is enabled and every builder it configured`() {
+        // What is tested: the wiring report on the auto-configuration's own logger - the line for the
+        //   active switch, the filter bean with its properties (masking key redacted), the outcome of the
+        //   context-propagation detection (ADR-0010), the observation line for a context without Boot's
+        //   client observation, the customizer, and one line per WebClient.Builder the customizer
+        //   actually touched.
+        // Success criteria: after obtaining Boot's WebClient.Builder twice, the DEBUG events contain
+        //   the enabled line, the bean line naming the bound logger and a redacted masking key, the
+        //   restore line for a classpath that has context-propagation (this test's), the
+        //   no-observation line, the customizer line, and two attach lines each reporting zero earlier
+        //   filters.
+        // Why it matters: an operator asking "is the module on, and did it configure my client?" reads
+        //   the answer from the host's log at DEBUG instead of decompiling the customizer order.
+        // Given: the auto-configuration's logger captured at DEBUG
+        val log = CapturedLogger(ClientLoggingAutoConfiguration::class.java.name, Level.DEBUG)
+        try {
+            // When
+            contextRunner.withPropertyValues("adapter-logging.masking-key=k").run { context ->
+                context.getBean(WebClient.Builder::class.java)
+                context.getBean(WebClient.Builder::class.java)
+
+                // Then
+                val messages = log.events.filter { it.level == Level.DEBUG }.map { it.formattedMessage }
+                assertThat(messages).contains(
+                    "Adapter logging is enabled - the auto-configuration is active (adapter-logging.enabled is not false)",
+                    "Adapter logging restores the caller's thread-locals (its MDC) around every exchange line from the Reactor Context - io.micrometer:context-propagation is on the classpath",
+                    "Adapter logging found no client observation - Boot's observation auto-configuration for WebClient.Builder is not active (no ObservationRegistry bean, or the observation module is absent); the module generates the request id and sends X-Correlation-Id on every call that carries no traceparent",
+                    "Adapter logging registered its WebClientCustomizer - the filter is attached to every WebClient.Builder Boot hands out",
+                )
+                assertThat(messages.filter { it == "Adapter logging attached its filter to a WebClient.Builder behind 0 earlier filter(s)" }).hasSize(2)
+                assertThat(messages).anySatisfy { message ->
+                    assertThat(message)
+                        .startsWith("Adapter logging registered its ClientRequestLoggingFilter bean with ClientLoggingProperties(")
+                        .contains("loggerName=adapter-http-exchange")
+                        .contains("maskingKey=<redacted>")
+                        .doesNotContain("maskingKey=k")
+                }
+            }
+        } finally {
+            log.detach()
+        }
+    }
+
+    @Test
+    fun `should report at DEBUG that the caller's MDC is not restored when context-propagation is absent`() {
+        // What is tested: the restore line of the wiring report against a context whose class loader
+        //   cannot see io.micrometer:context-propagation - the detection runs against the context's
+        //   loader, not the module's.
+        // Success criteria: the absent variant of the line, and the filter's emitter holds the no-op
+        //   restorer; the present variant nowhere.
+        // Why it matters: a host without the optional library reads from its log why client lines lack
+        //   the inbound identity - and the test proves the line follows the classpath the host has, not
+        //   the one this module was built with.
+        // Given: the auto-configuration's logger captured at DEBUG
+        val log = CapturedLogger(ClientLoggingAutoConfiguration::class.java.name, Level.DEBUG)
+        try {
+            // When
+            contextRunner.withClassLoader(FilteredClassLoader(ContextSnapshotFactory::class.java)).run { context ->
+                assertThat(context).hasNotFailed()
+
+                // Then
+                assertThat(context.getBean(ClientRequestLoggingFilter::class.java).emitter.ambientRestorer).isSameAs(AmbientContextRestorer.NONE)
+                val messages = log.events.map { it.formattedMessage }
+                assertThat(messages).contains(
+                    "Adapter logging emits every exchange line with the completing thread's MDC only - io.micrometer:context-propagation is not on the classpath, so the caller's thread-locals are not restored",
+                )
+                assertThat(messages).noneMatch { it.contains("context-propagation is on the classpath") }
+            }
+        } finally {
+            log.detach()
+        }
+    }
+
+    @Test
+    fun `should report at DEBUG whether Boot's client observation and tracing are wired`() {
+        // What is tested: the observation line of the wiring report against Boot's REAL observation
+        //   and tracing auto-configurations - once with a Brave bridge (a Tracer bean), once with the
+        //   observation registry alone.
+        // Success criteria: with tracing, the line names the builder as observed and traced (trace id
+        //   is the request id, no correlation header); without a tracer, the observed-not-traced line
+        //   with the generated-id consequence. The no-observation line is pinned by the test above.
+        // Why it matters: the decision has no property; this line is where an operator reads why the
+        //   peer sees (or does not see) an X-Correlation-Id - and the test breaks when a Boot upgrade
+        //   renames the customizer bean the detection looks for.
+        // Given: the auto-configuration's logger captured at DEBUG
+        val log = CapturedLogger(ClientLoggingAutoConfiguration::class.java.name, Level.DEBUG)
+        val observed = contextRunner.withConfiguration(AutoConfigurations.of(ObservationAutoConfiguration::class.java, WebClientObservationAutoConfiguration::class.java))
+        try {
+            // When: observation with a tracing bridge
+            observed
+                .withConfiguration(AutoConfigurations.of(BraveAutoConfiguration::class.java, MicrometerTracingAutoConfiguration::class.java))
+                .run { context ->
+                    assertThat(context).hasNotFailed()
+                    context.getBean(ClientRequestLoggingFilter::class.java)
+                }
+
+            // Then
+            assertThat(log.events.map { it.formattedMessage }).contains("Adapter logging found Boot's client observation with Micrometer Tracing wired for WebClient.Builder - every call built there goes out with a traceparent, its trace id is the request id and no X-Correlation-Id is generated")
+
+            // When: observation alone
+            log.appender.list.clear()
+            observed.run { context ->
+                assertThat(context).hasNotFailed()
+                context.getBean(ClientRequestLoggingFilter::class.java)
+            }
+
+            // Then
+            assertThat(log.events.map { it.formattedMessage }).contains("Adapter logging found Boot's client observation wired for WebClient.Builder but no Micrometer Tracing - calls are observed, not traced, so the module generates the request id and sends X-Correlation-Id on every call that carries no traceparent")
+        } finally {
+            log.detach()
+        }
+    }
+
+    @Test
+    fun `should report at TRACE where every adapter-logging value came from`() {
+        // What is tested: the TRACE half of the wiring report - the origin of each bound
+        //   adapter-logging.* value, a shadowed value from a lower-precedence source, the redacted
+        //   masking key, and the empty report when nothing is set.
+        // Success criteria: with the logger name and the masking key inlined and a lower source
+        //   setting the logger name too, the TRACE events name the runner's inlined source ("test") for the effective
+        //   values, mark the lower value as shadowed, render the key redacted and never raw; with no
+        //   property set, exactly the one "every key is at its default" line appears.
+        // Why it matters: "which file set this, and why is my value not in effect" is answered from
+        //   the host's log at TRACE instead of from the actuator's env endpoint in production.
+        // Given: the auto-configuration's logger captured at TRACE
+        val log = CapturedLogger(ClientLoggingAutoConfiguration::class.java.name, Level.TRACE)
+        try {
+            // When: two sources, the inlined test properties above a host source
+            contextRunner
+                .withPropertyValues("adapter-logging.logger-name=outbound", "adapter-logging.masking-key=k")
+                .withInitializer { it.environment.propertySources.addLast(MapPropertySource("host-defaults", mapOf("adapter-logging.logger-name" to "base"))) }
+                .run { context ->
+                    assertThat(context).hasNotFailed()
+
+                    // Then
+                    val traces = log.events.filter { it.level == Level.TRACE }.map { it.formattedMessage }
+                    assertThat(traces).anySatisfy { line ->
+                        assertThat(line).startsWith("Adapter logging property adapter-logging.logger-name = outbound (origin: ").contains("from property source \"test\"")
+                    }
+                    assertThat(traces).anySatisfy { line ->
+                        assertThat(line).startsWith("+- Adapter logging property adapter-logging.logger-name = base (origin: ").contains("host-defaults").contains(") is shadowed by ")
+                    }
+                    assertThat(traces).anySatisfy { line ->
+                        assertThat(line).startsWith("Adapter logging property adapter-logging.masking-key = <redacted> (origin: ")
+                    }
+                    assertThat(traces).noneMatch { it.contains("masking-key = k") }
+                }
+
+            // And when: nothing set at all
+            val before = log.events.size
+            contextRunner.run { context ->
+                assertThat(context).hasNotFailed()
+                val traces =
+                    log.events
+                        .drop(before)
+                        .filter { it.level == Level.TRACE }
+                        .map { it.formattedMessage }
+                assertThat(traces).containsExactly("Adapter logging properties: no adapter-logging.* key is set in any property source - every key is at its default")
+            }
+        } finally {
+            log.detach()
+        }
+    }
+
+    @Test
+    fun `should report nothing at DEBUG when disabled by the property`() {
+        // What is tested: the wiring report's negative - with the switch off the auto-configuration is
+        //   never instantiated, so not even the "enabled" line appears.
+        // Success criteria: no event at all on the auto-configuration's logger.
+        // Why it matters: the absence of the report is the documented signal for "switched off"; a
+        //   line logged from a static initializer or an unconditional bean would make it lie.
+        // Given
+        val log = CapturedLogger(ClientLoggingAutoConfiguration::class.java.name, Level.DEBUG)
+        try {
+            // When
+            contextRunner.withPropertyValues("adapter-logging.enabled=false").run { context ->
+                // Then
+                assertThat(context).hasNotFailed()
+                assertThat(log.events).isEmpty()
+            }
+        } finally {
+            log.detach()
         }
     }
 
