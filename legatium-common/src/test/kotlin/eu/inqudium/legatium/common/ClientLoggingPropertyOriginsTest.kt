@@ -8,8 +8,9 @@ import org.springframework.boot.context.properties.bind.BoundPropertiesTrackingB
 import org.springframework.boot.context.properties.source.ConfigurationProperty
 import org.springframework.boot.context.properties.source.ConfigurationPropertyName
 import org.springframework.boot.context.properties.source.ConfigurationPropertySources
+import org.springframework.core.env.AbstractEnvironment
+import org.springframework.core.env.ConfigurableEnvironment
 import org.springframework.core.env.MapPropertySource
-import org.springframework.core.env.StandardEnvironment
 import org.springframework.core.env.SystemEnvironmentPropertySource
 
 /** The TRACE half of the wiring report: every bound `adapter-logging.*` value with its origin, shadowed values included. */
@@ -26,7 +27,7 @@ class ClientLoggingPropertyOriginsTest {
         //   line; a leaked masking key would turn a TRACE report into a secret dump.
         // Given
         val environment =
-            StandardEnvironment().apply {
+            environment().apply {
                 propertySources.addFirst(MapPropertySource("higher", mapOf("adapter-logging.logger-name" to "outbound", "adapter-logging.masking-key" to "k")))
                 propertySources.addLast(MapPropertySource("lower", mapOf("adapter-logging.logger-name" to "base", "adapter-logging.exclude-hosts[0]" to "pushgateway")))
             }
@@ -53,7 +54,7 @@ class ClientLoggingPropertyOriginsTest {
         // Why it matters: the report must find the value under the name the operator knows from the
         //   reference configuration, not under the environment variable's spelling.
         // Given
-        val environment = StandardEnvironment().apply { propertySources.addFirst(SystemEnvironmentPropertySource("container", mapOf("ADAPTER_LOGGING_MAX_BODY_BYTES" to "1024"))) }
+        val environment = environment().apply { propertySources.addFirst(SystemEnvironmentPropertySource("container", mapOf("ADAPTER_LOGGING_MAX_BODY_BYTES" to "1024"))) }
 
         // When
         val lines = ClientLoggingPropertyOrigins.describe(bind(environment), environment)
@@ -69,15 +70,22 @@ class ClientLoggingPropertyOriginsTest {
         // Success criteria: exactly one line, stating that every key is at its default.
         // Why it matters: silence would be indistinguishable from TRACE being off.
         // Given/When
-        val environment = StandardEnvironment()
+        val environment = environment()
         val lines = ClientLoggingPropertyOrigins.describe(bind(environment), environment)
 
         // Then
         assertThat(lines).containsExactly("Adapter logging properties: no adapter-logging.* key is set in any property source - every key is at its default")
     }
 
+    /**
+     * An environment holding the test's own sources ONLY - not a `StandardEnvironment`, whose system
+     * properties and OS environment would add any `ADAPTER_LOGGING_*` variable of the machine running
+     * the test to the report and break the exact expectations.
+     */
+    private fun environment(): ConfigurableEnvironment = object : AbstractEnvironment() {}
+
     /** Binds the shared properties the way Boot does for a `@ConfigurationProperties` bean, recording every bound leaf. */
-    private fun bind(environment: StandardEnvironment): Map<ConfigurationPropertyName, ConfigurationProperty> {
+    private fun bind(environment: ConfigurableEnvironment): Map<ConfigurationPropertyName, ConfigurationProperty> {
         val bound = linkedMapOf<ConfigurationPropertyName, ConfigurationProperty>()
         Binder(ConfigurationPropertySources.get(environment)).bind(
             "adapter-logging",

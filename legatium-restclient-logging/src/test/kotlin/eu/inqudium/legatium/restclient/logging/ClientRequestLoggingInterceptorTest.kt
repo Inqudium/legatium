@@ -894,31 +894,55 @@ class ClientRequestLoggingInterceptorTest {
         @Test
         fun `should classify a response whose status the client cannot read as a failure`() {
             // What is tested: the guard around the metadata accessors of the response wrapper - the
-            //   snapshot at handover tolerates a refusing engine (status `-`, counted as wiring), but
-            //   the CLIENT's own later getStatusCode propagates and must mark the exchange failed.
+            //   snapshot at handover tolerates a refusing engine (status `-`, counted as wiring with a
+            //   WARN on the module logger), but the CLIENT's own later getStatusCode propagates and
+            //   must mark the exchange failed.
             // Success criteria: the client's status access throws unchanged; at close the event is
-            //   ERROR, outcome failure, without a status field, the cause attached.
+            //   ERROR, outcome failure, without a status field, the cause attached; the snapshot's
+            //   refusal counted failopen{stage=wiring} = 1 and left exactly one WARN naming the call
+            //   and the cause on the module logger.
             // Why it matters: the caller experienced a failed exchange; a success line for it would
-            //   contradict the exception the caller is handling at that very moment.
-            // Given: an engine whose status is unreadable
+            //   contradict the exception the caller is handling at that very moment - and a guard
+            //   that only swallowed the refusal would hide from the operator that events of this
+            //   engine show no status.
+            // Given: an engine whose status is unreadable, the module's own logger captured
             val refusing =
                 ClientHttpRequestExecution { _, _ ->
                     object : MockClientHttpResponse("x".toByteArray(), HttpStatus.OK) {
                         override fun getStatusCode(): HttpStatusCode = throw IOException("status line garbled")
                     }
                 }
-            val response = interceptor.intercept(request(), ByteArray(0), refusing)
+            val internal = CapturedLogger(ClientRequestLoggingInterceptor::class.java.name)
+            try {
+                val response = interceptor.intercept(request(), ByteArray(0), refusing)
 
-            // When: the client asks for the status, then closes in its finally
-            val thrown = catchThrowable { response.statusCode }
-            response.close()
+                // When: the client asks for the status, then closes in its finally
+                val thrown = catchThrowable { response.statusCode }
+                response.close()
 
-            // Then
-            assertThat(thrown).isInstanceOf(IOException::class.java).hasMessage("status line garbled")
-            val event = log.events.single()
-            assertThat(event.level).isEqualTo(Level.ERROR)
-            assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").doesNotContainKey("adapter_response_status_code")
-            assertThat(event.throwableProxy?.message).isEqualTo("status line garbled")
+                // Then
+                assertThat(thrown).isInstanceOf(IOException::class.java).hasMessage("status line garbled")
+                val event = log.events.single()
+                assertThat(event.level).isEqualTo(Level.ERROR)
+                assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").doesNotContainKey("adapter_response_status_code")
+                assertThat(event.throwableProxy?.message).isEqualTo("status line garbled")
+                assertThat(
+                    meterRegistry
+                        .get(ClientLoggingMetrics.FAIL_OPEN_METER)
+                        .tag("stage", "wiring")
+                        .counter()
+                        .count(),
+                ).isEqualTo(1.0)
+                val warning = internal.events.single()
+                assertThat(warning.level).isEqualTo(Level.WARN)
+                assertThat(warning.formattedMessage)
+                    .isEqualTo(
+                        "Response status and headers could not be read for GET https://api.example.com/things - " +
+                            "the event will show no status: java.io.IOException: status line garbled",
+                    )
+            } finally {
+                internal.detach()
+            }
         }
 
         @Test

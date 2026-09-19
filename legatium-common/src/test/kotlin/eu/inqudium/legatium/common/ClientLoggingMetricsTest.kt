@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Meter
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.composite.CompositeMeterRegistry
+import io.micrometer.core.instrument.config.MeterFilter
 import io.micrometer.core.instrument.distribution.DistributionStatisticConfig
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
@@ -14,7 +15,12 @@ import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * The registration behaviour of the shared metrics owner, driven directly - ONCE here, for both stacks,
@@ -55,6 +61,50 @@ class ClientLoggingMetricsTest {
                 }
             }
         }
+
+    /** The owner's two body-meter caches, read through their private fields: the size of the cache is the subject of the leak tests. */
+    private fun cachedBodyMeters(metrics: ClientLoggingMetrics): Map<Any, Meter> =
+        listOf("bodySizeSummaries", "readStateCounters")
+            .flatMap { field ->
+                @Suppress("UNCHECKED_CAST")
+                (
+                    ClientLoggingMetrics::class.java
+                        .getDeclaredField(field)
+                        .apply { isAccessible = true }
+                        .get(metrics) as Map<Any, Meter>
+                ).entries
+            }.associate { it.key to it.value }
+
+    /**
+     * ConcurrentHashMap's bin of the body-meter key in a default-sized table: the spread of its hash over 16 bins. The
+     * owner's private key class is instantiated reflectively, so the hash is the real one.
+     */
+    private fun bodyMeterBin(
+        meterName: String,
+        template: String,
+        host: String,
+        name: String,
+    ): Int {
+        val key =
+            Class
+                .forName("eu.inqudium.legatium.common.ClientLoggingMetrics\$BodyMeterKey")
+                .getDeclaredConstructor(String::class.java, String::class.java, String::class.java, String::class.java, String::class.java)
+                .apply { isAccessible = true }
+                .newInstance(meterName, template, host, name, null)
+        val hash = key.hashCode()
+        return (hash xor (hash ushr 16)) and 15
+    }
+
+    /** A host whose body-meter key lands in the same bin as the one under [host] - the precondition of the lock-order deadlock. */
+    private fun hostSharingTheBinOf(
+        meterName: String,
+        template: String,
+        host: String,
+        name: String,
+    ): String {
+        val target = bodyMeterBin(meterName, template, host, name)
+        return generateSequence(0) { it + 1 }.map { "peer-$it.example.com" }.first { bodyMeterBin(meterName, template, it, name) == target }
+    }
 
     /** The response-read count under the one template and host the test records against. */
     private fun responseReadCount(
@@ -491,6 +541,170 @@ class ClientLoggingMetricsTest {
             ).isZero()
         } finally {
             metricsLog.detach()
+        }
+    }
+
+    @Test
+    fun `should resolve a body meter outside the cache's lock so a concurrent host removal cannot deadlock`() {
+        // What is tested: the lock order of the class KDoc - Micrometer notifies removal listeners under
+        //   its registry lock and the owner's listener takes the cache's bin lock, so the miss path must
+        //   register WITHOUT holding a bin lock. A filter's `map` is the hook between the cache miss and
+        //   Micrometer's lock (it runs before the lock is taken): from there a second thread removes an
+        //   already cached summary whose key shares the new key's bin, and the miss path waits for it.
+        // Success criteria: the removal finishes while the registration is pending; the second summary
+        //   lands in the host registry (no fallback), and the removed one is registered anew afterwards.
+        // Why it matters: resolved inside computeIfAbsent, the two threads held their locks in opposite
+        //   order - a hung exchange thread and a registry frozen for every later registration, from a
+        //   component that promises never to disturb the call.
+        // Given: two hosts whose keys share a bin, a summary cached under the first, the hook armed for the second
+        val template = "https://api.example.com/things/{id}"
+        val firstHost = "api.example.com"
+        val secondHost = hostSharingTheBinOf(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER, template, firstHost, "things")
+        val registry = SimpleMeterRegistry()
+        val cached = AtomicReference<DistributionSummary>()
+        val removalFinishedInTime = AtomicBoolean(false)
+        val remover = Executors.newSingleThreadExecutor()
+        registry.config().meterFilter(
+            object : MeterFilter {
+                override fun map(id: Meter.Id): Meter.Id {
+                    if (id.name == ClientLoggingMetrics.REQUEST_BODY_SIZE_METER && id.getTag("host") == secondHost) {
+                        // Between the cache miss and Micrometer's lock: the host removes the cached summary NOW.
+                        val removal = remover.submit { registry.remove(cached.get()) }
+                        try {
+                            removal.get(5, TimeUnit.SECONDS)
+                            removalFinishedInTime.set(true)
+                        } catch (_: TimeoutException) {
+                            // The removing thread is stuck behind a lock this thread holds; proceeding
+                            // into Micrometer's lock would complete the deadlock and hang the suite, so
+                            // fail the registration instead - registerOrFallback then releases the lock.
+                            throw IllegalStateException("the host's removal is stuck behind the cache's lock")
+                        }
+                    }
+                    return id
+                }
+            },
+        )
+        try {
+            val metrics = ClientLoggingMetrics.forRegistry(registry, ClientStack.RESTCLIENT)
+            metrics.requestBodySize(template, firstHost, "things", 5)
+            cached.set(registry.get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).tag("host", firstHost).summary())
+
+            // When
+            metrics.requestBodySize(template, secondHost, "things", 7)
+            metrics.requestBodySize(template, firstHost, "things", 11)
+
+            // Then
+            assertThat(removalFinishedInTime).isTrue()
+            assertThat(
+                registry
+                    .get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER)
+                    .tag("host", secondHost)
+                    .summary()
+                    .totalAmount(),
+            ).isEqualTo(7.0)
+            val reRegistered = registry.get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).tag("host", firstHost).summary()
+            assertThat(reRegistered).isNotSameAs(cached.get())
+            assertThat(reRegistered.totalAmount()).isEqualTo(11.0)
+        } finally {
+            remover.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `should not cache a body meter the host registry denied`() {
+        // What is tested: the cache under a denying MeterFilter (Boot's management.metrics.enable.*, a
+        //   tag cap) - Micrometer answers such a registration with a no-op meter it does not store.
+        // Success criteria: samples under three hosts neither throw nor register a summary in the host,
+        //   and the owner's caches hold NO entry for them - only the one accepted response summary.
+        // Why it matters: the cache mirrors the registry's entries only for meters the registry holds;
+        //   one entry per denied tag set would grow without release exactly in the configuration an
+        //   operator chose to bound the caller-controlled host tag.
+        // Given: the request summary denied, the response summary accepted
+        val registry = SimpleMeterRegistry()
+        registry.config().meterFilter(MeterFilter.denyNameStartsWith(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER))
+        val metrics = ClientLoggingMetrics.forRegistry(registry, ClientStack.RESTCLIENT)
+
+        // When
+        val thrown =
+            catchThrowable {
+                listOf("a", "b", "c").forEach { metrics.requestBodySize("https://api.example.com/things/{id}", "$it.example.com", "things", 5) }
+                metrics.responseBodySize("https://api.example.com/things/{id}", "api.example.com", "things", 3)
+            }
+
+        // Then
+        assertThat(thrown).isNull()
+        assertThat(registry.find(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).summaries()).isEmpty()
+        assertThat(cachedBodyMeters(metrics).values).singleElement().satisfies({ assertThat(it.id.name).isEqualTo(ClientLoggingMetrics.RESPONSE_BODY_SIZE_METER) })
+    }
+
+    @Test
+    fun `should keep body meters of different templates and hosts apart`() {
+        // What is tested: the cache key's discrimination - the same meter name recorded under two
+        //   templates and two hosts.
+        // Success criteria: three distinct summaries with their own counts (2, 1, 1) and three distinct
+        //   read-state counters at 1 each; nothing merged.
+        // Why it matters: a key that folded the template or the host would hand the first tag set's
+        //   meter to every later one - the per-call-site distribution the meters promise, silently gone.
+        // Given
+        val things = "https://api.example.com/things/{id}"
+        val other = "https://api.example.com/other/{id}"
+        val registry = SimpleMeterRegistry()
+        val metrics = ClientLoggingMetrics.forRegistry(registry, ClientStack.WEBCLIENT)
+
+        // When
+        metrics.requestBodySize(things, "api.example.com", "things", 5)
+        metrics.requestBodySize(things, "api.example.com", "things", 5)
+        metrics.requestBodySize(things, "eu.example.com", "things", 7)
+        metrics.requestBodySize(other, "api.example.com", "things", 11)
+        metrics.responseBodyRead(things, "api.example.com", "things", BodyReadState.UNREAD)
+        metrics.responseBodyRead(things, "eu.example.com", "things", BodyReadState.UNREAD)
+        metrics.responseBodyRead(other, "api.example.com", "things", BodyReadState.UNREAD)
+
+        // Then
+        fun summary(
+            template: String,
+            host: String,
+        ) = registry.get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).tags("uri", template, "host", host).summary()
+        assertThat(registry.get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).summaries()).hasSize(3)
+        assertThat(summary(things, "api.example.com").count()).isEqualTo(2)
+        assertThat(summary(things, "api.example.com").totalAmount()).isEqualTo(10.0)
+        assertThat(summary(things, "eu.example.com").totalAmount()).isEqualTo(7.0)
+        assertThat(summary(other, "api.example.com").totalAmount()).isEqualTo(11.0)
+        assertThat(registry.get(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).counters()).hasSize(3).allSatisfy { assertThat(it.count()).isEqualTo(1.0) }
+    }
+
+    @Test
+    fun `should count a throwing host read-state counter per hit and warn once, like the size summaries`() {
+        // What is tested: updateQuietly around responseBodyRead - a host Counter under the read-state
+        //   meter that registered fine but throws on every increment.
+        // Success criteria: three recordings neither throw nor reach the caller; the fail-open counter
+        //   shows stage=wiring at 3 and the module logger carries exactly ONE warning for the meter.
+        // Why it matters: the read state is counted per measured exchange; unguarded, a broken host
+        //   counter would either surface in the emitter or warn per exchange, proportional to the traffic.
+        // Given: a registry whose read-state counter always throws, and the module logger captured
+        val hostile = registryWithBreakingCounters(ClientLoggingMetrics.RESPONSE_BODY_READ_METER)
+        val moduleLog = CapturedLogger(ClientLoggingMetrics::class.java.name)
+        try {
+            val metrics = ClientLoggingMetrics.forRegistry(hostile, ClientStack.WEBCLIENT)
+
+            // When
+            val thrown =
+                catchThrowable {
+                    repeat(3) { metrics.responseBodyRead("https://api.example.com/things/{id}", "api.example.com", "things", BodyReadState.COMPLETE) }
+                }
+
+            // Then
+            assertThat(thrown).isNull()
+            assertThat(
+                hostile
+                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
+                    .tags("stage", "wiring")
+                    .counter()
+                    .count(),
+            ).isEqualTo(3.0)
+            assertThat(moduleLog.events.filter { it.level == Level.WARN && it.formattedMessage.contains("could not be updated") }).hasSize(1)
+        } finally {
+            moduleLog.detach()
         }
     }
 }

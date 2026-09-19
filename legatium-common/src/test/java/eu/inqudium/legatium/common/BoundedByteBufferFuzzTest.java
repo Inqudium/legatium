@@ -12,10 +12,12 @@ import java.util.List;
  *
  * Invariants under test: no sequence may throw; the buffered size is exactly what the cap admits of
  * what was written, whatever the hint; render() is null exactly for a zero total, never throws for
- * any byte content or charset, and announces truncation exactly when the total exceeds the size.
+ * any byte content or charset, decodes exactly the admitted bytes when nothing was cut, and ends in
+ * the exact truncation note when the total exceeds the size.
  *
- * Runs as a regression test (the empty input plus any checked-in inputs) in every build; the scheduled
- * Fuzz workflow explores for real (JAZZER_FUZZ=1).
+ * Runs as a regression test (the empty input plus the checked-in inputs under
+ * {@code BoundedByteBufferFuzzTestInputs/}) in every build; the scheduled Fuzz workflow explores for
+ * real (JAZZER_FUZZ=1).
  */
 class BoundedByteBufferFuzzTest {
     private static final List<Charset> CHARSETS =
@@ -30,6 +32,8 @@ class BoundedByteBufferFuzzTest {
         //   cut-back or a throw on an odd sequence would surface inside the client's read.
         int maxBytes = data.consumeInt(0, 1 << 16);
         BoundedByteBuffer buffer = new BoundedByteBuffer(maxBytes);
+        // What the cap admits of everything written, kept alongside: the oracle of the plain rendering.
+        byte[] admitted = new byte[maxBytes];
         int expectedSize = 0;
         long total = 0;
 
@@ -37,8 +41,11 @@ class BoundedByteBufferFuzzTest {
         for (int i = 0; i < ops && data.remainingBytes() > 0; i++) {
             switch (data.consumeInt(0, 3)) {
                 case 0 -> {
-                    buffer.write(data.consumeByte());
-                    expectedSize = Math.min(maxBytes, expectedSize + 1);
+                    byte b = data.consumeByte();
+                    buffer.write(b);
+                    if (expectedSize < maxBytes) {
+                        admitted[expectedSize++] = b;
+                    }
                     total += 1;
                 }
                 case 1 -> {
@@ -46,7 +53,9 @@ class BoundedByteBufferFuzzTest {
                     int offset = bytes.length == 0 ? 0 : data.consumeInt(0, bytes.length - 1);
                     int length = data.consumeInt(0, bytes.length - offset);
                     buffer.write(bytes, offset, length);
-                    expectedSize = Math.min(maxBytes, expectedSize + length);
+                    int kept = Math.min(length, maxBytes - expectedSize);
+                    System.arraycopy(bytes, offset, admitted, expectedSize, kept);
+                    expectedSize += kept;
                     total += length;
                 }
                 case 2 -> buffer.expect(data.consumeLong());
@@ -67,11 +76,23 @@ class BoundedByteBufferFuzzTest {
         if ((rendered == null) != (total == 0)) {
             throw new IllegalStateException("null contract violated: total=" + total + ", rendered=" + rendered);
         }
-        // The exact note as a suffix, not a substring search: a body that itself decodes to
-        // "[truncated, " must not read as truncated.
-        String note = "... [truncated, " + total + " bytes total]";
-        if (rendered != null && (total > expectedSize) != rendered.endsWith(note)) {
-            throw new IllegalStateException("truncation note wrong: total=" + total + ", size=" + expectedSize + ", rendered=" + rendered);
+        if (rendered == null) {
+            return;
+        }
+        if (total > expectedSize) {
+            // The exact note as a suffix, not a substring search: a body that itself decodes to
+            // "[truncated, " must not read as truncated.
+            String note = "... [truncated, " + total + " bytes total]";
+            if (!rendered.endsWith(note)) {
+                throw new IllegalStateException("truncation note missing: total=" + total + ", size=" + expectedSize + ", rendered=" + rendered);
+            }
+        } else {
+            // Nothing cut: the rendering IS the admitted bytes decoded - which also rules out a note on
+            // a body that happens to decode to its own note.
+            String plain = new String(admitted, 0, expectedSize, charset);
+            if (!rendered.equals(plain)) {
+                throw new IllegalStateException("plain rendering differs: total=" + total + ", size=" + expectedSize + ", rendered=" + rendered);
+            }
         }
     }
 }

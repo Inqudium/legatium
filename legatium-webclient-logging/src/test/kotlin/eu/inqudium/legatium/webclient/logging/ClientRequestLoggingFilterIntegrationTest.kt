@@ -58,7 +58,7 @@ class ClientRequestLoggingFilterIntegrationTest : IntegrationFixture() {
                 .retrieve()
                 .bodyToMono(String::class.java)
                 .contextWrite { it.put("endpoint_request_id", "inbound-42") }
-                .block()
+                .block(AWAIT)
 
             // Then
             val event = log.awaitEvents(1).single()
@@ -90,7 +90,7 @@ class ClientRequestLoggingFilterIntegrationTest : IntegrationFixture() {
                 .bodyValue("hello")
                 .retrieve()
                 .bodyToMono(String::class.java)
-                .block()
+                .block(AWAIT)
 
         // Then
         assertThat(body).isEqualTo("""{"id":7,"echo":"hello"}""")
@@ -132,7 +132,7 @@ class ClientRequestLoggingFilterIntegrationTest : IntegrationFixture() {
                     .uri("/fail")
                     .retrieve()
                     .bodyToMono(String::class.java)
-                    .block()
+                    .block(AWAIT)
             }
 
         // Then
@@ -164,7 +164,7 @@ class ClientRequestLoggingFilterIntegrationTest : IntegrationFixture() {
                     .uri("/things/1")
                     .retrieve()
                     .bodyToMono(String::class.java)
-                    .block()
+                    .block(AWAIT)
             }
 
         // Then
@@ -182,7 +182,8 @@ class ClientRequestLoggingFilterIntegrationTest : IntegrationFixture() {
         // Success criteria: with a 200 ms response timeout against a peer that answers after 1.5 s, the
         //   client errors and the single event is WARN with outcome timeout and no status.
         // Why it matters: only a real connector proves the names are the ones that actually occur.
-        // Given
+        // Given: the 200 ms connector goes on THIS test's builder only - Boot's builder is a prototype
+        //   bean, injected into each per-test fixture instance afresh, so no later scenario inherits it
         val client =
             webClientBuilder
                 .baseUrl(peer.baseUrl)
@@ -197,7 +198,7 @@ class ClientRequestLoggingFilterIntegrationTest : IntegrationFixture() {
                     .uri("/slow")
                     .retrieve()
                     .bodyToMono(String::class.java)
-                    .block()
+                    .block(AWAIT)
             }
 
         // Then
@@ -226,7 +227,7 @@ class ClientRequestLoggingFilterIntegrationTest : IntegrationFixture() {
                     .retrieve()
                     .bodyToMono(String::class.java)
                     .timeout(SHORT)
-                    .block()
+                    .block(AWAIT)
             }
 
         // Then: block() wraps the checked TimeoutException; the exchange itself was cancelled
@@ -255,7 +256,7 @@ class ClientRequestLoggingFilterIntegrationTest : IntegrationFixture() {
                     .uri("/empty")
                     .retrieve()
                     .toBodilessEntity()
-                    .block(),
+                    .block(AWAIT),
             )
 
         // Then

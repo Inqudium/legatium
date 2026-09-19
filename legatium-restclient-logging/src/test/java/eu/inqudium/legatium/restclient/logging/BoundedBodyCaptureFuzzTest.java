@@ -14,8 +14,9 @@ import java.util.List;
  *
  * Invariants under test: no capture sequence may throw; the total byte count
  * is exact; loggedValue() is null exactly for a zero-byte body, never throws
- * for any byte content or charset, and announces truncation whenever more
- * bytes flowed than the capture limit holds.
+ * for any byte content or charset, renders exactly the bytes the limit
+ * admitted when all of them fit, and ends in the exact truncation note - built
+ * from the total - whenever more bytes flowed than the capture limit holds.
  *
  * Runs as a regression test (checked-in inputs plus the empty input) in every
  * build; the scheduled Fuzz workflow explores for real (JAZZER_FUZZ=1).
@@ -28,7 +29,8 @@ class BoundedBodyCaptureFuzzTest {
     void capture_upholds_its_contract(FuzzedDataProvider data) {
         // What is tested: BoundedBodyCapture under a random sequence of single-byte, array and ranged
         //   writes with a random limit and charset - exact byte total, null loggedValue() only for a
-        //   zero-byte body, truncation announced exactly when more bytes flowed than the limit holds.
+        //   zero-byte body, the buffered bytes rendered as they are when they all fit, the exact
+        //   truncation note as the suffix exactly when more bytes flowed than the limit holds.
         // Success criteria: no exception and no invariant violation for any input Jazzer generates,
         //   whatever the byte content and charset.
         // Why it matters: the capture sees every body byte of every exchange; a throw on an odd byte
@@ -37,12 +39,21 @@ class BoundedBodyCaptureFuzzTest {
         BoundedBodyCapture capture = new BoundedBodyCapture(maxBytes);
         long expectedTotal = 0;
         long markedTotal = 0;
+        // The model of what the capture buffers: the first maxBytes bytes of what flowed, cut back with
+        // the count on a reset - so the plain rendering can be checked for equality, not shape.
+        byte[] model = new byte[maxBytes];
+        int modelSize = 0;
+        int markedModelSize = 0;
 
         int ops = data.consumeInt(0, 64);
         for (int i = 0; i < ops && data.remainingBytes() > 0; i++) {
             switch (data.consumeInt(0, 5)) {
                 case 0 -> {
-                    capture.capture(data.consumeByte());
+                    byte b = data.consumeByte();
+                    capture.capture(b);
+                    if (modelSize < maxBytes) {
+                        model[modelSize++] = b;
+                    }
                     expectedTotal += 1;
                 }
                 case 1 -> {
@@ -51,6 +62,9 @@ class BoundedBodyCaptureFuzzTest {
                     int offset = bytes.length == 0 ? 0 : data.consumeInt(0, bytes.length - 1);
                     int length = data.consumeInt(0, bytes.length - offset);
                     capture.capture(bytes, offset, length);
+                    int kept = Math.min(length, maxBytes - modelSize);
+                    System.arraycopy(bytes, offset, model, modelSize, kept);
+                    modelSize += kept;
                     expectedTotal += length;
                 }
                 case 2 -> capture.markStarted();
@@ -58,10 +72,12 @@ class BoundedBodyCaptureFuzzTest {
                 case 4 -> {
                     capture.mark();
                     markedTotal = expectedTotal;
+                    markedModelSize = modelSize;
                 }
                 case 5 -> {
                     capture.reset();
                     expectedTotal = markedTotal;
+                    modelSize = markedModelSize;
                 }
             }
         }
@@ -76,9 +92,25 @@ class BoundedBodyCaptureFuzzTest {
             throw new IllegalStateException(
                     "null contract violated: totalBytes=" + expectedTotal + ", logged=" + logged);
         }
-        if (logged != null && expectedTotal > maxBytes && !logged.contains("[truncated, ")) {
-            throw new IllegalStateException(
-                    "missing truncation note: totalBytes=" + expectedTotal + ", maxBytes=" + maxBytes);
+        if (logged == null) {
+            return;
+        }
+        if (expectedTotal > maxBytes) {
+            // The exact note as a suffix, not a substring search: a body that itself decodes to
+            // "[truncated, " must not read as truncated, and a note with another count is a wrong note.
+            String note = "... [truncated, " + expectedTotal + " bytes total]";
+            if (!logged.endsWith(note)) {
+                throw new IllegalStateException(
+                        "truncation note wrong: totalBytes=" + expectedTotal + ", maxBytes=" + maxBytes + ", logged=" + logged);
+            }
+        } else {
+            // Everything fit: the rendering IS the buffered bytes decoded - a body that decodes to a
+            // note of its own length renders as that text, with nothing appended.
+            String plain = new String(model, 0, modelSize, charset);
+            if (!logged.equals(plain)) {
+                throw new IllegalStateException(
+                        "plain rendering wrong: totalBytes=" + expectedTotal + ", maxBytes=" + maxBytes + ", logged=" + logged);
+            }
         }
     }
 }

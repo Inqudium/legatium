@@ -153,13 +153,20 @@ abstract class RequestFactoryContract : PeerIntegrationSuite() {
         val event = log.events.single()
         assertThat(event.level).isEqualTo(Level.INFO)
         assertThat(keyValues(event)).containsEntry("adapter_outcome", "success").containsEntry("adapter_response_status_code", 200)
-        val logged = keyValues(event)["adapter_response_body"].toString()
+        // The raw value, not its toString: an absent key would render as the string "null" and pass
+        // every "not the plaintext" check below.
+        assertThat(keyValues(event)).containsKey("adapter_response_body")
+        val logged = keyValues(event)["adapter_response_body"]
         if (decompressesTransparently) {
             assertThat(body).isEqualTo(PeerServer.GZIP_PLAINTEXT)
             assertThat(logged).isEqualTo(PeerServer.GZIP_PLAINTEXT)
         } else {
-            assertThat(body).isNotEqualTo(PeerServer.GZIP_PLAINTEXT)
-            assertThat(logged).doesNotContain("compressed hello")
+            // The engine handed the compressed bytes through, and the converter decoded them with the
+            // declared UTF-8 charset; the tee saw the same bytes and decodes them with the same
+            // charset, so the line must show exactly the text the application got - which is not
+            // the plaintext and contains none of it.
+            assertThat(body).isNotEqualTo(PeerServer.GZIP_PLAINTEXT).doesNotContain("compressed hello")
+            assertThat(logged).isEqualTo(body)
         }
     }
 

@@ -1,10 +1,8 @@
 package eu.inqudium.legatium.webclient.logging
 
-import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.TestInstance
+import org.junit.jupiter.api.extension.ExtendWith
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.web.reactive.function.client.WebClient
 import java.time.Duration
@@ -15,26 +13,19 @@ import java.time.Duration
  * [AwaitingAppender] attached (through [log]) and the peer's record cleared. A subclass adds the
  * `@SpringBootTest` annotation with its own properties and its own scenarios.
  *
- * One instance per class (inherited), so the peer is a field of the suite instance rather than one
- * static slot every suite reassigns - correct whether or not suite classes ever run in parallel.
+ * JUnit's default lifecycle - one instance per test - on purpose: Boot's `WebClient.Builder` is a
+ * prototype bean, and a fresh instance gets a fresh builder, so a scenario that customises its connector
+ * cannot leave that connector on the next scenario's client. The peer is the one per-class resource, and
+ * [PeerExtension] keeps it as a field of the suite instance rather than one static slot every suite
+ * reassigns - correct whether or not suite classes ever run in parallel.
  */
-@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@ExtendWith(PeerExtension::class)
 abstract class IntegrationFixture {
     @Autowired
     internal lateinit var webClientBuilder: WebClient.Builder
 
-    /** The foreign party of the suite, started once per test class and stopped after its last test. */
+    /** The foreign party of the suite, started once per test class by [PeerExtension] and stopped after its last test. */
     internal lateinit var peer: PeerServer
-
-    @BeforeAll
-    fun startPeer() {
-        peer = PeerServer()
-    }
-
-    @AfterAll
-    fun stopPeer() {
-        peer.close()
-    }
 
     /**
      * The production logger of this test, captured at INFO. Attached in `@BeforeEach`, not in an

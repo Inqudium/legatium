@@ -42,7 +42,7 @@ class ClientRequestLoggingTracingIntegrationTest : IntegrationFixture() {
                 .uri("/things/{id}", 1)
                 .retrieve()
                 .bodyToMono(String::class.java)
-                .block()
+                .block(AWAIT)
         }
         outer.end()
 
@@ -74,7 +74,7 @@ class ClientRequestLoggingTracingIntegrationTest : IntegrationFixture() {
             .uri("/things/2")
             .retrieve()
             .bodyToMono(String::class.java)
-            .block()
+            .block(AWAIT)
 
         // Then
         val received = peer.received.single()

@@ -105,16 +105,19 @@ class ClientRequestLoggingFilterTest {
 
         @Test
         fun `should emit only at the body's terminal signal and exactly once, whatever a second subscription is answered`() {
-            // What is tested: the emission point - the response body's completion - and its
-            //   exactly-once guard against a body that REFUSES a second subscription, the shape of the
-            //   JDK, Jetty and HttpComponents connector responses (see singleSubscriber).
+            // What is tested: the emission point - the response body's completion - and that a second
+            //   subscription arriving AFTER the exchange completed leaves the emitted event alone, on a
+            //   body that REFUSES that subscription, the shape of the JDK, Jetty and HttpComponents
+            //   connector responses (see singleSubscriber). The second subscription from INSIDE the
+            //   first one's completion - Spring's exchangeToMono release - is the next test.
             // Success criteria: a delivered response logs nothing until its body is consumed; releasing
-            //   the body logs one success; releasing it again is answered with the body's own error,
-            //   passed through to that second subscriber, and neither logs more nor turns the event.
+            //   the body logs one success; releasing it again, once the event is out, is answered with
+            //   the body's own error, passed through to that second subscriber, and neither logs a
+            //   second line nor rewrites the first one's outcome.
             // Why it matters: emitting when the response Mono completes would log a body of zero bytes
-            //   and a duration without the read; a second subscription that could set the exchange's
-            //   failure logged every healthy exchangeToMono call at ERROR on three of the four
-            //   connectors - a replaying Flux.just body cannot show that.
+            //   and a duration without the read; and a late second subscriber must get the body's own
+            //   error unchanged, with no second line for the same call - a replaying Flux.just body
+            //   cannot show the pass-through.
             // Given: a delivered response whose body refuses a second subscription, body untouched
             val response = requireNotNull(filter.filter(request(), ExchangeFunction { Mono.just(singleSubscriber(body = "later")) }).block())
 
@@ -801,7 +804,7 @@ class ClientRequestLoggingFilterTest {
                 .filter(request(), answeringElsewhere())
                 .flatMap { it.bodyToMono(String::class.java) }
                 .contextWrite { it.put(key, "inbound-7") }
-                .block()
+                .block(AWAIT)
 
             // Then: logged elsewhere, joined anyway; the caller's thread untouched
             val event = awaiting.awaitEvents(1).single()
@@ -826,7 +829,7 @@ class ClientRequestLoggingFilterTest {
                 .filter(request(), answeringElsewhere())
                 .flatMap { it.bodyToMono(String::class.java) }
                 .contextWrite { it.put(key, "inbound-7") }
-                .block()
+                .block(AWAIT)
 
             // Then
             val events = awaiting.awaitEvents(2)
@@ -855,7 +858,7 @@ class ClientRequestLoggingFilterTest {
                 .retry(1)
                 .flatMap { it.bodyToMono(String::class.java) }
                 .contextWrite { it.put(key, "inbound-7") }
-                .block()
+                .block(AWAIT)
 
             // Then
             val events = awaiting.awaitEvents(2)

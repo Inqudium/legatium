@@ -10,10 +10,12 @@ import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.NanoTimeSource
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
-import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.extension.BeforeAllCallback
+import org.junit.jupiter.api.extension.ExtendWith
+import org.junit.jupiter.api.extension.ExtensionContext
+import org.junit.jupiter.api.extension.TestInstancePostProcessor
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
@@ -129,11 +131,21 @@ internal class CapturedLogger(
 
 /**
  * The fixture every Spring integration suite of this module shares: one [PeerServer] per suite class,
- * started before its first test and stopped after its last; the exchange logger captured per test - a
- * fresh instance per test method under JUnit's default lifecycle, detached afterwards - and the peer's
- * record cleared before each test. A suite adds its own `@SpringBootTest` configuration on top.
+ * started before its first test and stopped after its last ([PeerExtension]); the exchange logger
+ * captured per test - a fresh instance per test method under JUnit's default lifecycle, detached
+ * afterwards - and the peer's record cleared before each test. A suite adds its own `@SpringBootTest`
+ * configuration on top.
  */
+@ExtendWith(PeerExtension::class)
 abstract class PeerIntegrationSuite {
+    /**
+     * The peer of this suite class, injected into every test instance by [PeerExtension] - an instance
+     * field, so two suite classes running at once could not reassign each other's peer through a
+     * static slot, under the default per-method lifecycle, so Boot's prototype `RestClient.Builder` is
+     * still a fresh one per test.
+     */
+    internal lateinit var peer: PeerServer
+
     /**
      * The `adapter-http-exchange` logger of this test, captured at INFO. Attached in `@BeforeEach`, not
      * in an initializer: the suite's Spring context starts AFTER the instance is built, and Boot's logging
@@ -159,21 +171,34 @@ abstract class PeerIntegrationSuite {
         closeables.reversed().forEach { runCatching { it.close() } }
         closeables.clear()
     }
+}
 
-    companion object {
-        /** The peer of the running suite class; suites run sequentially, so one static slot serves them all. */
-        internal lateinit var peer: PeerServer
+/**
+ * Starts one [PeerServer] per suite class and hands it to every test instance of the suite: created in
+ * `beforeAll` and kept in the CLASS-level store, where JUnit closes it - the store closes its
+ * `AutoCloseable` values - once the last test of the class ran; injected into
+ * [PeerIntegrationSuite.peer] as each instance is built. Neither a static slot (shared by every suite
+ * class, correct only while classes run one after another) nor a per-class test instance (which would
+ * share Boot's prototype `RestClient.Builder` across the tests of a suite).
+ */
+internal class PeerExtension :
+    BeforeAllCallback,
+    TestInstancePostProcessor {
+    override fun beforeAll(context: ExtensionContext) {
+        context.getStore(NAMESPACE).computeIfAbsent(PeerServer::class.java, { PeerServer() }, PeerServer::class.java)
+    }
 
-        @JvmStatic
-        @BeforeAll
-        fun startPeer() {
-            peer = PeerServer()
-        }
+    override fun postProcessTestInstance(
+        testInstance: Any,
+        context: ExtensionContext,
+    ) {
+        (testInstance as PeerIntegrationSuite).peer =
+            checkNotNull(context.getStore(NAMESPACE).get(PeerServer::class.java, PeerServer::class.java)) {
+                "no peer for ${context.requiredTestClass.name} - beforeAll did not run"
+            }
+    }
 
-        @JvmStatic
-        @AfterAll
-        fun stopPeer() {
-            peer.close()
-        }
+    private companion object {
+        val NAMESPACE: ExtensionContext.Namespace = ExtensionContext.Namespace.create(PeerExtension::class.java)
     }
 }
