@@ -278,6 +278,74 @@ class ClientLoggingMetricsTest {
     }
 
     @Test
+    fun `should register a body meter anew after the host removed it instead of recording into the detached one`() {
+        // What is tested: the cache's one drift case - the owner resolves the body meters once per tag
+        //   set, and a host may remove a meter from its registry afterwards.
+        // Success criteria: after the removal the next sample lands in a NEW summary the registry holds
+        //   (count 1, the new amount), the removed instance saw nothing more; the same for the
+        //   read-state counter.
+        // Why it matters: a cached reference to a removed meter would count every later exchange into
+        //   an instance no exporter reads - silent loss of exactly the opt-in measurement.
+        // Given: a sample and a read state recorded, both meters then removed by the host
+        val registry = SimpleMeterRegistry()
+        val metrics = ClientLoggingMetrics.forRegistry(registry, ClientStack.RESTCLIENT)
+        metrics.requestBodySize("https://api.example.com/things/{id}", "api.example.com", "things", 5)
+        metrics.responseBodyRead("https://api.example.com/things/{id}", "api.example.com", "things", BodyReadState.COMPLETE)
+        val removedSummary = registry.get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).summary()
+        val removedCounter = registry.get(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).counter()
+        registry.remove(removedSummary)
+        registry.remove(removedCounter)
+
+        // When
+        metrics.requestBodySize("https://api.example.com/things/{id}", "api.example.com", "things", 7)
+        metrics.responseBodyRead("https://api.example.com/things/{id}", "api.example.com", "things", BodyReadState.COMPLETE)
+
+        // Then
+        val summary = registry.get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).summary()
+        assertThat(summary).isNotSameAs(removedSummary)
+        assertThat(summary.count()).isEqualTo(1)
+        assertThat(summary.totalAmount()).isEqualTo(7.0)
+        assertThat(removedSummary.count()).isEqualTo(1)
+        val counter = registry.get(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).counter()
+        assertThat(counter).isNotSameAs(removedCounter)
+        assertThat(counter.count()).isEqualTo(1.0)
+        assertThat(removedCounter.count()).isEqualTo(1.0)
+    }
+
+    @Test
+    fun `should keep a body meter private with one warning when the host rejects its registration`() {
+        // What is tested: registerOrFallback behind the body-meter cache - the request summary's id is
+        //   taken by a host gauge, so Micrometer rejects the registration with a different-type error.
+        // Success criteria: three samples neither throw nor reach the host (which keeps its gauge and
+        //   holds no summary under the id); the module logger carries exactly one WARN naming the meter.
+        // Why it matters: the conflict path of the fixed meters is pinned by the events-meter test; the
+        //   body meters take it lazily through the cache, and must take it once, not per exchange.
+        // Given: the summary's exact id taken by a gauge, and the metrics logger captured
+        val host: MeterRegistry = SimpleMeterRegistry()
+        Gauge
+            .builder(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER) { 1.0 }
+            .tags("uri", "https://api.example.com/things/{id}", "host", "api.example.com", "name", "things")
+            .register(host)
+        val metricsLog = CapturedLogger(ClientLoggingMetrics::class.java.name)
+        try {
+            val metrics = ClientLoggingMetrics.forRegistry(host, ClientStack.RESTCLIENT)
+
+            // When
+            val thrown = catchThrowable { repeat(3) { metrics.requestBodySize("https://api.example.com/things/{id}", "api.example.com", "things", 5) } }
+
+            // Then
+            assertThat(thrown).isNull()
+            assertThat(host.find(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).gauge()).isNotNull()
+            assertThat(host.find(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).summary()).isNull()
+            val warnings = metricsLog.events.filter { it.level == Level.WARN }
+            assertThat(warnings).hasSize(1)
+            assertThat(warnings.single().formattedMessage).contains(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).contains("kept private")
+        } finally {
+            metricsLog.detach()
+        }
+    }
+
+    @Test
     fun `should count a throwing host body summary per hit and warn once, like the fixed counters`() {
         // What is tested: updateQuietly around the dynamic body meters - a host DistributionSummary
         //   that registered fine but throws on every record.

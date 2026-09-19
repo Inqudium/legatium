@@ -58,6 +58,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message keeps the target; the target of a named one stays on the `adapter_route` MDC entry and the
   `adapter_url_*` fields. `TwinContractTest` pins both forms; ADR-0009's message section is amended.
 
+- Both twins: the opt-in body meters (`adapter.request.body.size`, `adapter.response.body.size`,
+  `adapter.response.body.read`) are resolved once per tag set and cached in the metrics owner instead
+  of being rebuilt - builder, tags and `Meter.Id` - on every measured exchange for Micrometer's
+  deduplicating lookup. Measured (`benchmarks/`, `BodyMeterRecordBenchmark`): 85 ns and 448 B per
+  sample before, 35 ns and 32 B after, three samples per measured exchange. A host that removes one of
+  these meters from its registry gets it registered anew on the next exchange. No observable change
+  to the meters themselves.
+
 ### Fixed
 
 - WebClient twin: a body the application consumed inside `exchangeToMono`/`exchangeToFlux` was logged

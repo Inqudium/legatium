@@ -118,6 +118,16 @@ internal enum class ClientStack(
  * there, takes the same private-registry path with the same one-time warning: a visibly degraded gauge
  * instead of a silently wrong one. (Counters and summaries have no such case: an existing counter of
  * the same id is the shared meter, and increments merge.)
+ *
+ * The DYNAMIC body meters (the two size summaries and the read-state counter, tagged per URI template,
+ * host and client name) are resolved ONCE per tag set and kept in a cache that mirrors the registry's
+ * entries under those three names - one entry per meter the registry holds, so the cache adds no
+ * cardinality and needs no size policy of its own; the `uri` folding ([uriTag]) and the documented host
+ * precondition bound both alike. Without it every measured exchange rebuilt the builder, the tags and
+ * the `Meter.Id` three times only to hit Micrometer's deduplicating lookup (measured in
+ * `benchmarks/`: `BodyMeterRecordBenchmark`). The one way cache and registry could drift apart - a host
+ * removing a meter - is closed by a removal listener that drops the entry, so the next exchange
+ * registers anew instead of recording into a detached instance.
  */
 internal class ClientLoggingMetrics private constructor(
     private val meterRegistry: MeterRegistry,
@@ -126,6 +136,33 @@ internal class ClientLoggingMetrics private constructor(
     private val fallbackRegistry = SimpleMeterRegistry()
     private val reportedConflicts: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val reportedUpdateFailures: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /**
+     * The tag set of one dynamic body meter, already folded the way the tags are ([uriTag], the host and
+     * name fallbacks), so every raw input that yields the same meter id shares one entry.
+     */
+    private data class BodyMeterKey(
+        val meterName: String,
+        val uri: String,
+        val host: String,
+        val name: String,
+        val state: String? = null,
+    )
+
+    /** [REQUEST_BODY_SIZE_METER] and [RESPONSE_BODY_SIZE_METER], resolved once per tag set (class KDoc). */
+    private val bodySizeSummaries = ConcurrentHashMap<BodyMeterKey, DistributionSummary>()
+
+    /** [RESPONSE_BODY_READ_METER], resolved once per tag set and state (class KDoc). */
+    private val readStateCounters = ConcurrentHashMap<BodyMeterKey, Counter>()
+
+    init {
+        // A host that removes one of the cached meters (`MeterRegistry.remove`) gets it registered anew
+        // on the next exchange; without this the owner would keep recording into the detached instance.
+        meterRegistry.config().onMeterRemoved { removed ->
+            bodySizeSummaries.values.removeIf { it === removed }
+            readStateCounters.values.removeIf { it === removed }
+        }
+    }
 
     /** [FAIL_OPEN_METER], pre-registered per stage. */
     private val failOpenCounters =
@@ -238,9 +275,9 @@ internal class ClientLoggingMetrics private constructor(
 
     /**
      * Counts one exchange under how far the application consumed the RESPONSE body, tagged by the
-     * URI template, the peer host and the client's name - see [RESPONSE_BODY_READ_METER]. Created per
-     * `uri`/`host`/`name`/`state` on first use, like the body-size summaries (Micrometer deduplicates by
-     * id); recorded whenever a response capture exists in measuring mode and a response was received,
+     * URI template, the peer host and the client's name - see [RESPONSE_BODY_READ_METER]. Resolved per
+     * `uri`/`host`/`name`/`state` on first use and cached, like the body-size summaries (class KDoc);
+     * recorded whenever a response capture exists in measuring mode and a response was received,
      * INCLUDING answers the application released without reading - that is exactly the `unread` share
      * the counter exists to show.
      */
@@ -250,16 +287,23 @@ internal class ClientLoggingMetrics private constructor(
         name: String?,
         state: BodyReadState,
     ) = updateQuietly(RESPONSE_BODY_READ_METER) {
-        registerOrFallback(RESPONSE_BODY_READ_METER) { registry ->
-            Counter
-                .builder(RESPONSE_BODY_READ_METER)
-                .description("Exchanges by how far the application consumed the response body: unread, partial, or complete")
-                .tag("uri", uriTag(template))
-                .tag("host", host ?: UNKNOWN_HOST)
-                .tag("name", name ?: UNNAMED_ADAPTER)
-                .tag("state", state.tagValue)
-                .register(registry)
-        }.increment()
+        val key = BodyMeterKey(RESPONSE_BODY_READ_METER, uriTag(template), host ?: UNKNOWN_HOST, name ?: UNNAMED_ADAPTER, state.tagValue)
+        // The plain get first: on the hit path - every exchange but the first per tag set - the key is
+        // then the only allocation; computeIfAbsent's lambdas are built on a miss alone.
+        val counter =
+            readStateCounters[key] ?: readStateCounters.computeIfAbsent(key) {
+                registerOrFallback(RESPONSE_BODY_READ_METER) { registry ->
+                    Counter
+                        .builder(RESPONSE_BODY_READ_METER)
+                        .description("Exchanges by how far the application consumed the response body: unread, partial, or complete")
+                        .tag("uri", key.uri)
+                        .tag("host", key.host)
+                        .tag("name", key.name)
+                        .tag("state", state.tagValue)
+                        .register(registry)
+                }
+            }
+        counter.increment()
     }
 
     /**
@@ -328,9 +372,9 @@ internal class ClientLoggingMetrics private constructor(
      * is caller-controlled and therefore a documented precondition of the opt-in measuring properties -
      * and the client's name ([AdapterName], `UNNAMED` for a client the host did not name). A zero-byte
      * body records no sample - the distribution describes bodies that exist, and the sum stays exact
-     * either way. The summaries are created per tag set on first use; Micrometer's registry
-     * deduplicates by id. Guarded like the fixed counters ([updateQuietly]): a host summary that throws
-     * on record is counted per hit and warned once.
+     * either way. The summaries are resolved per tag set on first use and cached (class KDoc). Guarded
+     * like the fixed counters ([updateQuietly]): a host summary that throws on record is counted per hit
+     * and warned once.
      */
     private fun recordBodySize(
         meterName: String,
@@ -343,16 +387,22 @@ internal class ClientLoggingMetrics private constructor(
             return
         }
         updateQuietly(meterName) {
-            registerOrFallback(meterName) { registry ->
-                DistributionSummary
-                    .builder(meterName)
-                    .baseUnit("bytes")
-                    .description("Bytes of the body that actually flowed through the exchange")
-                    .tag("uri", uriTag(template))
-                    .tag("host", host ?: UNKNOWN_HOST)
-                    .tag("name", name ?: UNNAMED_ADAPTER)
-                    .register(registry)
-            }.record(bytes.toDouble())
+            val key = BodyMeterKey(meterName, uriTag(template), host ?: UNKNOWN_HOST, name ?: UNNAMED_ADAPTER)
+            // The plain get first, as in responseBodyRead: the key is the hit path's only allocation.
+            val summary =
+                bodySizeSummaries[key] ?: bodySizeSummaries.computeIfAbsent(key) {
+                    registerOrFallback(meterName) { registry ->
+                        DistributionSummary
+                            .builder(meterName)
+                            .baseUnit("bytes")
+                            .description("Bytes of the body that actually flowed through the exchange")
+                            .tag("uri", key.uri)
+                            .tag("host", key.host)
+                            .tag("name", key.name)
+                            .register(registry)
+                    }
+                }
+            summary.record(bytes.toDouble())
         }
     }
 

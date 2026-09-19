@@ -12,14 +12,15 @@
     <name>legatium-benchmarks</name>
     <!-- JMH benchmarks of the shared body buffer (legatium-common's BoundedByteBuffer) against
          the JDK's ByteArrayOutputStream and Spring's FastByteArrayOutputStream - the evidence
-         behind the BENCH_REPORT trail in docs/assessment. DELIBERATELY a standalone module, not
+         behind the BENCH_REPORT trail in docs/assessment - and of the metrics owner's body-meter
+         path (ClientLoggingMetrics). DELIBERATELY a standalone module, not
          a child of the legatium reactor: a measurement session must not change the product
          build, and `mvn verify` at the repository root must stay byte-identical with and without
          this directory. Build with `mvn -f benchmarks/pom.xml package` after `mvn -DskipTests
          install` at the root (legatium-common is not published; it is shaded into the twins,
          so the benchmarks take it from the local repository). Java sources for the same reason
          as the fuzz tests: the JMH annotation processor works without kapt. -->
-    <description>JMH benchmarks of legatium-common's BoundedByteBuffer against the JDK and Spring byte-array streams</description>
+    <description>JMH benchmarks of legatium-common's BoundedByteBuffer against the JDK and Spring byte-array streams, and of its metrics owner's body-meter path</description>
 
     <properties>
         <maven.compiler.release>21</maven.compiler.release>
