@@ -96,11 +96,14 @@ jobs:
           cp -r legatium-restclient-logging/target/dokka site/api/legatium-restclient-logging
           cp -r legatium-webclient-logging/target/dokka site/api/legatium-webclient-logging
 
-      # One JaCoCo report per module plus a combined badge; the small
-      # index page keeps /coverage/ (badge link target) from 404ing.
+      # One JaCoCo report per module - every module the badge script reads a
+      # CSV from, legatium-common included, so the README's number can be
+      # reconciled with the reports behind it - plus the combined badge; the
+      # small index page keeps /coverage/ (badge link target) from 404ing.
       - name: Add coverage reports and badge to site
         run: |
           mkdir -p site/coverage
+          cp -r legatium-common/target/site/jacoco site/coverage/legatium-common
           cp -r legatium-restclient-logging/target/site/jacoco site/coverage/legatium-restclient-logging
           cp -r legatium-webclient-logging/target/site/jacoco site/coverage/legatium-webclient-logging
           python3 .github/scripts/generate-coverage-badge.py site/coverage/badge.svg
@@ -108,9 +111,10 @@ jobs:
           <!DOCTYPE html>
           <html lang="en"><head><meta charset="utf-8"><title>Legatium coverage</title></head>
           <body><h1>Legatium coverage reports</h1><ul>
+          <li><a href="legatium-common/">legatium-common</a> (shared code, inlined into both twins)</li>
           <li><a href="legatium-restclient-logging/">legatium-restclient-logging</a></li>
           <li><a href="legatium-webclient-logging/">legatium-webclient-logging</a></li>
-          </ul><p>The badge aggregates instruction coverage across both modules.</p></body></html>
+          </ul><p>The badge aggregates instruction coverage across the modules listed above.</p></body></html>
           EOF
 
       - name: Upload Pages artifact

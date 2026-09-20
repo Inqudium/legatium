@@ -30,12 +30,17 @@ class AmbientContextRestorerTest {
     fun `should detect the context-propagation restorer on this classpath and fall back to none without it`() {
         // What is tested: AmbientContextRestorer.detect - the classpath opt-in.
         // Success criteria: with io.micrometer:context-propagation present (this test classpath) the
-        //   context-propagation implementation; against a class loader that cannot see it, NONE.
+        //   context-propagation implementation; against a context class loader that cannot see it,
+        //   NONE; and NONE as well when the context's loader sees it but the loader the module's
+        //   classes link through does not (the module in a parent loader of a shared-lib deployment).
         // Why it matters: the library is optional; a host without it must get the pre-ADR-0010
-        //   behaviour, never a NoClassDefFoundError from the emitter.
+        //   behaviour, never a NoClassDefFoundError - neither from the emitter nor, in the second
+        //   direction, from the restorer's construction inside the filter bean at context start.
         // Given/When/Then
+        val blind = object : ClassLoader(null) {}
         assertThat(AmbientContextRestorer.detect()).isInstanceOf(ContextPropagationRestorer::class.java)
-        assertThat(AmbientContextRestorer.detect(object : ClassLoader(null) {})).isSameAs(AmbientContextRestorer.NONE)
+        assertThat(AmbientContextRestorer.detect(blind)).isSameAs(AmbientContextRestorer.NONE)
+        assertThat(AmbientContextRestorer.detect(linkedThrough = blind)).isSameAs(AmbientContextRestorer.NONE)
     }
 
     @Test

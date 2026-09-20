@@ -921,7 +921,17 @@ and a `retry` that resubscribes synchronously from `onError` writes the next att
 attempt's.
 
 A cancel of the response `Mono` *after* the response was delivered (a host operator such as `next()`
-between this filter and the client) is ignored: from then on the body owns the exchange. The handover
+between this filter and the client) is ignored: from then on the body owns the exchange. The same
+reading applies to an **outer operator that fails synchronously on the delivered response** — a host
+filter ordered before the module's customizer ([§3.3](#33-filter-order-and-other-filters)) doing
+`next.exchange(req).flatMap { r -> if (r.statusCode().isError) Mono.error(MyException(r)) else Mono.just(r) }`,
+or a `.map { throw ... }`: Reactor cancels upstream from inside `onNext` on the delivering thread
+(`Operators.onOperatorError`), which the operator cannot tell from `next()`. Such a host filter drops
+the response without subscribing to or releasing its body, so the exchange stays open on the gauge
+exactly like the raw-`exchange()` case of [§4.4](#44-a-body-nobody-consumes) — no line for the failed
+calls, the gauge one higher each. The host must read the body (`createException()`) or release it
+(`releaseBody()`) before discarding a response; the connection leaks otherwise, with or without this
+module. The handover
 itself is a race the filter's response operator (`ObservedResponse`) decides atomically: the state moves
 `OPEN → DELIVERING` before the downstream's `onNext` and `DELIVERING → RESPONDED` after it returned. A
 cancel that arrives from **another thread** while the state is `DELIVERING` — a caller's timer or
@@ -975,8 +985,11 @@ the response to application code guarantees that (`retrieve()` subscribes; `toBo
 `exchangeToMono()` and `exchangeToFlux()` release what was not consumed). The one path that does not is
 the deprecated raw `exchange()`: a caller that obtains the `ClientResponse` and drops it without
 subscribing or releasing leaks the connection — and the exchange stays **open on the gauge**
-`adapter.logging.exchanges.open`. A monotonically growing baseline is the signal for exactly that host bug,
-visible before the connection pool runs dry.
+`adapter.logging.exchanges.open`. A host filter *outside* this one that fails on the delivered response
+without reading or releasing its body (a `flatMap` into `Mono.error`, a throwing `map` —
+[§4.2](#42-cancellation-and-the-missing-status)) has the same effect for exactly the calls it fails. A
+monotonically growing baseline is the signal for either host bug, visible before the connection pool
+runs dry; when no raw `exchange()` caller exists, look at the outer filters.
 
 ### 4.5 Late body chunks after cancellation
 

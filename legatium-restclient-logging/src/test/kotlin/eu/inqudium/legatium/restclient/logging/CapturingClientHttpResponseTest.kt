@@ -4,6 +4,9 @@ import eu.inqudium.legatium.common.BodyReadState
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.EnumSource
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.mock.http.client.MockClientHttpResponse
 import java.io.ByteArrayInputStream
@@ -16,8 +19,9 @@ import java.nio.charset.StandardCharsets
  * The tee stream's transparency towards the application: the engine stream's `mark`/`reset` contract is
  * forwarded as it is - present on a buffered response, absent on an engine stream - and a rewind moves
  * the capture with the stream - plus the guard on the tee stream's own close, and the read state the
- * tee records as the application opens and drains the body. The read guards and the response close
- * guard are proved through the interceptor.
+ * tee records as the application opens and drains the body - plus the guards on the metadata accessors
+ * and the tee stream's `available`, each driven to throw. The read guards, the status-code guard and the
+ * response close guard are proved through the interceptor.
  */
 class CapturingClientHttpResponseTest {
     private val failures = mutableListOf<Throwable>()
@@ -40,6 +44,16 @@ class CapturingClientHttpResponseTest {
 
             override fun reset(): Unit = throw IOException("mark/reset not supported")
         }
+
+    /** The guard sites of the wrapper no other test drives, each as the delegate operation the caller performs. */
+    internal enum class MetadataGuard(
+        val message: String,
+        val call: (CapturingClientHttpResponse) -> Any,
+    ) {
+        STATUS_TEXT("engine refused the status text", { it.statusText }),
+        HEADERS("engine refused the headers", { it.headers }),
+        AVAILABLE("engine refused available", { it.body.available() }),
+    }
 
     /** An engine stream that reads fine and refuses to close - a connection that broke while it was being released. */
     private fun refusingToClose(text: String): InputStream =
@@ -170,5 +184,38 @@ class CapturingClientHttpResponseTest {
         // Then
         assertThat(body.readAllBytes().toString(StandardCharsets.UTF_8)).isEqualTo("hello")
         assertThat(failures).isEmpty()
+    }
+
+    @ParameterizedTest
+    @EnumSource(MetadataGuard::class)
+    internal fun `should report a delegate whose status text, headers or available throws and rethrow it unchanged`(site: MetadataGuard) {
+        // What is tested: the guards at getStatusText, getHeaders and the tee stream's available - the
+        //   three of the wrapper's five documented guard sites no other test drives (getStatusCode is
+        //   pinned through the interceptor, the reads and closes above).
+        // Success criteria: the delegate's IOException reaches the caller unchanged and is the single
+        //   failure reported on the exchange.
+        // Why it matters: RestClient's status handlers and converters read the status text and the
+        //   headers before the body; an unguarded accessor would let the caller handle an exception
+        //   while the exchange logs success - the contradiction the guards exist to prevent, and a
+        //   regression every suite stayed green on.
+        // Given: a delegate refusing exactly these operations
+        val refusingBody =
+            object : ByteArrayInputStream("x".toByteArray(StandardCharsets.UTF_8)) {
+                override fun available(): Int = throw IOException("engine refused available")
+            }
+        val refusing =
+            object : MockClientHttpResponse(refusingBody, HttpStatus.OK) {
+                override fun getStatusText(): String = throw IOException("engine refused the status text")
+
+                override fun getHeaders(): HttpHeaders = throw IOException("engine refused the headers")
+            }
+        val response = CapturingClientHttpResponse(refusing, BoundedBodyCapture(16), { failures += it }, {})
+
+        // When
+        val thrown = catchThrowable { site.call(response) }
+
+        // Then
+        assertThat(thrown).isInstanceOf(IOException::class.java).hasMessage(site.message)
+        assertThat(failures).containsExactly(thrown)
     }
 }

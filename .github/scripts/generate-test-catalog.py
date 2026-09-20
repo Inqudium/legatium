@@ -182,7 +182,7 @@ def main() -> None:
 
     # Anchors the way python-markdown's toc extension assigns them: the
     # slug of the heading text, with _1, _2, ... appended for repeats in
-    # DOCUMENT order. Both modules contain equally named test classes
+    # DOCUMENT order. The twin modules contain equally named test classes
     # (the twin symmetry), so the summary table must link the exact
     # per-module anchor, not just the slug of the first occurrence.
     anchors = {}
@@ -205,8 +205,9 @@ def main() -> None:
     out.append(
         f"The run executed **{grand['tests']} tests**"
         f" ({grand['failures']} failures, {grand['errors']} errors,"
-        f" {grand['skipped']} skipped) in {grand['time']:.1f}s across both"
-        " modules, against a real HTTP peer (the JDK's own HTTP server) but"
+        f" {grand['skipped']} skipped) in {grand['time']:.1f}s across the"
+        f" {len(modules)} modules listed below, against a real HTTP peer (the"
+        " JDK's own HTTP server) but"
         " without Docker or any external service - see"
         " [CONTRIBUTING](https://github.com/Inqudium/legatium/blob/main/CONTRIBUTING.md)."
     )

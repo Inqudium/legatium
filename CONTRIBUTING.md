@@ -136,8 +136,10 @@ rm -rf ~/.m2/repository/eu/inqudium/legatium-common   # a consumer never has it
 mvn -f consumer-smoke/pom.xml verify
 ```
 
-Keep `legatium.version` in `consumer-smoke/pom.xml` equal to the reactor's
-`revision`.
+Keep `legatium.version` in `consumer-smoke/pom.xml` and in `benchmarks/pom.xml`
+equal to the reactor's `revision`. CI derives the version from the root POM for
+both standalone builds, so a stale pin is visible only in a local build against
+a clean `~/.m2` - the rule keeps the two builds the same.
 
 ### Fuzzing (Jazzer `@FuzzTest`)
 

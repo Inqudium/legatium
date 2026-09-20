@@ -78,6 +78,33 @@ class MdcScopeTest {
     }
 
     @Test
+    fun `should roll back the installed keys when an owned trace-key removal fails during the install`() {
+        // What is tested: the andThen rule of installMdcEntries - the removals a scope owns run INSIDE
+        //   the same try as the puts, so a refused remove rolls the puts back too.
+        // Success criteria: the remove exception propagates as-is; every key the scope touched is back
+        //   to its previous value - the three identity keys gone, the parsed trace id gone, the bridge
+        //   span id still there.
+        // Why it matters: the refactor that gave the rollback one owner moved the removals into it for
+        //   exactly this case; an adapter accepting puts but refusing the remove of spanId would
+        //   otherwise leave the identity and the trace id on the pooled thread while the exception
+        //   reaches the twin's fail-open guard - the half identity the rollback exists for.
+        // Given: a bridge span id on the thread, an adapter refusing its removal
+        MDC.put(TraceMdcKeys.SPAN_ID, "bridge-span")
+        installMdcAdapter(FailingAdapter(original, failRemove = setOf(TraceMdcKeys.SPAN_ID)))
+
+        // When: a scope owning the trace keys, with a parsed trace id and no span id
+        val thrown = catchThrowable { MdcScope("corr-1", "GET", "https://api.example.com/things", traceId = "4bf92f3577b34da6a3ce929d0e0e4736", ownsTraceKeys = true) }
+
+        // Then
+        assertThat(thrown).isInstanceOf(IllegalStateException::class.java).hasMessage("adapter remove failed for ${TraceMdcKeys.SPAN_ID}")
+        assertThat(MDC.get(MdcKeys.REQUEST_ID)).isNull()
+        assertThat(MDC.get(MdcKeys.REQUEST_METHOD)).isNull()
+        assertThat(MDC.get(MdcKeys.ROUTE)).isNull()
+        assertThat(MDC.get(TraceMdcKeys.TRACE_ID)).isNull()
+        assertThat(MDC.get(TraceMdcKeys.SPAN_ID)).isEqualTo("bridge-span")
+    }
+
+    @Test
     fun `should restore every remaining key when one restoration fails and attach later failures as suppressed`() {
         // What is tested: best-effort restoration on close - the adapter fails on TWO keys' removes.
         // Success criteria: close throws the first failure with the second attached as suppressed, and the

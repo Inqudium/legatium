@@ -34,8 +34,14 @@ import org.springframework.util.FastByteArrayOutputStream;
  *
  * <p>{@code content}: pure ASCII (the JDK's fast paths and the compact-string case) and text of
  * one ASCII and one two-byte character alternating ("aä" - Latin1 output, but no ASCII fast
- * path). {@code -prof gc} is the metric behind the buffer's footprint claims; time is the
- * secondary signal.
+ * path). The UMLAUT body is cut MID-CHARACTER on purpose: the 3-byte pattern {@code 61 C3 A4}
+ * ends in the lone lead byte {@code C3} only when {@code bodyKb * 1024} is not a multiple of 3
+ * (16 and 256 KiB are 1 mod 3), and that cut tail is the boundary the truncated renderings
+ * measure - {@link BoundedByteBuffer} leaves it out, the naive rendering emits U+FFFD. The
+ * complete UMLAUT rendering therefore decodes one malformed tail byte (one replacement
+ * character), negligible for timing; {@link #setup()} fails the trial when a changed size or
+ * pattern removes the boundary, so no row can silently measure a well-formed cut. {@code -prof
+ * gc} is the metric behind the buffer's footprint claims; time is the secondary signal.
  */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
@@ -68,6 +74,12 @@ public class BodyBufferRenderBenchmark {
     public void setup() throws IOException {
         int length = bodyKb * 1024;
         body = content == Content.ASCII ? Bodies.ascii(length) : Bodies.cycling("aä", length);
+        if (content == Content.UMLAUT && (body[body.length - 1] & 0xC0) != 0xC0) {
+            throw new IllegalStateException(
+                    "UMLAUT body of " + length + " bytes ends on a complete character - the truncated"
+                            + " renderings would measure no UTF-8 boundary; choose a bodyKb whose byte"
+                            + " count is not a multiple of 3");
+        }
         // Mirrors the truncation note BoundedByteBuffer.render appends, so the naive rendering
         // stays byte-comparable with the buffer's; the literal is private there and cannot be
         // imported, so a change to it must be carried here.

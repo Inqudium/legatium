@@ -69,7 +69,9 @@ import reactor.util.context.ContextView
  * whose body the application never subscribes to (and never releases) never completes - and stays open
  * on the `adapter.logging.exchanges.open` gauge, the module's liveness signal, rather than logging a
  * guess (every `retrieve`/`exchangeToMono`/`exchangeToFlux` path of `WebClient` subscribes or
- * releases; a raw `exchange()` caller owns that duty).
+ * releases; a raw `exchange()` caller owns that duty - and so does an OUTER host filter that fails
+ * synchronously on the delivered response without reading or releasing its body, see
+ * [ObservedResponse] and the module guide, §4.2/§4.4).
  *
  * ## Where it sits in the filter chain
  *

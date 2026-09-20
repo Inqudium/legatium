@@ -127,7 +127,10 @@ internal enum class ClientStack(
  * precondition bound both alike. A meter the registry did NOT keep - a denying `MeterFilter` (Boot's
  * `management.metrics.enable.*`, a tag cap) or a closed registry answers with a detached no-op instance
  * - is used for its exchange but never cached: nothing would ever release it, and the cache would grow
- * per tag set exactly where the operator bounded the registry. Without the cache every measured exchange
+ * per tag set exactly where the operator bounded the registry. The same for a meter the registry kept
+ * under OTHER tag values than the key's - a tag-folding filter answering every host beyond its cap with
+ * one shared meter - so the cache never holds more entries than the registry holds meters, whichever
+ * way a host bounds the tag. Without the cache every measured exchange
  * rebuilt the builder, the tags and the `Meter.Id` three times only to hit Micrometer's deduplicating
  * lookup (measured in `benchmarks/`: `BodyMeterRecordBenchmark`). The one way cache and registry could
  * drift apart - a host removing one of the dynamic meters - is closed by a removal listener that drops
@@ -171,7 +174,10 @@ internal class ClientLoggingMetrics private constructor(
         val host: String,
         val name: String,
         val state: String? = null,
-    )
+    ) {
+        /** Whether the registry kept [meter] under THIS key's tag values - a folding filter changed them otherwise. */
+        fun describes(meter: Meter): Boolean = meter.id.getTag("uri") == uriTemplate && meter.id.getTag("host") == host && meter.id.getTag("name") == name
+    }
 
     /** [REQUEST_BODY_SIZE_METER] and [RESPONSE_BODY_SIZE_METER], resolved once per tag set (class KDoc). */
     private val bodySizeSummaries = ConcurrentHashMap<BodyMeterKey, DistributionSummary>()
@@ -257,8 +263,13 @@ internal class ClientLoggingMetrics private constructor(
      * racing resolver's instance is the same registry-deduplicated meter, so either one serves. A meter
      * the host registry did not keep ([NoopMeter]: a denying filter or a closed registry) is returned
      * for this exchange but NOT cached - the removal listener could never release it, and one entry per
-     * denied tag set would grow the cache exactly where the operator bounded the registry. The window
-     * between [resolve] returning and the `putIfAbsent` is the accepted residue of the class KDoc.
+     * denied tag set would grow the cache exactly where the operator bounded the registry. Nor is a
+     * meter whose id no longer carries the key's `uri`, `host` and `name` values: a tag-FOLDING filter
+     * (`MeterFilter.replaceTagValues`, `ignoreTags`, a custom `map`; Micrometer's `maximumAllowableTags`
+     * is not one - it denies, never maps) answers every raw tag set beyond its allowance with ONE real
+     * meter, and caching that meter under each raw key would again hold more entries than the registry
+     * holds meters. Three tag reads on the miss path alone. The window between [resolve] returning and the `putIfAbsent` is the
+     * accepted residue of the class KDoc.
      */
     private fun <M : Meter> cacheBodyMeter(
         cache: ConcurrentHashMap<BodyMeterKey, M>,
@@ -266,7 +277,7 @@ internal class ClientLoggingMetrics private constructor(
         resolve: () -> M,
     ): M {
         val meter = resolve()
-        if (meter is NoopMeter) {
+        if (meter is NoopMeter || !key.describes(meter)) {
             return meter
         }
         return cache.putIfAbsent(key, meter) ?: meter

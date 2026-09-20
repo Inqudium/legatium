@@ -105,10 +105,13 @@ jobs:
       - name: Build and test the consumer against the installed jars
         run: mvn --batch-mode --no-transfer-progress -f consumer-smoke/pom.xml -Dlegatium.version="${{ steps.reactor.outputs.version }}" verify
 
+      # From the repository root, not from consumer-smoke/: the script globs
+      # `*/target/surefire-reports`, one module component before `target`, and
+      # matches consumer-smoke/target/... only from here (the reactor's own
+      # modules carry no reports - the install above ran with -DskipTests).
       - name: Publish test summary
         if: always()
-        working-directory: consumer-smoke
-        run: python3 ../.github/scripts/surefire-summary.py
+        run: python3 .github/scripts/surefire-summary.py
 
   # The standalone JMH module is deliberately no reactor child, so `mvn verify`
   # never compiles it - a renamed or moved production type would silently
@@ -131,8 +134,17 @@ jobs:
       - name: Install the module under test (tests already gated by the build job)
         run: mvn --batch-mode --no-transfer-progress -DskipTests install
 
+      # Like the consumer-smoke job: the benchmarks' POM pins legatium.version by
+      # hand for a local run; here it is derived from the reactor's root POM.
+      # Without this the restored Maven cache keeps an OLD legatium-common jar
+      # resolvable after a revision bump, and a forgotten pin would compile the
+      # benchmarks against the stale API - green here, red on a clean ~/.m2.
+      - name: Resolve the reactor's version
+        id: reactor
+        run: echo "version=$(mvn --batch-mode --no-transfer-progress -q org.apache.maven.plugins:maven-help-plugin:3.5.1:evaluate -Dexpression=project.version -DforceStdout)" >> "$GITHUB_OUTPUT"
+
       - name: Compile the standalone benchmarks against it
-        run: mvn --batch-mode --no-transfer-progress -f benchmarks/pom.xml -DskipTests package
+        run: mvn --batch-mode --no-transfer-progress -f benchmarks/pom.xml -Dlegatium.version="${{ steps.reactor.outputs.version }}" -DskipTests package
 
   dependency-scan:
     name: Dependency vulnerability scan

@@ -32,6 +32,14 @@ import reactor.util.context.Context
  * upstream before it hands the value on): the body owns the exchange from here, exactly as after a
  * normal `onComplete`. The thread identity is the same distinction [ObservedBody] draws for the body.
  * Pinned by the filter's unit tests with a `next()` and a barrier-driven concurrent cancel.
+ *
+ * The same-thread rule has a documented limit: an OUTER operator that fails synchronously on the
+ * delivered response - a host filter's `flatMap { Mono.error(...) }` or `map { throw ... }` ordered
+ * before the module's customizer - is cancelled by Reactor's `onOperatorError` from inside `onNext`
+ * on the delivering thread, which reads as "the downstream took it". The response is dropped without
+ * its body subscribed or released, so the exchange stays RESPONDED on the gauge, like a raw
+ * `exchange()` caller that drops the response (module guide, §4.4): the host must read or release a
+ * response it discards.
  */
 internal class ObservedResponse(
     source: Mono<ClientResponse>,
@@ -98,10 +106,16 @@ internal class ObservedResponse(
             }
         }
 
+        // Both terminal signals hand on first and complete the exchange in a finally: a downstream that
+        // throws from its terminal callback (a contract violation) still leaves the gauge closed.
+
         override fun onError(t: Throwable) {
             exchange.failure = t
-            actual.onError(t)
-            onTerminal(exchange)
+            try {
+                actual.onError(t)
+            } finally {
+                onTerminal(exchange)
+            }
         }
 
         override fun onComplete() {
@@ -110,10 +124,13 @@ internal class ObservedResponse(
                 // Mono.empty() - is a failure: WebClient raises exactly this for the caller.
                 exchange.failure = IllegalStateException(ClientRequestLoggingFilter.NO_RESPONSE_MESSAGE)
             }
-            actual.onComplete()
-            if (exchange.state.get() != ExchangeState.RESPONDED) {
-                // A delivered response hands the completion to the body's terminal signal.
-                onTerminal(exchange)
+            try {
+                actual.onComplete()
+            } finally {
+                if (exchange.state.get() != ExchangeState.RESPONDED) {
+                    // A delivered response hands the completion to the body's terminal signal.
+                    onTerminal(exchange)
+                }
             }
         }
     }
