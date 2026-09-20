@@ -122,8 +122,15 @@ class ClientRequestLoggingInterceptor
                 return execution.execute(request, body)
             }
             val exchange = wireOrNull(request, body) ?: return execution.execute(request, body)
-            val callScope = openCallScope(exchange)
+            // From here the gauge counts this exchange: everything that can still throw - the call scope,
+            // the arrival line, the wire call - runs INSIDE the try, so the catch (Throwable) below and the
+            // finally own the gauge and the scope whatever escapes.
+            var callScope: MdcScope? = null
             try {
+                // The call scope confines an Exception itself (`openCallScope`); an Error from the host's
+                // MDC adapter escapes it and takes the same way as one from the arrival line or the wire
+                // call: gauge closed, nothing to restore.
+                callScope = openCallScope(exchange)
                 // The optional arrival line, before the call but INSIDE the try: an Exception in it is
                 // confined in `ExchangeLogEmitter.logRequestStart` (level gate included) and can never
                 // reach the catch below as a call failure - only an Error can escape, and it then takes

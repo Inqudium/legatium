@@ -91,6 +91,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `adapter.response.body.size`, `adapter.response.body.read`) throw on update produced a warning per
   measured exchange; the updates now share the once-per-meter warning throttle of the fixed counters
   (`adapter.logging.fail_open` still counts every hit).
+- RestClient twin: an `Error` from the host's MDC adapter while the call-wide MDC scope opened (one
+  step after the open-exchanges gauge was incremented) escaped the interceptor before the `try` whose
+  `catch (Throwable)` owns the gauge - `adapter.logging.exchanges.open` stayed one too high forever.
+  The scope now opens inside that `try`; the `Exception` path (fail-open, counted `stage=wiring`) is
+  unchanged. Pinned by an MDC fault test with a `LinkageError` from `put`.
+- WebClient twin: both hand-written operators handed the terminal signal on and completed the
+  exchange afterwards without a `finally`, so a subscriber that throws from `onComplete`/`onError`
+  (a Reactive Streams contract violation; Reactor's own subscribers confine their hooks) left the
+  exchange open on the gauge with no line. The completion now runs in a `finally` around the
+  handover, the order unchanged. Pinned by three unit tests with a spec-violating subscriber.
+- WebClient twin: the classpath detection of ADR-0010 checked `io.micrometer:context-propagation`
+  against the context's class loader only, while the restorer's own references link through the
+  module's; a shared-lib deployment with the module in a parent loader and the library in the child
+  passed the check and failed the context start with a `NoClassDefFoundError` in the filter bean.
+  Presence is now required on both loaders, otherwise the restorer is `NONE` as without the library.
+- Both twins: the body-meter cache stored one entry per RAW tag set even when a tag-FOLDING
+  `MeterFilter` (`replaceTagValues`, `ignoreTags`, a custom `map`) had answered every host beyond
+  its allowance with one shared meter - more cache entries than registry meters, growing per
+  distinct peer for the registry's lifetime. A meter the registry kept under other `uri`/`host`/`name`
+  values than the key's is now used uncached, like a denied one.
 
 ## [1.1.0] - 2026-09-17
 

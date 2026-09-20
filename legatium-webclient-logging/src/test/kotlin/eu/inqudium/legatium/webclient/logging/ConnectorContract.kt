@@ -49,7 +49,11 @@ abstract class ConnectorContract : IntegrationFixture() {
         responseTimeout: Duration,
     ): ClientHttpConnector
 
-    /** Registers an engine resource to be released after the test. */
+    /**
+     * Registers an engine resource to be released after the test. The release must be BOUNDED in time by
+     * the resource itself (a JDK `HttpClient`: `shutdownNow()` plus `awaitTermination(Duration)`, not
+     * `close()`): the teardown's `runCatching` bounds exceptions, not time.
+     */
     protected fun <T : AutoCloseable> closing(resource: T): T = resource.also { closeables += it }
 
     @AfterEach

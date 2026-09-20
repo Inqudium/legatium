@@ -41,8 +41,24 @@ internal fun interface AmbientContextRestorer {
          * The restorer for this classpath: the context-propagation one when the optional library is
          * present, [NONE] otherwise. Presence is the opt-in - no `adapter-logging.*` key exists for it,
          * which keeps the configuration identical to the RestClient twin's.
+         *
+         * Present on BOTH loaders: the one the caller decides against ([classLoader] - the context's,
+         * through which the host's optional dependencies are visible and which a test can narrow) and
+         * the one [ContextPropagationRestorer]'s Micrometer references actually LINK through
+         * ([linkedThrough], the defining loader of this module's classes). A shared-lib deployment that
+         * puts the module in a parent loader and the library in the child alone would pass the first
+         * check and fail the construction with a `NoClassDefFoundError` at context start - against the
+         * fail-open promise; it gets [NONE]. The second parameter is a test seam.
          */
-        fun detect(classLoader: ClassLoader? = AmbientContextRestorer::class.java.classLoader): AmbientContextRestorer = if (ClassUtils.isPresent(SNAPSHOT_FACTORY, classLoader)) ContextPropagationRestorer() else NONE
+        fun detect(
+            classLoader: ClassLoader? = AmbientContextRestorer::class.java.classLoader,
+            linkedThrough: ClassLoader? = AmbientContextRestorer::class.java.classLoader,
+        ): AmbientContextRestorer =
+            if (ClassUtils.isPresent(SNAPSHOT_FACTORY, classLoader) && ClassUtils.isPresent(SNAPSHOT_FACTORY, linkedThrough)) {
+                ContextPropagationRestorer()
+            } else {
+                NONE
+            }
     }
 }
 

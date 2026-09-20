@@ -53,6 +53,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * occupancy, whose close comes after the converter's read. A `retry` that resubscribes synchronously
  * from `onError` runs the next attempt's wiring (and, with a connector that answers synchronously,
  * the whole attempt) before this attempt's line is written - the lines then appear in reverse order.
+ * The completion runs in a `finally` around the handover: a downstream whose terminal callback THROWS
+ * (a contract violation - Reactor's own subscribers confine their hooks) still gets the exchange
+ * completed and the gauge closed, as the former `doFinally` shape guaranteed. Pinned by the filter's
+ * unit test with a subscriber that throws from `onComplete`.
  *
  * ## Only the first subscription is observed
  *
@@ -144,8 +148,11 @@ internal class ObservedBody(
         override fun onError(t: Throwable) {
             if (ended.compareAndSet(false, true)) {
                 exchange.failure = t
-                actual.onError(t)
-                onTerminal(exchange)
+                try {
+                    actual.onError(t)
+                } finally {
+                    onTerminal(exchange)
+                }
             } else {
                 Operators.onErrorDropped(t, currentContext())
             }
@@ -154,8 +161,11 @@ internal class ObservedBody(
         override fun onComplete() {
             if (ended.compareAndSet(false, true)) {
                 capture?.markCompleted()
-                actual.onComplete()
-                onTerminal(exchange)
+                try {
+                    actual.onComplete()
+                } finally {
+                    onTerminal(exchange)
+                }
             }
         }
     }

@@ -664,6 +664,71 @@ class ClientLoggingMetricsTest {
     }
 
     @Test
+    fun `should not cache a body meter a tag-folding filter kept under other tag values`() {
+        // What is tested: the cache under a FOLDING MeterFilter - replaceTagValues (the same for
+        //   ignoreTags or a custom map), which answers every host but the allowed ones with ONE real
+        //   meter under a placeholder value (not a no-op the denial guard would catch). Note that
+        //   Micrometer's maximumAllowableTags cannot fold: it implements accept and configure only,
+        //   so its fallback filter's map is never applied - a cap there can only deny.
+        // Success criteria: samples under three hosts with one allowed value register two summaries
+        //   (the allowed host's and the folded one), all three samples are recorded, and the owner's
+        //   cache holds exactly the allowed host's entry - not one per raw host.
+        // Why it matters: the cache's invariant is one entry per meter the registry holds; cached
+        //   under each raw host, the shared folded meter would grow the cache per distinct peer for
+        //   the registry's lifetime - in the very configuration an operator reaches for when the
+        //   host tag's precondition is violated.
+        // Given: every host but a.example.com folded to OTHER
+        val registry = SimpleMeterRegistry()
+        registry.config().meterFilter(MeterFilter.replaceTagValues("host", { "OTHER" }, "a.example.com"))
+        val metrics = ClientLoggingMetrics.forRegistry(registry, ClientStack.RESTCLIENT)
+
+        // When
+        listOf("a", "b", "c").forEach { metrics.requestBodySize("https://api.example.com/things/{id}", "$it.example.com", "things", 5) }
+
+        // Then
+        val summaries = registry.find(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).summaries()
+        assertThat(summaries).hasSize(2)
+        assertThat(summaries.sumOf { it.count() }).isEqualTo(3L)
+        assertThat(summaries.map { it.id.getTag("host") }).containsExactlyInAnyOrder("a.example.com", "OTHER")
+        assertThat(cachedBodyMeters(metrics).values).singleElement().satisfies({ assertThat(it.id.getTag("host")).isEqualTo("a.example.com") })
+    }
+
+    @Test
+    fun `should count and name an outcome outside the stack's vocabulary instead of failing the lookup`() {
+        // What is tested: the vocabulary check in eventEmitted - an outcome the stack did not
+        //   pre-register (CANCELLED on the blocking stack).
+        // Success criteria: no throw; failopen{stage=wiring} = 1; exactly one WARN on the module
+        //   logger naming the outcome and the stack.
+        // Why it matters: a vocabulary edit that desynchronises ClientStack.outcomes from an emitter
+        //   would otherwise lose event counts silently (a null-safe increment) or fail with a bare
+        //   lookup message; counted and named, the drift is visible on the first event.
+        // Given
+        val registry = SimpleMeterRegistry()
+        val moduleLog = CapturedLogger(ClientLoggingMetrics::class.java.name)
+        try {
+            val metrics = ClientLoggingMetrics.forRegistry(registry, ClientStack.RESTCLIENT)
+
+            // When
+            val thrown = catchThrowable { metrics.eventEmitted(ClientOutcome.CANCELLED) }
+
+            // Then
+            assertThat(thrown).isNull()
+            assertThat(
+                registry
+                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
+                    .tags("stage", "wiring")
+                    .counter()
+                    .count(),
+            ).isEqualTo(1.0)
+            val warning = moduleLog.events.single()
+            assertThat(warning.level).isEqualTo(Level.WARN)
+            assertThat(warning.formattedMessage).contains("outcome cancelled is not in the restclient vocabulary")
+        } finally {
+            moduleLog.detach()
+        }
+    }
+
+    @Test
     fun `should keep body meters of different templates and hosts apart`() {
         // What is tested: the cache key's discrimination - the same meter name recorded under two
         //   templates and two hosts.

@@ -30,22 +30,34 @@ import java.nio.file.Path
 class CapturingDecoratorsTest {
     private fun connectorRequest() = MockClientHttpRequest(HttpMethod.POST, URI.create("https://api.example.com/things"))
 
+    /** A mock connector request that records the publisher SPECIALISATION handed to its buffered write path. */
+    private class RecordingConnectorRequest : MockClientHttpRequest(HttpMethod.POST, URI.create("https://api.example.com/things")) {
+        var written: Publisher<out DataBuffer>? = null
+
+        override fun writeWith(body: Publisher<out DataBuffer>): Mono<Void> {
+            written = body
+            return super.writeWith(body)
+        }
+    }
+
     @Test
     fun `should tee a single-buffer Mono body and hand the connector the identical content`() {
         // What is tested: CapturingClientHttpRequestDecorator.writeWith with a Mono body - the
         //   specialisation the connectors take for single-buffer requests.
         // Success criteria: the connector's request holds "hello", the capture counted 5 bytes and
-        //   logs "hello".
-        // Why it matters: a Mono body must stay a Mono (the connector's optimised path) and still be
-        //   observed; a tee that demoted it to a Flux would change the connector's write path.
+        //   logs "hello" - and the publisher the connector received is still a Mono.
+        // Why it matters: a Mono body must stay a Mono (the connector's optimised single-buffer path)
+        //   and still be observed; a tee that demoted it to a Flux would change the connector's write
+        //   path while every byte still arrived - only the recorded publisher type shows it.
         // Given
         val capture = BoundedBodyCapture(64)
-        val connector = connectorRequest()
+        val connector = RecordingConnectorRequest()
 
         // When
         CapturingClientHttpRequestDecorator(connector, capture).writeWith(Mono.just(buffer("hello"))).block()
 
         // Then
+        assertThat(connector.written).isInstanceOf(Mono::class.java)
         assertThat(connector.bodyAsString.block()).isEqualTo("hello")
         assertThat(capture.totalBytes).isEqualTo(5L)
         assertThat(capture.loggedValue(StandardCharsets.UTF_8)).isEqualTo("hello")
@@ -86,17 +98,19 @@ class CapturingDecoratorsTest {
         // What is tested: CapturingClientHttpRequestDecorator.writeWith with a Flux body - several
         //   buffers, each teed on its way through.
         // Success criteria: the connector receives "hello world", the capture counted all 11 bytes
-        //   and logs the concatenation.
+        //   and logs the concatenation; the publisher the connector received is a Flux, not a Mono.
         // Why it matters: a chunked request body (a streamed upload, a large JSON) arrives in pieces;
-        //   the capture must see every piece in order.
+        //   the capture must see every piece in order - and the Mono specialisation of the previous
+        //   test must be a specialisation, not a wrap of every body into Mono.
         // Given
         val capture = BoundedBodyCapture(64)
-        val connector = connectorRequest()
+        val connector = RecordingConnectorRequest()
 
         // When
         CapturingClientHttpRequestDecorator(connector, capture).writeWith(Flux.just(buffer("hello "), buffer("world"))).block()
 
         // Then
+        assertThat(connector.written).isInstanceOf(Flux::class.java).isNotInstanceOf(Mono::class.java)
         assertThat(connector.bodyAsString.block()).isEqualTo("hello world")
         assertThat(capture.totalBytes).isEqualTo(11L)
         assertThat(capture.loggedValue(StandardCharsets.UTF_8)).isEqualTo("hello world")

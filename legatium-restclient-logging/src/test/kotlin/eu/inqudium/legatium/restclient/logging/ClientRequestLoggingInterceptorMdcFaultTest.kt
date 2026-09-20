@@ -41,8 +41,9 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
     private val adapter = ArmedFailingAdapter(original)
 
     /**
-     * Delegates to [delegate]; while [armed], `put` of a key in [failPut] and `remove` of one in
-     * [failRemove] throw, and `getCopyOfContextMap` throws when [failCopy] is set.
+     * Delegates to [delegate]; while [armed], `put` of a key in [failPut] throws what [putFailure]
+     * builds (an `IllegalStateException` unless a test wants an `Error`), `remove` of one in
+     * [failRemove] throws, and `getCopyOfContextMap` throws when [failCopy] is set.
      */
     private class ArmedFailingAdapter(
         private val delegate: MDCAdapter,
@@ -50,6 +51,7 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
         @Volatile
         var armed = false
         var failPut: Set<String> = emptySet()
+        var putFailure: (String) -> Throwable = { key -> IllegalStateException("adapter put refused $key") }
         var failRemove: Set<String> = emptySet()
         var failCopy = false
 
@@ -57,7 +59,7 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
             key: String,
             value: String?,
         ) {
-            if (armed && key in failPut) error("adapter put refused $key")
+            if (armed && key in failPut) throw putFailure(key)
             delegate.put(key, value)
         }
 
@@ -129,6 +131,34 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
             assertThat(message).contains("MDC scope could not be opened")
         }
         assertThat(MDC.getCopyOfContextMap().orEmpty()).isEmpty()
+    }
+
+    @Test
+    fun `should close the gauge and leave the thread clean when the adapter dies with an Error while the call scope opens`() {
+        // What is tested: the Throwable boundary of intercept around openCallScope - an Error (a
+        //   LinkageError from a dying MDC adapter) that openCallScope's Exception guard lets through.
+        // Success criteria: the Error reaches the caller unchanged, the wire call never ran, the
+        //   open-exchanges gauge is back at zero, no adapter_* key is left on the thread, and no event
+        //   was emitted (the Error is outside the fail-open promise; the gauge is not).
+        // Why it matters: with the scope opened BEFORE the try, such an Error escaped past the
+        //   catch (Throwable) that owns the gauge - the liveness signal drifted by one forever, at the
+        //   one step between the gauge's increment and the try.
+        // Given: the adapter dies on the FIRST key of the scope, so nothing partial is installed
+        adapter.failPut = setOf(MdcKeys.REQUEST_ID)
+        adapter.putFailure = { key -> LinkageError("adapter died on $key") }
+        adapter.armed = true
+        val wire = ObservingExecution { adapter.armed = false }
+
+        // When
+        val thrown = catchThrowable { interceptor.intercept(request(), ByteArray(0), wire) }
+        adapter.armed = false
+
+        // Then
+        assertThat(thrown).isInstanceOf(LinkageError::class.java).hasMessage("adapter died on ${MdcKeys.REQUEST_ID}")
+        assertThat(wire.called).isFalse()
+        assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+        assertThat(MDC.getCopyOfContextMap().orEmpty()).isEmpty()
+        assertThat(log.events).isEmpty()
     }
 
     @Test

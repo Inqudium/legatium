@@ -6,6 +6,7 @@ import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.NanoTimeSource
+import eu.inqudium.legatium.common.TraceMdcKeys
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
@@ -25,6 +26,7 @@ import org.springframework.web.util.pattern.PatternParseException
 import reactor.core.CoreSubscriber
 import reactor.core.publisher.BaseSubscriber
 import reactor.core.publisher.Flux
+import reactor.core.publisher.Hooks
 import reactor.core.publisher.Mono
 import reactor.core.scheduler.Schedulers
 import reactor.test.StepVerifier
@@ -33,6 +35,7 @@ import java.time.Duration
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -476,11 +479,19 @@ class ClientRequestLoggingFilterTest {
         fun `should log outcome cancelled with a dash status when the caller cancels before the response`() {
             // What is tested: the reactive disposition the blocking twin cannot have - a cancelled
             //   subscription before any response (a downstream timeout operator, a disposed caller).
-            // Success criteria: one WARN event, outcome cancelled, `-> -`, no status field.
-            // Why it matters: a torn-down call must neither log as a success nor invent a status.
-            // Given/When: the subscriber cancels while the connector never answers
+            // Success criteria: one WARN event, outcome cancelled, `-> -`, no status field - and the
+            //   cancel reached the connector's Mono.
+            // Why it matters: a torn-down call must neither log as a success nor invent a status; and
+            //   the one thing the cancel path owes the connector is the cancel itself - forwarded, the
+            //   engine stops reading and releases the connection, dropped, every caller timeout would
+            //   leak a connection with the line still written.
+            // Given: a connector that never answers and records whether it was cancelled
+            val connectorCancelled = AtomicBoolean(false)
+            val silent = ExchangeFunction { Mono.never<ClientResponse>().doOnCancel { connectorCancelled.set(true) } }
+
+            // When: the subscriber cancels
             StepVerifier
-                .create(filter.filter(request(), ExchangeFunction { Mono.never() }))
+                .create(filter.filter(request(), silent))
                 .thenCancel()
                 .verify()
 
@@ -489,6 +500,7 @@ class ClientRequestLoggingFilterTest {
             assertThat(event.level).isEqualTo(Level.WARN)
             assertThat(event.formattedMessage).contains("-> - [")
             assertThat(keyValues(event)).containsEntry("adapter_outcome", "cancelled").doesNotContainKey("adapter_response_status_code")
+            assertThat(connectorCancelled).describedAs("the cancel was forwarded to the connector").isTrue()
         }
 
         @Test
@@ -543,11 +555,19 @@ class ClientRequestLoggingFilterTest {
         fun `should log outcome cancelled with the received status when the body is cancelled out of band`() {
             // What is tested: a cancel from OUTSIDE a delivery - a timeout operator's timer, a disposed
             //   caller, a client that disconnected - is the caller walking away.
-            // Success criteria: one WARN event, outcome cancelled, with the received 200.
+            // Success criteria: one WARN event, outcome cancelled, with the received 200 - and the cancel
+            //   reached the body's source.
             // Why it matters: this is the disposition the reactive stack adds; it must survive the
-            //   consumption-limited distinction above.
-            // Given: a response whose body never ends, one buffer delivered, then the caller cancels later
-            val endless = ClientResponse.create(HttpStatus.OK).body(Flux.concat(Mono.just(buffer("partial")), Flux.never())).build()
+            //   consumption-limited distinction above - and the body operator must forward the cancel
+            //   upstream, or the engine keeps reading the abandoned body and holds the connection.
+            // Given: a response whose body never ends and records a cancel, one buffer delivered, then
+            //   the caller cancels later
+            val bodyCancelled = AtomicBoolean(false)
+            val endless =
+                ClientResponse
+                    .create(HttpStatus.OK)
+                    .body(Flux.concat(Mono.just(buffer("partial")), Flux.never()).doOnCancel { bodyCancelled.set(true) })
+                    .build()
             val response = requireNotNull(filter.filter(request(), ExchangeFunction { Mono.just(endless) }).block())
             val subscriber =
                 object : BaseSubscriber<DataBuffer>() {
@@ -562,6 +582,7 @@ class ClientRequestLoggingFilterTest {
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.WARN)
             assertThat(keyValues(event)).containsEntry("adapter_outcome", "cancelled").containsEntry("adapter_response_status_code", 200)
+            assertThat(bodyCancelled).describedAs("the cancel was forwarded to the body's source").isTrue()
         }
 
         @Test
@@ -846,8 +867,11 @@ class ClientRequestLoggingFilterTest {
             //   sees the same one - unlike a thread-local snapshot, which the retry scheduler would not
             //   carry.
             // Success criteria: a first attempt that fails at the connector and a second that succeeds
-            //   both log with the context's key.
-            // Why it matters: two lines of one logical call must join the same server line.
+            //   both log with the context's key - the two outcomes checked as an unordered pair, since
+            //   the failing attempt's line is written AFTER the synchronous retry ran the second attempt,
+            //   whose body completes on another thread (ObservedBody, "Order of the terminal signal").
+            // Why it matters: two lines of one logical call must join the same server line; the
+            //   property is order-independent, and an index assertion raced the two threads.
             // Given: a connector failing once, then answering elsewhere
             var attempts = 0
             val flaky =
@@ -866,9 +890,40 @@ class ClientRequestLoggingFilterTest {
             // Then
             val events = awaiting.awaitEvents(2)
             assertThat(events).hasSize(2)
-            assertThat(keyValues(events[0])).containsEntry("adapter_outcome", "failure")
-            assertThat(keyValues(events[1])).containsEntry("adapter_outcome", "success")
+            assertThat(events.map { keyValues(it)["adapter_outcome"] }).containsExactlyInAnyOrder("failure", "success")
             assertThat(events).allSatisfy { event -> assertThat(event.mdcPropertyMap).containsEntry(key, "inbound-7") }
+        }
+
+        @Test
+        fun `should keep the header's trace id on the event when an accessor restores a foreign one from the context`() {
+            // What is tested: the layering ORDER of ADR-0010 in withEmissionScopes - the caller's context
+            //   restored OUTSIDE, the module's own MdcScope, which owns the trace keys, INSIDE.
+            // Success criteria: with a host accessor for traceId and a context carrying a foreign id, a
+            //   traced call's event shows the header's trace id and a traceless call's event shows none.
+            // Why it matters: nested the other way round, the bridge id an accessor restores would
+            //   overwrite the header's on every line logged off the caller's thread - and nothing
+            //   noticed, since every accessor registered so far was for endpoint_request_id alone.
+            // Given: an accessor for the trace key, and a foreign id under it in the context
+            MdcAccessorGuard(TraceMdcKeys.TRACE_ID).use {
+                // When: a traced and a traceless call, both completing on another thread
+                filter
+                    .filter(request { header("traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01") }, answeringElsewhere())
+                    .flatMap { it.bodyToMono(String::class.java) }
+                    .contextWrite { it.put(TraceMdcKeys.TRACE_ID, "foreign-bridge-id") }
+                    .block(AWAIT)
+                filter
+                    .filter(request(), answeringElsewhere())
+                    .flatMap { it.bodyToMono(String::class.java) }
+                    .contextWrite { it.put(TraceMdcKeys.TRACE_ID, "foreign-bridge-id") }
+                    .block(AWAIT)
+
+                // Then
+                val events = awaiting.awaitEvents(2)
+                val traced = events.single { it.mdcPropertyMap[MdcKeys.REQUEST_ID] == "0af7651916cd43dd8448eb211c80319c" }
+                val traceless = events.single { it.mdcPropertyMap[MdcKeys.REQUEST_ID] == "generated-42" }
+                assertThat(traced.mdcPropertyMap).containsEntry(TraceMdcKeys.TRACE_ID, "0af7651916cd43dd8448eb211c80319c")
+                assertThat(traceless.mdcPropertyMap).doesNotContainKey(TraceMdcKeys.TRACE_ID)
+            }
         }
 
         @Test
@@ -1137,6 +1192,72 @@ class ClientRequestLoggingFilterTest {
         }
 
         @Test
+        fun `should complete the exchange when the body's downstream throws from its onComplete`() {
+            // What is tested: the finally around the body operator's terminal handover - a subscriber
+            //   that violates the Reactive Streams contract by throwing from onComplete (Reactor's own
+            //   subscribers confine their hooks; a hand-written one may not).
+            // Success criteria: the subscriber's exception surfaces (Flux.subscribe reports a throw from
+            //   a subscriber through Reactor's dropped-error hook instead of propagating it), and the
+            //   exchange is still completed - one success event, the gauge back at zero.
+            // Why it matters: with the bookkeeping after the handover and no finally, such a subscriber
+            //   left the exchange open forever - gauge +1, no line - a guarantee the former doFinally
+            //   shape had.
+            // Given: a delivered response
+            val response = requireNotNull(filter.filter(request(), answering(body = "ok")).block())
+
+            // When: a subscriber whose onComplete throws consumes the body
+            val thrown = thrownOrDropped { response.bodyToFlux(DataBuffer::class.java).subscribe(TerminalThrowingSubscriber<DataBuffer>()) }
+
+            // Then
+            assertThat(thrown).isInstanceOf(IllegalStateException::class.java).hasMessage("subscriber broke on the terminal signal")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_outcome", "success").containsEntry("adapter_response_status_code", 200)
+            assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+        }
+
+        @Test
+        fun `should complete the exchange when the response Mono's downstream throws from its onError`() {
+            // What is tested: the finally around the response operator's error handover - the connector
+            //   fails and the subscriber throws from onError.
+            // Success criteria: the subscriber's exception surfaces (propagated out of subscribe() for
+            //   the Mono's scalar source); one ERROR event, outcome failure with no status, the gauge
+            //   back at zero.
+            // Why it matters: same shape as the body's: the exchange's completion must not depend on
+            //   the downstream returning normally from the signal it was handed.
+            // Given/When: a refused connection, consumed by a subscriber whose onError throws
+            val thrown =
+                thrownOrDropped {
+                    filter.filter(request(), ExchangeFunction { Mono.error(IOException("connection refused")) }).subscribe(TerminalThrowingSubscriber<ClientResponse>())
+                }
+
+            // Then
+            assertThat(thrown).isInstanceOf(IllegalStateException::class.java).hasMessage("subscriber broke on the terminal signal")
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.ERROR)
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").doesNotContainKey("adapter_response_status_code")
+            assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+        }
+
+        @Test
+        fun `should complete the exchange when the response Mono's downstream throws from its onComplete`() {
+            // What is tested: the finally around the response operator's completion handover - the
+            //   empty completion (a connector that completes without a response) with a subscriber
+            //   that throws from onComplete.
+            // Success criteria: the subscriber's exception surfaces (propagated out of subscribe()); one
+            //   ERROR event with the no-response cause, the gauge back at zero.
+            // Why it matters: the third terminal handover of the two operators; each has its own
+            //   finally and each is pinned, so none can be dropped alone.
+            // Given/When: an empty completion, consumed by a subscriber whose onComplete throws
+            val thrown = thrownOrDropped { filter.filter(request(), ExchangeFunction { Mono.empty() }).subscribe(TerminalThrowingSubscriber<ClientResponse>()) }
+
+            // Then
+            assertThat(thrown).isInstanceOf(IllegalStateException::class.java).hasMessage("subscriber broke on the terminal signal")
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.ERROR)
+            assertThat(event.throwableProxy?.message).isEqualTo(ClientRequestLoggingFilter.NO_RESPONSE_MESSAGE)
+            assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+        }
+
+        @Test
         fun `should replace a correlation header outside the acceptance rule with a generated id`() {
             // What is tested: the CorrelationHeader rule at the filter - a forged value counts as absent.
             // Success criteria: the connector receives the generated id INSTEAD of the foreign value; the
@@ -1158,4 +1279,37 @@ class ClientRequestLoggingFilterTest {
             assertThat(event.formattedMessage).doesNotContain("forged")
         }
     }
+}
+
+/**
+ * Runs [block] and returns what a spec-violating subscriber threw from its terminal signal, wherever
+ * Reactor surfaced it: propagated out of `subscribe()` (a Mono's scalar sources hand the signal on
+ * bare) or reported through `Operators.onErrorDropped` (`Flux.subscribe` wraps the call and reports a
+ * throw there instead of propagating it). Null when nothing surfaced.
+ */
+private fun thrownOrDropped(block: () -> Unit): Throwable? {
+    val dropped = AtomicReference<Throwable>()
+    Hooks.onErrorDropped { dropped.set(it) }
+    try {
+        block()
+    } catch (e: Exception) {
+        return e
+    } finally {
+        Hooks.resetOnErrorDropped()
+    }
+    return dropped.get()
+}
+
+/**
+ * A subscriber that violates Reactive Streams §2.13: it requests everything and THROWS from both terminal
+ * signals - the trigger for the operators' finally around the terminal handover.
+ */
+private class TerminalThrowingSubscriber<T : Any> : CoreSubscriber<T> {
+    override fun onSubscribe(s: Subscription) = s.request(Long.MAX_VALUE)
+
+    override fun onNext(t: T) = Unit
+
+    override fun onError(t: Throwable): Unit = throw IllegalStateException("subscriber broke on the terminal signal")
+
+    override fun onComplete(): Unit = throw IllegalStateException("subscriber broke on the terminal signal")
 }
