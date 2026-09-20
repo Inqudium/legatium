@@ -1,0 +1,7 @@
+# Commits git blame skips: pure hygiene - formatting, comment wraps, prefixing -
+# with no change of meaning. Activate once with
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (CONTRIBUTING.md, "Development setup"). One SHA per line, newest last.
+
+# 2026-09-20: prefixed the first Invariant:/Assumption:/Workaround: statements (ADR-0013)
+f7189635a90e97c313d0c36c42764d005e5f5382

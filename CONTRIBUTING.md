@@ -46,6 +46,16 @@ A PR must pass `mvn verify` cleanly. Test coverage (JaCoCo) is collected in the
 same run and written per module to `target/site/jacoco/`; skip it locally with
 `-Djacoco.skip=true` if you need a faster loop.
 
+Commits that only reformat, rewrap or prefix comments without a change of meaning are
+listed in `.git-blame-ignore-revs`. Run once
+
+```
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
+so `git blame` skips them and answers "why is this here?" with the commit that introduced
+the substance, not the one that rewrapped it.
+
 ### Dependency vulnerability scan
 
 CI additionally scans the **resolved** dependency graph against the
@@ -88,6 +98,12 @@ the UI with a written reason.
   Run `mvn ktlint:format` to auto-format before committing.
 - Match the surrounding code's comment density and naming; comments should state
   constraints the code can't express, not narrate the code.
+- A comment that states an invariant, an assumption about a third party, a workaround, a
+  rejected alternative, a guard's purpose or a compatibility constraint opens that sentence
+  with the prefix ADR-0013 defines (`Invariant:`, `Assumption:`, `Workaround:`, `Rationale:`,
+  `Safety:`, `Compatibility:`; `ELK:` on the log fields), so `grep -rn "Assumption:" */src/main`
+  is the checklist of a dependency bump and `Invariant:` the module's invariant catalog. One
+  prefix per statement, on the sentence that makes it - most comments carry none.
 
 ### Tests
 
@@ -173,7 +189,9 @@ JAZZER_FUZZ=1 mvn -Dtest=TraceparentFuzzTest \
 ## Submitting changes
 
 1. Fork the repository and create a topic branch from `main`.
-2. Make your change with tests; keep commits focused and messages descriptive.
+2. Make your change with tests; keep commits focused and messages descriptive. A commit
+   that only reformats or rewraps goes on its own and into `.git-blame-ignore-revs`; never
+   mix it with a change of meaning.
 3. Ensure `mvn verify` passes.
 4. Open a pull request against `main` describing **what** changed and **why**.
    Link the issue it addresses, if any.
