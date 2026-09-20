@@ -5,3 +5,6 @@
 
 # 2026-09-20: prefixed the first Invariant:/Assumption:/Workaround: statements (ADR-0013)
 f7189635a90e97c313d0c36c42764d005e5f5382
+
+# 2026-09-20: rewrapped three test rationales after #54
+fa67bf9537f1ace879b5eefe3edd88294a2635d3
