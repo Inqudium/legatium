@@ -11,5 +11,12 @@
 - [ ] `mvn verify` passes locally (build, tests, ktlint)
 - [ ] Behavior changes are covered by tests
 - [ ] If a field or configuration property changed: applied to **both** modules,
-      `endpoint-logging-reference.yml` updated, contract tests pass in both twins
+      `docs/adapter-logging-reference.yml` updated, contract tests pass in both twins
 - [ ] Documentation (README / GUIDE) updated where relevant
+- [ ] Comments: for every rule this PR states or moves - **where does this rule
+      already stand?** (one canonical place, the rest one sentence plus link);
+      for every change under `legatium-*-logging/src/main` - **what does the
+      other twin say about the same place?**; for every guide or ADR reference -
+      **did I open the heading I cite?**
+- [ ] Dependency bump: `grep -rn "Assumption:\|Workaround:" */src/main` reviewed
+      against the new version (ADR-0013)
