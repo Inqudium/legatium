@@ -274,8 +274,8 @@
                             </link>
                         </sourceLinks>
                         <!--
-                            DO NOT DELETE, even though the IDE flags this
-                            element as illegal: pluginsConfiguration is not a
+                            Workaround: DO NOT DELETE, even though the IDE flags
+                            this element as illegal - pluginsConfiguration is not a
                             declared Mojo parameter — the Dokka Maven plugin
                             reads it out-of-band from the raw configuration
                             XML (verified against dokka-maven-plugin 2.2.0;

@@ -275,10 +275,10 @@ class ClientRequestLoggingInterceptor
         /**
          * The body length the response carries and the engine will deliver unchanged: ZERO for the
          * answer to a HEAD request - whose `Content-Length` is the representation's, not the body's
-         * (RFC 9110 §9.3.2), and which the clients never open - and for a 1xx, 204 or 304 answer -
-         * Spring's own `IntrospectingClientHttpResponse.hasMessageBody()` rule, by which `RestClient`
-         * and `RestTemplate` never open such a body, so the capture must not wait for an open that
-         * never comes; `Content-Length` otherwise, when present and no `Content-Encoding`
+         * (RFC 9110 §9.3.2), and which the clients never open - and for a 1xx, 204 or 304 answer
+         * (Assumption: Spring's own `IntrospectingClientHttpResponse.hasMessageBody()` rule, by which
+         * `RestClient` and `RestTemplate` never open such a body, so the capture must not wait for an
+         * open that never comes); `Content-Length` otherwise, when present and no `Content-Encoding`
          * other than `identity` is on the response; [BoundedBodyCapture.UNKNOWN_LENGTH] for the rest
          * (chunked, possibly decoded by the engine, or a value that is not a number). The header is
          * PEER-CONTROLLED input: it only ever feeds the completeness comparison - never an allocation or
@@ -384,8 +384,8 @@ class ClientRequestLoggingInterceptor
                     spanId = identity.spanId,
                     callerMdc = callerMdc,
                 )
-            // The origin count LAST, right before the gauge: a wiring that fails above leaves the
-            // correlation sum equal to the sum of exchanges that were actually opened. Guarded in
+            // Invariant: the origin count LAST, right before the gauge - a wiring that fails above leaves
+            // the correlation sum equal to the sum of exchanges that were actually opened. Guarded in
             // `ClientLoggingMetrics.requestId`: a throwing host counter never fails the call.
             metrics.requestId(identity.source)
             metrics.exchangeOpened()

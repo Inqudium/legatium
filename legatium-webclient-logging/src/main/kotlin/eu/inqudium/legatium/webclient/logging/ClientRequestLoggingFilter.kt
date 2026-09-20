@@ -351,8 +351,8 @@ class ClientRequestLoggingFilter
                     spanId = identity.spanId,
                     ambient = ambient,
                 )
-            // The origin count LAST, right before the gauge: a wiring that fails above leaves the
-            // correlation sum equal to the sum of exchanges that were actually opened. Guarded in
+            // Invariant: the origin count LAST, right before the gauge - a wiring that fails above leaves
+            // the correlation sum equal to the sum of exchanges that were actually opened. Guarded in
             // `ClientLoggingMetrics.requestId`: a throwing host counter never fails the call.
             metrics.requestId(identity.source)
             metrics.exchangeOpened()

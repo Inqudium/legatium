@@ -52,11 +52,12 @@ internal fun tee(
  * handed to the capture as its buffer's sizing hint ([BoundedBodyCapture.expectBytes]); a malformed
  * caller-set value is folded to unknown, not thrown.
  *
- * Assumption (Reactor Netty 1.3.7): the connector's own retry cannot run this tee twice - Reactor Netty
- * retries a request on a stale pooled connection only while no headers were sent, and the tee runs when
- * the body emits inside `writeWith`, which is never before the headers go out (a `bodyValue` body is
- * written together with them, a streamed one after them), so a retried attempt is the FIRST run of the
- * tee. The derivation and the probe are the module guide's section "Retries yield one line per attempt".
+ * Assumption: the connector's own retry cannot run this tee twice (probed on Reactor Netty 1.3.7) -
+ * Reactor Netty retries a request on a stale pooled connection only while no headers were sent, and the
+ * tee runs when the body emits inside `writeWith`, which is never before the headers go out (a
+ * `bodyValue` body is written together with them, a streamed one after them), so a retried attempt is
+ * the FIRST run of the tee. The derivation and the probe are the module guide's section "Retries yield
+ * one line per attempt".
  */
 internal open class CapturingClientHttpRequestDecorator(
     delegate: ClientHttpRequest,

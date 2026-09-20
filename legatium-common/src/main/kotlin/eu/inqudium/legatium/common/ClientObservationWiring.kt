@@ -36,8 +36,9 @@ internal object ClientObservationWiring {
      * [correlationIdHeader] is the CONFIGURED header name ([ClientLoggingProperties.correlationIdHeader]),
      * so the line names the header the host actually sees. [tracerClass] is [TRACER]; the tests inject a
      * class of their own classpath. Call it once every singleton exists (the twins do, from a
-     * `SmartInitializingSingleton`): Boot declares its observation customizers under their interface
-     * type, so only the INSTANCE reveals them.
+     * `SmartInitializingSingleton`). Assumption: Boot declares its observation customizers under their
+     * interface type, so only the INSTANCE reveals them - pinned by both auto-configuration tests against
+     * Boot's real observation auto-configuration.
      */
     fun describe(
         beanFactory: ListableBeanFactory,
