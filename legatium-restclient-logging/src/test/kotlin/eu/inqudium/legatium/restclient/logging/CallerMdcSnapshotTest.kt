@@ -15,10 +15,8 @@ import org.slf4j.MDC
  */
 class CallerMdcSnapshotTest {
     @BeforeEach
-    fun clearMdc() = MDC.clear()
-
     @AfterEach
-    fun tearDown() = MDC.clear()
+    fun clearMdc() = MDC.clear()
 
     @Test
     fun `should capture the caller's entries without the module's own and the trace keys`() {

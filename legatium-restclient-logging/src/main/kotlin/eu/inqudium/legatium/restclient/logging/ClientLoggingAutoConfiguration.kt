@@ -62,7 +62,7 @@ import org.springframework.core.env.Environment
 @EnableConfigurationProperties(ClientLoggingProperties::class)
 class ClientLoggingAutoConfiguration {
     init {
-        log.debug("Adapter logging is enabled - the auto-configuration is active (adapter-logging.enabled is not false)")
+        internalLog.debug("Adapter logging is enabled - the auto-configuration is active (adapter-logging.enabled is not false)")
     }
 
     /** The system's monotonic clock, unless the host pins a time source. */
@@ -99,17 +99,17 @@ class ClientLoggingAutoConfiguration {
         environment: Environment,
         boundProperties: ObjectProvider<BoundConfigurationProperties>,
     ): ClientRequestLoggingInterceptor {
-        log.debug("Adapter logging registered its ClientRequestLoggingInterceptor bean with {}", properties)
-        if (log.isTraceEnabled) {
+        internalLog.debug("Adapter logging registered its ClientRequestLoggingInterceptor bean with {}", properties)
+        if (internalLog.isTraceEnabled) {
             val bound = boundProperties.ifAvailable
             if (bound == null) {
-                log.trace(
+                internalLog.trace(
                     "Adapter logging cannot tell where its adapter-logging.* values came from (which file, environment " +
                         "variable or command-line argument set them); the values above are in effect nonetheless. " +
                         "Adapter logging property origins are unavailable - no BoundConfigurationProperties bean in this context",
                 )
             } else {
-                ClientLoggingPropertyOrigins.describe(bound.all, environment).forEach(log::trace)
+                ClientLoggingPropertyOrigins.describe(bound.all, environment).forEach(internalLog::trace)
             }
         }
         return ClientRequestLoggingInterceptor(properties, nanoTime, correlationIds, meterRegistry.getIfAvailable { CompositeMeterRegistry() }, masker)
@@ -122,10 +122,13 @@ class ClientLoggingAutoConfiguration {
      * context, and appears also when a host replaced the bean.
      */
     @Bean
-    fun clientLoggingRestClientObservationReport(beanFactory: ListableBeanFactory): SmartInitializingSingleton =
+    fun clientLoggingRestClientObservationReport(
+        beanFactory: ListableBeanFactory,
+        properties: ClientLoggingProperties,
+    ): SmartInitializingSingleton =
         SmartInitializingSingleton {
-            if (log.isDebugEnabled) {
-                log.debug(ClientObservationWiring.describe(beanFactory, OBSERVATION_CUSTOMIZERS))
+            if (internalLog.isDebugEnabled) {
+                internalLog.debug(ClientObservationWiring.describe(beanFactory, OBSERVATION_CUSTOMIZERS, properties.correlationIdHeader))
             }
         }
 
@@ -142,11 +145,11 @@ class ClientLoggingAutoConfiguration {
         @Bean
         @Order(CUSTOMIZER_ORDER)
         fun clientLoggingRestClientCustomizer(interceptor: ClientRequestLoggingInterceptor): RestClientCustomizer {
-            log.debug("Adapter logging registered its RestClientCustomizer - the interceptor is attached to every RestClient.Builder Boot hands out")
+            internalLog.debug("Adapter logging registered its RestClientCustomizer - the interceptor is attached to every RestClient.Builder Boot hands out")
             return RestClientCustomizer { builder ->
                 builder.requestInterceptors { interceptors ->
                     interceptors.add(interceptor)
-                    log.debug("Adapter logging attached its interceptor to a RestClient.Builder behind {} earlier interceptor(s)", interceptors.size - 1)
+                    internalLog.debug("Adapter logging attached its interceptor to a RestClient.Builder behind {} earlier interceptor(s)", interceptors.size - 1)
                 }
             }
         }
@@ -159,11 +162,11 @@ class ClientLoggingAutoConfiguration {
         @Bean
         @Order(CUSTOMIZER_ORDER)
         fun clientLoggingRestTemplateCustomizer(interceptor: ClientRequestLoggingInterceptor): RestTemplateCustomizer {
-            log.debug("Adapter logging registered its RestTemplateCustomizer - the interceptor is attached to every RestTemplate built through RestTemplateBuilder")
+            internalLog.debug("Adapter logging registered its RestTemplateCustomizer - the interceptor is attached to every RestTemplate built through RestTemplateBuilder")
             return RestTemplateCustomizer { restTemplate ->
                 val earlier = restTemplate.interceptors.size
                 restTemplate.interceptors = restTemplate.interceptors + interceptor
-                log.debug("Adapter logging attached its interceptor to a RestTemplate behind {} earlier interceptor(s)", earlier)
+                internalLog.debug("Adapter logging attached its interceptor to a RestTemplate behind {} earlier interceptor(s)", earlier)
             }
         }
     }
@@ -191,6 +194,6 @@ class ClientLoggingAutoConfiguration {
             )
 
         /** The wiring report of the class KDoc, at DEBUG; the exchange lines have their own logger. */
-        private val log = LoggerFactory.getLogger(ClientLoggingAutoConfiguration::class.java)
+        private val internalLog = LoggerFactory.getLogger(ClientLoggingAutoConfiguration::class.java)
     }
 }

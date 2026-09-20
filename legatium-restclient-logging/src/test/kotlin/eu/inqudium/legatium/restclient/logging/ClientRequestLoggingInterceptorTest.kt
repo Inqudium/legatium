@@ -235,18 +235,13 @@ class ClientRequestLoggingInterceptorTest {
             //   by MDC alone, and a pooled thread must not keep the identity.
             // Given: an ambient key on the calling thread
             MDC.put("endpoint_request_id", "inbound-7")
-            var seenDuringCall: Map<String, String>? = null
-            val execution =
-                ClientHttpRequestExecution { _, _ ->
-                    seenDuringCall = MDC.getCopyOfContextMap()
-                    MockClientHttpResponse(ByteArray(0), HttpStatus.OK)
-                }
+            val execution = ObservingExecution { MDC.getCopyOfContextMap().orEmpty() }
 
             // When
             interceptor.intercept(request(), ByteArray(0), execution).consumeAndClose()
 
             // Then
-            assertThat(seenDuringCall)
+            assertThat(execution.seen)
                 .containsEntry(MdcKeys.REQUEST_ID, "generated-42")
                 .containsEntry(MdcKeys.REQUEST_METHOD, "GET")
                 .containsEntry(MdcKeys.ROUTE, "https://api.example.com/things")
@@ -337,7 +332,7 @@ class ClientRequestLoggingInterceptorTest {
             // Given
             MDC.put(key, "inbound-7")
             val response = interceptor.intercept(request(), ByteArray(0), answering())
-            interceptor.emitter.callerMdcRestorer = CallerMdcRestorer { throw IllegalStateException("adapter refused") }
+            interceptor.emitter.callerMdcRestorer = CallerMdcRestorer { error("adapter refused") }
 
             // When
             try {
@@ -350,13 +345,7 @@ class ClientRequestLoggingInterceptorTest {
             val event = pinned.events.single()
             assertThat(keyValues(event)).containsEntry("adapter_outcome", "success")
             assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42").doesNotContainKey(key)
-            assertThat(
-                meterRegistry
-                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
-                    .tag("stage", "wiring")
-                    .counter()
-                    .count(),
-            ).isEqualTo(1.0)
+            assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
         }
 
         @Test
@@ -370,7 +359,7 @@ class ClientRequestLoggingInterceptorTest {
             // Given: a restorer whose scope refuses to close
             MDC.put(key, "inbound-7")
             val response = interceptor.intercept(request(), ByteArray(0), answering())
-            interceptor.emitter.callerMdcRestorer = CallerMdcRestorer { AutoCloseable { throw IllegalStateException("scope refused") } }
+            interceptor.emitter.callerMdcRestorer = CallerMdcRestorer { AutoCloseable { error("scope refused") } }
 
             // When
             try {
@@ -381,20 +370,8 @@ class ClientRequestLoggingInterceptorTest {
 
             // Then
             assertThat(keyValues(pinned.events.single())).containsEntry("adapter_outcome", "success")
-            assertThat(
-                meterRegistry
-                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
-                    .tag("stage", "wiring")
-                    .counter()
-                    .count(),
-            ).isEqualTo(1.0)
-            assertThat(
-                meterRegistry
-                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
-                    .tag("stage", "emission")
-                    .counter()
-                    .count(),
-            ).isZero()
+            assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
+            assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "emission")).isZero()
         }
     }
 
@@ -811,19 +788,14 @@ class ClientRequestLoggingInterceptorTest {
             //   and the arrival line must stay invisible to outcome-keyed dashboards.
             // Given: start-line logging and an execution that observes the log stream mid-flight
             val startLogging = interceptorWith(properties.copy(logRequestStart = true), ticker)
-            var eventsAtCallTime = listOf<String>()
-            val execution =
-                ClientHttpRequestExecution { _, _ ->
-                    eventsAtCallTime = log.events.map { it.formattedMessage }
-                    MockClientHttpResponse(ByteArray(0), HttpStatus.OK)
-                }
+            val execution = ObservingExecution { log.events.map { it.formattedMessage } }
 
             // When
             startLogging.intercept(request(method = HttpMethod.POST), ByteArray(0), execution).consumeAndClose()
 
             // Then: the arrival line was already visible during the call; only the completion line
             //   carries the outcome; the arrival line carries the identity in its MDC
-            assertThat(eventsAtCallTime)
+            assertThat(execution.seen)
                 .containsExactly("Adapter http exchange started POST https://api.example.com/things [adapter_request_id=generated-42]")
             assertThat(log.events).hasSize(2)
             assertThat(keyValues(log.events.first())).doesNotContainKey("adapter_outcome").containsEntry("adapter_url_host", "api.example.com")
@@ -926,13 +898,7 @@ class ClientRequestLoggingInterceptorTest {
                 assertThat(event.level).isEqualTo(Level.ERROR)
                 assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").doesNotContainKey("adapter_response_status_code")
                 assertThat(event.throwableProxy?.message).isEqualTo("status line garbled")
-                assertThat(
-                    meterRegistry
-                        .get(ClientLoggingMetrics.FAIL_OPEN_METER)
-                        .tag("stage", "wiring")
-                        .counter()
-                        .count(),
-                ).isEqualTo(1.0)
+                assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
                 val warning = internal.events.single()
                 assertThat(warning.level).isEqualTo(Level.WARN)
                 assertThat(warning.formattedMessage)
@@ -1010,12 +976,7 @@ class ClientRequestLoggingInterceptorTest {
             interceptor.intercept(request, ByteArray(0), answering()).consumeAndClose()
 
             // Then
-            fun origin(source: RequestIdSource) =
-                meterRegistry
-                    .get(ClientLoggingMetrics.CORRELATION_METER)
-                    .tag("source", source.tagValue)
-                    .counter()
-                    .count()
+            fun origin(source: RequestIdSource) = meterRegistry.count(ClientLoggingMetrics.CORRELATION_METER, "source", source.tagValue)
             assertThat(origin(RequestIdSource.GENERATED)).isEqualTo(2.0)
             assertThat(origin(RequestIdSource.HEADER)).isZero()
             assertThat(log.events.map { it.mdcPropertyMap[MdcKeys.REQUEST_ID] }).containsExactly("generated-42", "generated-42")
@@ -1040,13 +1001,7 @@ class ClientRequestLoggingInterceptorTest {
             val event = log.events.single()
             assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42")
             assertThat(event.formattedMessage).doesNotContain("forged")
-            assertThat(
-                meterRegistry
-                    .get(ClientLoggingMetrics.CORRELATION_METER)
-                    .tag("source", "generated")
-                    .counter()
-                    .count(),
-            ).isEqualTo(1.0)
+            assertThat(meterRegistry.count(ClientLoggingMetrics.CORRELATION_METER, "source", "generated")).isEqualTo(1.0)
         }
     }
 }

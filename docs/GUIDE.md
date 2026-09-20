@@ -628,10 +628,12 @@ How to read it:
     `Adapter logging found Boot's client observation wired for RestClient.Builder and RestTemplate but no Micrometer Tracing - calls are observed, not traced, so the module generates the request id and sends X-Correlation-Id on every call that carries no traceparent`;
   - and **no observation**, when Boot's observation auto-configuration is not active:
     `Adapter logging found no client observation - Boot's observation auto-configuration for RestClient.Builder and RestTemplate is not active (no ObservationRegistry bean, or the observation module is absent); the module generates the request id and sends X-Correlation-Id on every call that carries no traceparent`.
-    The line is logged once every singleton exists — after the customizer lines, before the attach
-    lines — and appears also when a host replaced the interceptor or filter bean. It describes the
-    wiring, not the fate of a call: a host can still switch the observation off per client, filter it
-    with an `ObservationPredicate` or build a client by hand; the exchange line stays the per-call truth.
+    The line names the **configured** correlation header (`adapter-logging.correlation-id-header`),
+    so a host that renamed it reads its own name here. It is logged once every singleton exists — after
+    the customizer lines, before the attach lines — and appears also when a host replaced the
+    interceptor or filter bean. It describes the wiring, not the fate of a call: a host can still
+    switch the observation off per client, filter it with an `ObservationPredicate` or build a client
+    by hand; the exchange line stays the per-call truth.
     An operator whose peer sees no `X-Correlation-Id`, or whose `adapter_request_id` looks like a trace
     id, reads the reason here.
 - **No report at all** means the auto-configuration did not run: `adapter-logging.enabled=false`, or

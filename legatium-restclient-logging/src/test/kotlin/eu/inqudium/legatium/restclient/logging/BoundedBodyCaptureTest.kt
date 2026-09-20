@@ -199,9 +199,13 @@ class BoundedBodyCaptureTest {
             capture.capture(bytes("abc"), 0, 3)
             capture.mark()
 
-            // When: 5 bytes flow, the stream is reset, the same 5 bytes flow again
+            // When: 5 bytes flow
             capture.capture(bytes("defgh"), 0, 5)
+
+            // Then: counted
             assertThat(capture.totalBytes).isEqualTo(8L)
+
+            // When: the stream is reset
             capture.reset()
 
             // Then: back at the mark

@@ -21,9 +21,11 @@ import org.springframework.core.io.buffer.DataBuffer
 import org.springframework.core.io.buffer.DefaultDataBufferFactory
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
+import org.springframework.mock.http.client.reactive.MockClientHttpRequest
 import org.springframework.web.reactive.function.client.ClientRequest
 import org.springframework.web.reactive.function.client.ClientResponse
 import org.springframework.web.reactive.function.client.ExchangeFunction
+import org.springframework.web.reactive.function.client.ExchangeStrategies
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import java.net.URI
@@ -37,6 +39,12 @@ import java.util.concurrent.atomic.AtomicLong
  * slow one.
  */
 internal val AWAIT: Duration = Duration.ofSeconds(5)
+
+/** The count of the counter [name] carries under [tags] - the one registry read every meter assertion makes. */
+internal fun MeterRegistry.count(
+    name: String,
+    vararg tags: String,
+): Double = get(name).tags(*tags).counter().count()
 
 /** The key-value pairs of an event as a map, for assertions on the `adapter_*` family. */
 internal fun keyValues(event: ILoggingEvent): Map<String, Any?> = event.keyValuePairs?.associate { it.key to it.value } ?: emptyMap()
@@ -132,6 +140,46 @@ internal fun ClientRequestLoggingFilter.call(
     request: ClientRequest,
     next: ExchangeFunction,
 ): String? = filter(request, next).flatMap { it.bodyToMono(String::class.java) }.block()
+
+/**
+ * An exchange function that WRITES the request body to a mock connector request - the one place every
+ * encoder passes, so the request-side tee runs for real - and then continues with [andThen]: the answer,
+ * or the failure of a connection that took the upload. The connector request is recorded.
+ */
+internal class WritingExchange(
+    private val andThen: (ClientRequest) -> Mono<ClientResponse> = { Mono.just(ClientResponse.create(HttpStatus.OK).build()) },
+) : ExchangeFunction {
+    /** The connector request the body was written to - the last one; null before the first call. */
+    var received: MockClientHttpRequest? = null
+        private set
+
+    override fun exchange(request: ClientRequest): Mono<ClientResponse> {
+        val connectorRequest = MockClientHttpRequest(request.method(), request.url())
+        received = connectorRequest
+        return request.writeTo(connectorRequest, ExchangeStrategies.withDefaults()).then(Mono.defer { andThen(request) })
+    }
+}
+
+/** A [WritingExchange] answering [response] once the body is written. */
+internal fun writingThenAnswering(response: ClientResponse = ClientResponse.create(HttpStatus.OK).build()): ExchangeFunction = WritingExchange { Mono.just(response) }
+
+/**
+ * An exchange function that observes the calling thread at the moment of the exchange - the log so
+ * far - through [observe], then answers through [delegate]. What was seen is read once the call returned.
+ */
+internal class ObservingExchange<T : Any>(
+    private val delegate: ExchangeFunction = answering(),
+    private val observe: () -> T,
+) : ExchangeFunction {
+    /** What [observe] returned on the exchange; null before it. */
+    var seen: T? = null
+        private set
+
+    override fun exchange(request: ClientRequest): Mono<ClientResponse> {
+        seen = observe()
+        return delegate.exchange(request)
+    }
+}
 
 /** A heap buffer holding [text] in UTF-8, as a connector would hand it to the tee. */
 internal fun buffer(text: String): DataBuffer = DefaultDataBufferFactory.sharedInstance.wrap(text.toByteArray())

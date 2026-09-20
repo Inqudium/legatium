@@ -177,7 +177,7 @@ class ClientLoggingAutoConfigurationTest {
                 ),
             )
         try {
-            // When: observation with a tracing bridge
+            // When/Then: observation with a tracing bridge - the context starts
             observed
                 .withConfiguration(AutoConfigurations.of(BraveAutoConfiguration::class.java, MicrometerTracingAutoConfiguration::class.java))
                 .run { context ->
@@ -188,7 +188,7 @@ class ClientLoggingAutoConfigurationTest {
             // Then
             assertThat(log.events.map { it.formattedMessage }).contains("Adapter logging found Boot's client observation with Micrometer Tracing wired for RestClient.Builder and RestTemplate - every call built there goes out with a traceparent, its trace id is the request id and no X-Correlation-Id is generated")
 
-            // When: observation alone
+            // When/Then: observation alone - the context starts
             log.appender.list.clear()
             observed.run { context ->
                 assertThat(context).hasNotFailed()
@@ -237,7 +237,7 @@ class ClientLoggingAutoConfigurationTest {
                     assertThat(traces).noneMatch { it.contains("masking-key = k") }
                 }
 
-            // And when: nothing set at all
+            // And: nothing set at all
             val before = log.events.size
             contextRunner.run { context ->
                 assertThat(context).hasNotFailed()

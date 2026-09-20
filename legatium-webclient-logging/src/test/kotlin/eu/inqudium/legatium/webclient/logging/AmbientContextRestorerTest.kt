@@ -33,7 +33,7 @@ class AmbientContextRestorerTest {
         //   context-propagation implementation; against a class loader that cannot see it, NONE.
         // Why it matters: the library is optional; a host without it must get the pre-ADR-0010
         //   behaviour, never a NoClassDefFoundError from the emitter.
-        // Given / When / Then
+        // Given/When/Then
         assertThat(AmbientContextRestorer.detect()).isInstanceOf(ContextPropagationRestorer::class.java)
         assertThat(AmbientContextRestorer.detect(object : ClassLoader(null) {})).isSameAs(AmbientContextRestorer.NONE)
     }
@@ -50,7 +50,7 @@ class AmbientContextRestorerTest {
         MDC.put(key, "stale-on-thread")
         val restorer = ContextPropagationRestorer()
 
-        // When / Then: the context's value for the scope, the thread's own afterwards
+        // When/Then: the context's value for the scope, the thread's own afterwards
         restorer.restore(Context.of(key, "caller-42")).use {
             assertThat(MDC.get(key)).isEqualTo("caller-42")
         }
@@ -68,7 +68,7 @@ class AmbientContextRestorerTest {
         // Given
         MDC.put(key, "on-thread")
 
-        // When / Then
+        // When/Then
         ContextPropagationRestorer().restore(Context.empty()).use {
             assertThat(MDC.get(key)).isEqualTo("on-thread")
         }
@@ -82,7 +82,7 @@ class AmbientContextRestorerTest {
         //   thread, inside or after the scope.
         // Why it matters: NONE is the whole behaviour of a host without context-propagation - it must be
         //   a true no-op, not a partial implementation.
-        // Given / When / Then
+        // Given/When/Then
         AmbientContextRestorer.NONE.restore(Context.of(key, "caller-42")).use {
             assertThat(MDC.get(key)).isNull()
         }

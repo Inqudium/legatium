@@ -43,8 +43,12 @@ internal class BoundedByteBuffer(
         get() = maxBytes - size
 
     /** The declared length the first allocation is sized by, [UNKNOWN_LENGTH] without one - exposed for the tests. */
-    val expectedBytes: Long
+    internal val expectedBytes: Long
         get() = expected
+
+    /** The allocated array's length, 0 before the first buffered byte - exposed for the tests. */
+    internal val capacity: Int
+        get() = bytes?.size ?: 0
 
     /**
      * A SIZING hint: the length the peer or the caller declared. Taken only before the first buffered
@@ -88,10 +92,6 @@ internal class BoundedByteBuffer(
         require(length in 0..size) { "cannot truncate $size buffered bytes to $length" }
         size = length
     }
-
-    /** The allocated array's length, 0 before the first buffered byte - exposed for the tests. */
-    internal val capacity: Int
-        get() = bytes?.size ?: 0
 
     /**
      * The array with room for [n] more bytes: sized on first use by the hint (at most

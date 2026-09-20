@@ -246,7 +246,7 @@ class ClientLoggingAutoConfigurationTest {
                     assertThat(traces).noneMatch { it.contains("masking-key = k") }
                 }
 
-            // And when: nothing set at all
+            // And: nothing set at all
             val before = log.events.size
             contextRunner.run { context ->
                 assertThat(context).hasNotFailed()

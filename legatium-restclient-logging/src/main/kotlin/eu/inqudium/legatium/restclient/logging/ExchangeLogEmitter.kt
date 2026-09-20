@@ -191,6 +191,30 @@ internal class ExchangeLogEmitter(
     }
 
     /**
+     * Scope teardown guarded on its own - the teardown rule of [reportQuietly]: the line counts as
+     * emitted, a failure here is bookkeeping (`stage=wiring`).
+     */
+    private fun restoreQuietly(
+        scope: AutoCloseable,
+        exchange: Exchange,
+    ) {
+        try {
+            scope.close()
+        } catch (e: Exception) {
+            reportQuietly {
+                metrics.wiringFailure()
+                internalLog.warn(
+                    "MDC restoration failed after emitting {} {} - the emitting thread may carry stale client keys: {}",
+                    exchange.method,
+                    exchange.target,
+                    e.toString(),
+                    e,
+                )
+            }
+        }
+    }
+
+    /**
      * The caller's MDC restored for a close on another thread, or nothing: a restorer that throws costs
      * the caller's keys, counted as stage=wiring, never the event - which then carries the module's own
      * identity alone, exactly as before ADR-0011.
@@ -323,30 +347,6 @@ internal class ExchangeLogEmitter(
                     exchange.method,
                     exchange.target,
                     e.toString(),
-                )
-            }
-        }
-    }
-
-    /**
-     * Scope teardown guarded on its own - the teardown rule of [reportQuietly]: the line counts as
-     * emitted, a failure here is bookkeeping (`stage=wiring`).
-     */
-    private fun restoreQuietly(
-        scope: AutoCloseable,
-        exchange: Exchange,
-    ) {
-        try {
-            scope.close()
-        } catch (e: Exception) {
-            reportQuietly {
-                metrics.wiringFailure()
-                internalLog.warn(
-                    "MDC restoration failed after emitting {} {} - the emitting thread may carry stale client keys: {}",
-                    exchange.method,
-                    exchange.target,
-                    e.toString(),
-                    e,
                 )
             }
         }

@@ -21,12 +21,13 @@ class RequestTargetTest {
         //   every line; a decoded path would let %0A forge line breaks in plain-text sinks.
         // Given/When
         val target = RequestTarget.of(URI.create("https://api.example.com:8443/things/a%20b?x=1"))
+        val hostName = RequestTarget.hostName(URI.create("https://api.example.com:8443/things"))
 
         // Then
         assertThat(target.host).isEqualTo("api.example.com:8443")
         assertThat(target.path).isEqualTo("/things/a%20b")
         assertThat(target.target).isEqualTo("https://api.example.com:8443/things/a%20b")
-        assertThat(RequestTarget.hostName(URI.create("https://api.example.com:8443/things"))).isEqualTo("api.example.com")
+        assertThat(hostName).isEqualTo("api.example.com")
     }
 
     @Test
@@ -36,11 +37,11 @@ class RequestTargetTest {
         // Success criteria: `/` as the path and in the target; null host and hostName for the
         //   relative URI, whose target is then only the path.
         // Why it matters: the route must never render empty, and a host must not be invented.
-        // Given: a URI without a path and a relative URI without an authority
+        // Given/When: a URI without a path and a relative URI without an authority
         val bare = RequestTarget.of(URI.create("https://api.example.com"))
         val relative = RequestTarget.of(URI.create("/relative/path"))
 
-        // When/Then
+        // Then
         assertThat(bare.path).isEqualTo("/")
         assertThat(bare.target).isEqualTo("https://api.example.com/")
         assertThat(relative.host).isNull()
@@ -57,12 +58,12 @@ class RequestTargetTest {
         //   the bare name, user info never appears.
         // Why it matters: without the fallback the line rendered `http:///x`, the host field was
         //   missing and exclude-hosts could not match the peer at all.
-        // Given: the underscore authority with a port, without one, and with user info
+        // Given/When: the underscore authority with a port, without one, and with user info
         val withPort = RequestTarget.of(URI.create("http://billing_api:8080/x"))
         val bare = RequestTarget.of(URI.create("http://billing_api/x"))
         val withUserInfo = RequestTarget.of(URI.create("http://user:secret@billing_api:8080/x"))
 
-        // When/Then
+        // Then
         assertThat(withPort.host).isEqualTo("billing_api:8080")
         assertThat(withPort.target).isEqualTo("http://billing_api:8080/x")
         assertThat(RequestTarget.hostName(URI.create("http://billing_api:8080/x"))).isEqualTo("billing_api")

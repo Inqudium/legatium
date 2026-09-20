@@ -24,7 +24,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
-import org.slf4j.event.KeyValuePair;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
@@ -32,27 +31,34 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.reactive.function.client.WebClient;
 
 /**
- * Exercises the two shaded jars from the consumer's side of the Shade boundary (ADR-0003): the inlined
- * common classes, Boot's auto-configuration through the jars' own imports files, and one exchange line
- * per client against a real local peer. Everything asserted here is invisible to the reactor's own
- * tests, which run before packaging against the legatium-common module.
+ * Exercises the two shaded jars from the consumer's side of the Shade boundary (ADR-0003): the
+ * inlined common classes, Boot's auto-configuration through the jars' own imports files, and one
+ * exchange line per client against a real local peer. Everything asserted here is invisible to the
+ * reactor's own tests, which run before packaging against the legatium-common module.
  */
 @SpringBootTest(
         classes = SmokeApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
-        // Bounded the way a consumer bounds them: a stalled peer fails the job with a cause instead of
-        // holding it until the runner's timeout.
-        properties = {"spring.http.clients.connect-timeout=5s", "spring.http.clients.read-timeout=5s"})
+        // Bounded the way a consumer bounds them: a stalled peer fails the job with a cause instead
+        // of holding it until the runner's timeout.
+        properties = {
+            "spring.http.clients.connect-timeout=5s",
+            "spring.http.clients.read-timeout=5s"
+        })
 class ShadedTwinsSmokeTest {
-    private static final String SHARED_CLASS = "eu/inqudium/legatium/common/ClientLoggingMetrics.class";
+    private static final String SHARED_CLASS =
+            "eu/inqudium/legatium/common/ClientLoggingMetrics.class";
     private static final String EXCHANGE_LOGGER = "adapter-http-exchange";
     private static final String BLOCKING = "blocking";
     private static final String REACTIVE = "reactive";
 
-    /** The bound on every wait that crosses a thread here: the reactive result and the awaited lines. */
+    /** The bound on every cross-thread wait here: the reactive result and the awaited lines. */
     private static final Duration AWAIT = Duration.ofSeconds(5);
 
-    /** How long a surplus line gets to show up after the two expected ones - it would follow them within microseconds. */
+    /**
+     * How long a surplus line gets to show up after the two expected ones - it would follow them
+     * within microseconds.
+     */
     private static final Duration SETTLE = Duration.ofMillis(200);
 
     private static HttpServer peer;
@@ -103,10 +109,18 @@ class ShadedTwinsSmokeTest {
         return "http://127.0.0.1:" + peer.getAddress().getPort() + "/things";
     }
 
+    private static Object fieldOf(ILoggingEvent event, String key) {
+        return event.getKeyValuePairs().stream()
+                .filter(pair -> key.equals(pair.key))
+                .map(pair -> pair.value)
+                .findFirst()
+                .orElse(null);
+    }
+
     @Test
     void should_carry_the_shared_classes_in_both_twin_jars_and_nowhere_else() throws IOException {
-        // What is tested: where the JVM finds the inlined common classes - the resource must resolve
-        //   from exactly the two twin jars, and from no legatium-common artifact.
+        // What is tested: where the JVM finds the inlined common classes - the resource must
+        //   resolve from exactly the two twin jars, and from no legatium-common artifact.
         // Success criteria: two locations, one per twin jar; none mentions legatium-common.
         // Why it matters: a broken artifactSet or a dependency-reduced POM that still names the
         //   unpublished module surfaces here, not at the first consumer's NoClassDefFoundError.
@@ -125,8 +139,8 @@ class ShadedTwinsSmokeTest {
 
     @Test
     void should_auto_configure_both_twins_from_the_shaded_jars() {
-        // What is tested: Boot's auto-configuration import of both twins - the imports files and the
-        //   configuration classes must be present and loadable in the shaded jars.
+        // What is tested: Boot's auto-configuration import of both twins - the imports files and
+        //   the configuration classes must be present and loadable in the shaded jars.
         // Success criteria: the interceptor bean and the filter bean exist, one each.
         // Why it matters: a consumer adds the artifact and expects logging without configuration; a
         //   missing or filtered META-INF entry would ship a silent no-op.
@@ -139,13 +153,15 @@ class ShadedTwinsSmokeTest {
     void should_log_one_exchange_line_per_client_against_a_real_peer() throws InterruptedException {
         // What is tested: the end-to-end path through the product jars - Boot's builders carry the
         //   customizers, the interceptor and the filter observe one call each against a local peer.
-        // Success criteria: exactly one exchange event per client, told apart by the adapter name each
-        //   call carries, both `-> 200` with adapter_outcome=success - and no third line follows.
-        // Why it matters: it is the one place the shaded runtime is executed as a consumer executes it.
-        //   The WebClient line is awaited, not read: the reactive twin emits AFTER it handed the body's
-        //   completion on, so block() can return while the Reactor Netty thread is still emitting. The
-        //   names are what tell "both twins once" from "one twin twice": without them, two lines from
-        //   one twin - an exactly-once regression inside a shaded jar - would pass for one per twin.
+        // Success criteria: exactly one exchange event per client, told apart by the adapter name
+        //   each call carries, both `-> 200` with adapter_outcome=success - and no third line
+        //   follows.
+        // Why it matters: it is the one place the shaded runtime is executed as a consumer
+        //   executes it. The WebClient line is awaited, not read: the reactive twin emits AFTER it
+        //   handed the body's completion on, so block() can return while the Reactor Netty thread
+        //   is still emitting. The names are what tell "both twins once" from "one twin twice":
+        //   without them, two lines from one twin - an exactly-once regression inside a shaded jar
+        //   - would pass for one per twin.
         // Given
         RestClient restClient = restClientBuilder.build();
         WebClient webClient = webClientBuilder.build();
@@ -178,7 +194,9 @@ class ShadedTwinsSmokeTest {
             assertThat(fieldOf(event, "adapter_outcome")).isEqualTo("success");
         });
         // And: two calls, two lines - neither twin emitted a second one
-        assertThat(captured.noEventWithin(SETTLE)).as("a third exchange event after the two expected ones").isTrue();
+        assertThat(captured.noEventWithin(SETTLE))
+                .as("a third exchange event after the two expected ones")
+                .isTrue();
     }
 
     /**
@@ -205,17 +223,9 @@ class ShadedTwinsSmokeTest {
             return List.copyOf(events);
         }
 
-        /** True when no further event was appended within {@code settle} - the bounded check for a surplus line. */
+        /** True when nothing arrived within {@code settle}: the bounded check for a surplus. */
         boolean noEventWithin(Duration settle) throws InterruptedException {
             return !arrivals.tryAcquire(settle.toMillis(), TimeUnit.MILLISECONDS);
         }
-    }
-
-    private static Object fieldOf(ILoggingEvent event, String key) {
-        return event.getKeyValuePairs().stream()
-                .filter(pair -> key.equals(pair.key))
-                .map(pair -> pair.value)
-                .findFirst()
-                .orElse(null);
     }
 }

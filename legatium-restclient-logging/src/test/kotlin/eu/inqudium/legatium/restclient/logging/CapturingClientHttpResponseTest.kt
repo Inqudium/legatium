@@ -15,11 +15,12 @@ import java.nio.charset.StandardCharsets
 /**
  * The tee stream's transparency towards the application: the engine stream's `mark`/`reset` contract is
  * forwarded as it is - present on a buffered response, absent on an engine stream - and a rewind moves
- * the capture with the stream - plus the guard on the tee stream's own close. The read guards and the
- * response close guard are proved through the interceptor.
+ * the capture with the stream - plus the guard on the tee stream's own close, and the read state the
+ * tee records as the application opens and drains the body. The read guards and the response close
+ * guard are proved through the interceptor.
  */
 class CapturingClientHttpResponseTest {
-    private val failures = mutableListOf<Exception>()
+    private val failures = mutableListOf<Throwable>()
 
     private fun wrapping(
         body: InputStream,
@@ -61,7 +62,7 @@ class CapturingClientHttpResponseTest {
         val capture = BoundedBodyCapture(16)
         val body = wrapping(ByteArrayInputStream("hello".toByteArray()), capture).body
 
-        // When: the peek-and-rewind of IntrospectingClientHttpResponse, then the full read
+        // When/Then: the peek-and-rewind of IntrospectingClientHttpResponse, then the full read
         assertThat(body.markSupported()).isTrue()
         body.mark(1)
         assertThat(body.read()).isEqualTo('h'.code)
@@ -90,7 +91,7 @@ class CapturingClientHttpResponseTest {
         val capture = BoundedBodyCapture(16)
         val body = wrapping(engineStream("hello"), capture).body
 
-        // When
+        // When/Then
         assertThat(body.markSupported()).isFalse()
         body.mark(1)
         assertThat(body.read()).isEqualTo('h'.code)
@@ -98,8 +99,31 @@ class CapturingClientHttpResponseTest {
 
         // Then
         assertThat(thrown).isInstanceOf(IOException::class.java).hasMessageContaining("not supported")
-        assertThat(failures).containsExactly(thrown as Exception)
+        assertThat(failures).containsExactly(thrown)
         assertThat(capture.totalBytes).isEqualTo(1L)
+    }
+
+    @Test
+    fun `should record the read state of the response body as unread, partial or complete`() {
+        // What is tested: the observation points of the read state on the tee - opening the stream
+        //   marks PARTIAL, observing EOF marks COMPLETE, never opening it leaves UNREAD.
+        // Success criteria: one wrapped response, the state read off its capture at three points:
+        //   UNREAD before the body is opened, PARTIAL once it is and after a one-byte read, COMPLETE
+        //   after the read to EOF.
+        // Why it matters: the state is the one signal that tells a discarded response body from an
+        //   absent one.
+        // Given
+        val capture = BoundedBodyCapture(8)
+        val response = wrapping(ByteArrayInputStream("ab".toByteArray()), capture)
+
+        // When/Then: the state at each observation point
+        assertThat(capture.readState).isEqualTo(BodyReadState.UNREAD)
+        val stream = response.body
+        assertThat(capture.readState).isEqualTo(BodyReadState.PARTIAL)
+        stream.read()
+        assertThat(capture.readState).isEqualTo(BodyReadState.PARTIAL)
+        stream.readAllBytes()
+        assertThat(capture.readState).isEqualTo(BodyReadState.COMPLETE)
     }
 
     @Test
@@ -123,7 +147,7 @@ class CapturingClientHttpResponseTest {
         // Then
         assertThat(text).isEqualTo("hello")
         assertThat(thrown).isInstanceOf(IOException::class.java).hasMessage("connection broke on release")
-        assertThat(failures).containsExactly(thrown as Exception)
+        assertThat(failures).containsExactly(thrown)
         assertThat(capture.loggedValue(StandardCharsets.UTF_8)).isEqualTo("hello")
         assertThat(capture.readState).isEqualTo(BodyReadState.COMPLETE)
     }

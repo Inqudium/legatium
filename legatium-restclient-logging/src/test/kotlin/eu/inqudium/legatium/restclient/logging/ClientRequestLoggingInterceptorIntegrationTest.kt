@@ -45,12 +45,7 @@ import java.time.Duration
         "adapter-logging.response-headers.unmasked=Content-Type",
         "adapter-logging.request-headers.includes=X-Correlation-Id",
         "adapter-logging.request-headers.unmasked=X-Correlation-Id",
-        // The tracing bridge is on this test classpath for the tracing suite; excluded here, so the
-        // calls are TRACELESS (an active bridge injects a traceparent into EVERY call, sampled or not)
-        // and the correlation contract is what goes on the wire.
-        "spring.autoconfigure.exclude=" +
-            "org.springframework.boot.micrometer.tracing.brave.autoconfigure.BraveAutoConfiguration," +
-            "org.springframework.boot.micrometer.tracing.autoconfigure.MicrometerTracingAutoConfiguration",
+        TRACELESS_CALLS,
     ],
 )
 class ClientRequestLoggingInterceptorIntegrationTest : PeerIntegrationSuite() {
@@ -157,13 +152,7 @@ class ClientRequestLoggingInterceptorIntegrationTest : PeerIntegrationSuite() {
                 .summary()
                 .totalAmount(),
         ).isEqualTo(5.0)
-        assertThat(
-            registry
-                .get(ClientLoggingMetrics.RESPONSE_BODY_READ_METER)
-                .tags(*tags, "state", "complete")
-                .counter()
-                .count(),
-        ).isEqualTo(1.0)
+        assertThat(registry.count(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, *tags, "state", "complete")).isEqualTo(1.0)
         assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tags(*tags, "state", "partial").counter()).isNull()
     }
 
@@ -353,32 +342,15 @@ class ClientRequestLoggingInterceptorIntegrationTest : PeerIntegrationSuite() {
         assertThat(keyValues(event))
             .containsEntry("adapter_response_status_code", 204)
             .doesNotContainKeys("adapter_request_body", "adapter_response_body")
-        // The template without a placeholder folds to the untemplated tag value ([ClientLoggingMetrics.uriTag]);
+        // The template without a placeholder folds to the untemplated tag value (`ClientLoggingMetrics.uriTag`);
         // the name tag keeps this tag set apart from the other tests' calls on the registry the class shares.
         val tags = arrayOf("uri", ClientLoggingMetrics.UNTEMPLATED_URI, "host", peer.host, "name", "bodiless")
-        assertThat(
-            registry
-                .get(ClientLoggingMetrics.RESPONSE_BODY_READ_METER)
-                .tags(*tags, "state", "complete")
-                .counter()
-                .count(),
-        ).isEqualTo(1.0)
+        assertThat(registry.count(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, *tags, "state", "complete")).isEqualTo(1.0)
         assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tags(*tags, "state", "unread").counter()).isNull()
     }
 
     companion object {
-        /** The read timeout that IS the subject of the timeout scenario: well below the peer's `/slow` delay. */
-        private val SHORT: Duration = Duration.ofMillis(200)
-
         /** The connect timeout of a call that must fail, never hang: generous against a refusal that arrives at once. */
         private val CONNECT_GUARD: Duration = Duration.ofSeconds(2)
     }
-}
-
-/** The smallest Boot application that auto-configures the clients and this module - with a host registry, so the meters can be asserted. */
-@SpringBootConfiguration
-@EnableAutoConfiguration
-internal class IntegrationApp {
-    @Bean
-    fun hostMeterRegistry(): MeterRegistry = SimpleMeterRegistry()
 }

@@ -66,7 +66,7 @@ import org.springframework.core.io.ResourceLoader
 @EnableConfigurationProperties(ClientLoggingProperties::class)
 class ClientLoggingAutoConfiguration {
     init {
-        log.debug("Adapter logging is enabled - the auto-configuration is active (adapter-logging.enabled is not false)")
+        internalLog.debug("Adapter logging is enabled - the auto-configuration is active (adapter-logging.enabled is not false)")
     }
 
     /** The system's monotonic clock, unless the host pins a time source. */
@@ -97,17 +97,17 @@ class ClientLoggingAutoConfiguration {
         boundProperties: ObjectProvider<BoundConfigurationProperties>,
         resourceLoader: ResourceLoader,
     ): ClientRequestLoggingFilter {
-        log.debug("Adapter logging registered its ClientRequestLoggingFilter bean with {}", properties)
-        if (log.isTraceEnabled) {
+        internalLog.debug("Adapter logging registered its ClientRequestLoggingFilter bean with {}", properties)
+        if (internalLog.isTraceEnabled) {
             val bound = boundProperties.ifAvailable
             if (bound == null) {
-                log.trace(
+                internalLog.trace(
                     "Adapter logging cannot tell where its adapter-logging.* values came from (which file, environment " +
                         "variable or command-line argument set them); the values above are in effect nonetheless. " +
                         "Adapter logging property origins are unavailable - no BoundConfigurationProperties bean in this context",
                 )
             } else {
-                ClientLoggingPropertyOrigins.describe(bound.all, environment).forEach(log::trace)
+                ClientLoggingPropertyOrigins.describe(bound.all, environment).forEach(internalLog::trace)
             }
         }
         val filter = ClientRequestLoggingFilter(properties, nanoTime, correlationIds, meterRegistry.getIfAvailable { CompositeMeterRegistry() }, masker)
@@ -117,9 +117,9 @@ class ClientLoggingAutoConfiguration {
         // The opt-in has no property; the report is the only place a host can read the outcome.
         filter.emitter.ambientRestorer = AmbientContextRestorer.detect(resourceLoader.classLoader)
         if (filter.emitter.ambientRestorer is ContextPropagationRestorer) {
-            log.debug("Adapter logging restores the caller's thread-locals (its MDC) around every exchange line from the Reactor Context - io.micrometer:context-propagation is on the classpath")
+            internalLog.debug("Adapter logging restores the caller's thread-locals (its MDC) around every exchange line from the Reactor Context - io.micrometer:context-propagation is on the classpath")
         } else {
-            log.debug("Adapter logging emits every exchange line with the completing thread's MDC only - io.micrometer:context-propagation is not on the classpath, so the caller's thread-locals are not restored")
+            internalLog.debug("Adapter logging emits every exchange line with the completing thread's MDC only - io.micrometer:context-propagation is not on the classpath, so the caller's thread-locals are not restored")
         }
         return filter
     }
@@ -131,10 +131,13 @@ class ClientLoggingAutoConfiguration {
      * context, and appears also when a host replaced the bean.
      */
     @Bean
-    fun clientLoggingWebClientObservationReport(beanFactory: ListableBeanFactory): SmartInitializingSingleton =
+    fun clientLoggingWebClientObservationReport(
+        beanFactory: ListableBeanFactory,
+        properties: ClientLoggingProperties,
+    ): SmartInitializingSingleton =
         SmartInitializingSingleton {
-            if (log.isDebugEnabled) {
-                log.debug(ClientObservationWiring.describe(beanFactory, OBSERVATION_CUSTOMIZERS))
+            if (internalLog.isDebugEnabled) {
+                internalLog.debug(ClientObservationWiring.describe(beanFactory, OBSERVATION_CUSTOMIZERS, properties.correlationIdHeader))
             }
         }
 
@@ -151,11 +154,11 @@ class ClientLoggingAutoConfiguration {
         @Bean
         @Order(CUSTOMIZER_ORDER)
         fun clientLoggingWebClientCustomizer(filter: ClientRequestLoggingFilter): WebClientCustomizer {
-            log.debug("Adapter logging registered its WebClientCustomizer - the filter is attached to every WebClient.Builder Boot hands out")
+            internalLog.debug("Adapter logging registered its WebClientCustomizer - the filter is attached to every WebClient.Builder Boot hands out")
             return WebClientCustomizer { builder ->
                 builder.filters { filters ->
                     filters.add(filter)
-                    log.debug("Adapter logging attached its filter to a WebClient.Builder behind {} earlier filter(s)", filters.size - 1)
+                    internalLog.debug("Adapter logging attached its filter to a WebClient.Builder behind {} earlier filter(s)", filters.size - 1)
                 }
             }
         }
@@ -179,6 +182,6 @@ class ClientLoggingAutoConfiguration {
         private val OBSERVATION_CUSTOMIZERS = mapOf("org.springframework.boot.webclient.observation.ObservationWebClientCustomizer" to "WebClient.Builder")
 
         /** The wiring report of the class KDoc, at DEBUG; the exchange lines have their own logger. */
-        private val log = LoggerFactory.getLogger(ClientLoggingAutoConfiguration::class.java)
+        private val internalLog = LoggerFactory.getLogger(ClientLoggingAutoConfiguration::class.java)
     }
 }

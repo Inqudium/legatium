@@ -40,11 +40,7 @@ import java.time.Duration
         "adapter-logging.measure-response-body-size=true",
         "adapter-logging.request-headers.includes=X-Correlation-Id",
         "adapter-logging.request-headers.unmasked=X-Correlation-Id",
-        // Traceless calls, as in the interceptor integration test: the bridge is excluded so the
-        // correlation contract is what goes on the wire.
-        "spring.autoconfigure.exclude=" +
-            "org.springframework.boot.micrometer.tracing.brave.autoconfigure.BraveAutoConfiguration," +
-            "org.springframework.boot.micrometer.tracing.autoconfigure.MicrometerTracingAutoConfiguration",
+        TRACELESS_CALLS,
     ],
 )
 abstract class RequestFactoryContract : PeerIntegrationSuite() {
@@ -283,8 +279,6 @@ abstract class RequestFactoryContract : PeerIntegrationSuite() {
     }
 
     companion object {
-        private val SHORT: Duration = Duration.ofMillis(200)
-
         /** For every scenario whose subject is not the timeout: a loaded runner must not turn a tee test into a timeout test. */
         private val GENEROUS: Duration = Duration.ofSeconds(10)
     }

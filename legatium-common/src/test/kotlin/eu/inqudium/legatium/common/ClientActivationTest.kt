@@ -50,8 +50,9 @@ class ClientActivationTest {
     fun `should exclude a registry-based authority and an IPv6 literal in either bracket form`() {
         // What is tested: the hosts java.net.URI does not parse as a host - a service name with an
         //   underscore - and an IPv6 literal configured with or without brackets.
-        // Success criteria: `billing_api` excludes `http://billing_api:8080/x`; both `::1` and
-        //   `[::1]` exclude `http://[::1]:8080/`; `[::2]` is not excluded by `::1`.
+        // Success criteria: `billing_api` excludes `http://billing_api:8080/x`; the unbracketed `::1`
+        //   excludes `http://[::1]:8080/` and the bracketed `[fe80::1]` excludes `http://[fe80::1]/`;
+        //   `[::2]` is not excluded by `::1`.
         // Why it matters: before the fallback such a peer could not be excluded at all (host null),
         //   and an unbracketed IPv6 entry silently matched nothing.
         // Given

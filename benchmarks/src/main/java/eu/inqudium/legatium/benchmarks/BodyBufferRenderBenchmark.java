@@ -45,12 +45,18 @@ import org.springframework.util.FastByteArrayOutputStream;
 @State(Scope.Benchmark)
 public class BodyBufferRenderBenchmark {
 
+    /** The two texts: pure ASCII, and one ASCII with one two-byte character alternating. */
+    public enum Content {
+        ASCII,
+        UMLAUT
+    }
+
     /** The shipped default cap and a debugging-profile cap. */
     @Param({"16", "256"})
     public int bodyKb;
 
-    @Param({"ascii", "umlaut"})
-    public String content;
+    @Param({"ASCII", "UMLAUT"})
+    public Content content;
 
     private byte[] body;
     private String note;
@@ -61,18 +67,10 @@ public class BodyBufferRenderBenchmark {
     @Setup
     public void setup() throws IOException {
         int length = bodyKb * 1024;
-        if (content.equals("ascii")) {
-            body = new byte[length];
-            for (int i = 0; i < length; i++) {
-                body[i] = (byte) ('a' + (i % 26));
-            }
-        } else {
-            byte[] pattern = "aä".getBytes(StandardCharsets.UTF_8);
-            body = new byte[length];
-            for (int i = 0; i < length; i++) {
-                body[i] = pattern[i % pattern.length];
-            }
-        }
+        body = content == Content.ASCII ? Bodies.ascii(length) : Bodies.cycling("aä", length);
+        // Mirrors the truncation note BoundedByteBuffer.render appends, so the naive rendering
+        // stays byte-comparable with the buffer's; the literal is private there and cannot be
+        // imported, so a change to it must be carried here.
         note = "... [truncated, " + (body.length + 1) + " bytes total]";
         buffer = new BoundedByteBuffer(body.length);
         buffer.write(body, 0, body.length);
@@ -83,22 +81,22 @@ public class BodyBufferRenderBenchmark {
     }
 
     @Benchmark
-    public String boundedRenderComplete() {
+    public String boundedBufferComplete() {
         return buffer.render(StandardCharsets.UTF_8, body.length);
     }
 
     @Benchmark
-    public String boundedRenderTruncated() {
+    public String boundedBufferTruncated() {
         return buffer.render(StandardCharsets.UTF_8, body.length + 1L);
     }
 
     @Benchmark
-    public String byteArrayOutputStreamToString() {
+    public String byteArrayOutputStream() {
         return stream.toString(StandardCharsets.UTF_8);
     }
 
     @Benchmark
-    public String fastByteArrayOutputStreamToString() {
+    public String fastByteArrayOutputStream() {
         return fastStream.toString(StandardCharsets.UTF_8);
     }
 

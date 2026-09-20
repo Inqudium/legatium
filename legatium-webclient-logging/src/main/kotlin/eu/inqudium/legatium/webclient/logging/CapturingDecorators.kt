@@ -76,15 +76,7 @@ internal open class CapturingClientHttpRequestDecorator(
         )
     }
 
-    private fun expectDeclaredLength() {
-        val declared =
-            try {
-                headers.contentLength
-            } catch (e: NumberFormatException) {
-                BoundedBodyCapture.UNKNOWN_LENGTH
-            }
-        capture.expectBytes(declared)
-    }
+    private fun expectDeclaredLength() = capture.expectBytes(BoundedBodyCapture.declaredLength { headers.contentLength })
 }
 
 /**
