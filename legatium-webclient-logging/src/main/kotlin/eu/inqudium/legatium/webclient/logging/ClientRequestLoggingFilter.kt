@@ -1,7 +1,7 @@
 package eu.inqudium.legatium.webclient.logging
 
 import eu.inqudium.legatium.common.AdapterName
-import eu.inqudium.legatium.common.BodyLogMode
+import eu.inqudium.legatium.common.BodyCaptures
 import eu.inqudium.legatium.common.ClientActivation
 import eu.inqudium.legatium.common.ClientIdentity
 import eu.inqudium.legatium.common.ClientLoggingMetrics
@@ -317,7 +317,7 @@ class ClientRequestLoggingFilter
         ): Wiring {
             val headers = request.headers()
             val identity = ClientIdentity.resolve(headers, properties, correlationIds)
-            val captures = newCaptures()
+            val captures = BodyCaptures.of(properties, ::BoundedBodyCapture)
             // The request the connector gets: the caller's, plus the correlation header on a traceless call
             // without one, plus the body tee when the request body is captured. ClientRequest is immutable,
             // so both go through a rebuild; untouched otherwise.
@@ -358,35 +358,6 @@ class ClientRequestLoggingFilter
             metrics.exchangeOpened()
             return Wiring(exchange, outgoing)
         }
-
-        /**
-         * A capture exists when the body is logged in ANY mode ([BodyLogMode.captures]) OR measured
-         * ([ClientLoggingProperties.measureRequestBodySize]; then count-only, limit 0).
-         */
-        private fun newCaptures(): Captures =
-            Captures(
-                request = captureFor(properties.logRequestBody, properties.measureRequestBodySize),
-                response = captureFor(properties.logResponseBody, properties.measureResponseBodySize),
-            )
-
-        /**
-         * One direction's capture by the rule of [newCaptures], or null when the body is neither
-         * logged nor measured.
-         */
-        private fun captureFor(
-            mode: BodyLogMode,
-            measured: Boolean,
-        ): BoundedBodyCapture? =
-            when {
-                mode.captures -> BoundedBodyCapture(properties.maxBodyBytes)
-                measured -> BoundedBodyCapture(0)
-                else -> null
-            }
-
-        private class Captures(
-            val request: BoundedBodyCapture?,
-            val response: BoundedBodyCapture?,
-        )
 
         /** The wired [exchange] plus the (possibly rebuilt) request the connector receives. */
         private class Wiring(

@@ -1,7 +1,7 @@
 package eu.inqudium.legatium.restclient.logging
 
 import eu.inqudium.legatium.common.AdapterName
-import eu.inqudium.legatium.common.BodyLogMode
+import eu.inqudium.legatium.common.BodyCaptures
 import eu.inqudium.legatium.common.ClientActivation
 import eu.inqudium.legatium.common.ClientIdentity
 import eu.inqudium.legatium.common.ClientLoggingMetrics
@@ -351,7 +351,7 @@ class ClientRequestLoggingInterceptor
             val requestCharset = headers.declaredCharsetOrUtf8()
             val startNanos = nanoTime.nanoTime()
             val callerMdc = captureCallerMdcQuietly(request)
-            val captures = newCaptures()
+            val captures = BodyCaptures.of(properties, ::BoundedBodyCapture)
             // The request body is what the client hands the interceptor: the complete serialized body,
             // in memory, BEFORE the wire call - what the client is about to send, not what reached the
             // peer (which is why the size sample waits for a response: `ClientLoggingProperties.measureRequestBodySize`).
@@ -412,35 +412,6 @@ class ClientRequestLoggingInterceptor
                 }
                 CallerMdcSnapshot.NONE
             }
-
-        /**
-         * A capture exists when the body is logged in ANY mode ([BodyLogMode.captures]) OR measured
-         * ([ClientLoggingProperties.measureRequestBodySize]; then count-only, limit 0).
-         */
-        private fun newCaptures(): Captures =
-            Captures(
-                request = captureFor(properties.logRequestBody, properties.measureRequestBodySize),
-                response = captureFor(properties.logResponseBody, properties.measureResponseBodySize),
-            )
-
-        /**
-         * One side's capture by the rule of [newCaptures]: buffering up to the limit when logged,
-         * count-only when merely measured, none otherwise.
-         */
-        private fun captureFor(
-            mode: BodyLogMode,
-            measured: Boolean,
-        ): BoundedBodyCapture? =
-            when {
-                mode.captures -> BoundedBodyCapture(properties.maxBodyBytes)
-                measured -> BoundedBodyCapture(0)
-                else -> null
-            }
-
-        private class Captures(
-            val request: BoundedBodyCapture?,
-            val response: BoundedBodyCapture?,
-        )
 
         /**
          * The exactly-once end of an exchange - gauge close plus emission - guarded by [Exchange.completed]:
