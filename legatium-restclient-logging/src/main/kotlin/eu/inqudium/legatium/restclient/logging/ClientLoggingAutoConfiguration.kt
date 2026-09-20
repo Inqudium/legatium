@@ -53,9 +53,8 @@ import org.springframework.core.env.Environment
  * `adapter-logging.enabled=false` none of them appears - Boot's condition evaluation report (DEBUG on
  * `org.springframework.boot.autoconfigure`) then names the property as the reason.
  *
- * At TRACE the bean line is followed by the ORIGIN of every `adapter-logging.*` value Boot bound - the
- * file and line, the environment variable, the property source - and by every value of the same name
- * a lower-precedence source also holds, marked as shadowed ([ClientLoggingPropertyOrigins]).
+ * At TRACE the bean line is followed by where every `adapter-logging.*` value came from and by the
+ * values lower-precedence sources also hold, marked as shadowed ([ClientLoggingPropertyOrigins]).
  */
 @AutoConfiguration
 @ConditionalOnBooleanProperty(prefix = "adapter-logging", name = ["enabled"], matchIfMissing = true)

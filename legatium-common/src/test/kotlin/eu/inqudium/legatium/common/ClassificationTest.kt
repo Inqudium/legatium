@@ -75,7 +75,8 @@ class ClassificationTest {
     fun `should pin the escalation set`() {
         // What is tested: the literal set the twins' KDoc and the guides name.
         // Success criteria: exactly 401, 403, 408 and 429.
-        // Why it matters: the set is part of the log contract (Common guide §7.3); a silent addition
+        // Why it matters: the set is part of the log contract (Common guide "Levels and outcomes"); a
+        //   silent addition
         //   would raise the severity of a host's regular answer path.
         // Given/When/Then
         assertThat(Classification.ESCALATED_REJECTIONS).containsExactlyInAnyOrder(401, 403, 408, 429)
