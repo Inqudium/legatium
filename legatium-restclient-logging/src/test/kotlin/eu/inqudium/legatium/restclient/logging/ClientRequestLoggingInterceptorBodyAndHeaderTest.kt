@@ -496,7 +496,8 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Success criteria: the caller gets RestClientException; the single event is INFO with
             //   outcome success, status 200 and NO body fields - on-failure withholds them.
             // Why it matters: this is the one case where the line's outcome and the caller's outcome
-            //   differ, decided and documented (guide §6.3, ADR-0006): the module observes the wire, not
+            //   differ, decided and documented (Common guide "Body logging and body measuring", ADR-0006):
+            //   the module observes the wire, not
             //   the application's decoding, and there is no seam through which a converter failure could
             //   reach the interceptor. Pinned so a change here is a decision, not an accident.
             // Given/When
