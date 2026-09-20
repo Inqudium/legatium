@@ -1,0 +1,1357 @@
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# JMH version: 1.37
+# VM version: JDK 26.0.1, Java HotSpot(TM) 64-Bit Server VM, 26.0.1+8-34
+# VM invoker: /usr/lib/jvm/jdk-26.0.1-oracle-x64/bin/java
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 1 s each
+# Measurement: 8 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.owner
+# Parameters: (tagSets = 1)
+
+# Run progress: 0,00% complete, ETA 00:03:54
+# Fork: 1 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+37,797 ns/op
+# Warmup Iteration   2: 33,714 ns/op
+# Warmup Iteration   3: 34,002 ns/op
+# Warmup Iteration   4: 33,331 ns/op
+# Warmup Iteration   5: 35,669 ns/op
+Iteration   1: 33,399 ns/op
+                 gc.alloc.rate:      913,033 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            4,000 ms
+
+Iteration   2: 34,077 ns/op
+                 gc.alloc.rate:      895,309 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   3: 33,418 ns/op
+                 gc.alloc.rate:      912,930 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           2,000 counts
+                 gc.time:            2,000 ms
+
+Iteration   4: 33,355 ns/op
+                 gc.alloc.rate:      914,482 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   5: 33,513 ns/op
+                 gc.alloc.rate:      910,203 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            4,000 ms
+
+Iteration   6: 33,297 ns/op
+                 gc.alloc.rate:      916,205 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            4,000 ms
+
+Iteration   7: 33,901 ns/op
+                 gc.alloc.rate:      899,845 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   8: 34,452 ns/op
+                 gc.alloc.rate:      885,404 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            4,000 ms
+
+
+# Run progress: 5,56% complete, ETA 00:03:47
+# Fork: 2 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+36,060 ns/op
+# Warmup Iteration   2: 34,298 ns/op
+# Warmup Iteration   3: 34,315 ns/op
+# Warmup Iteration   4: 35,312 ns/op
+# Warmup Iteration   5: 33,871 ns/op
+Iteration   1: 33,730 ns/op
+                 gc.alloc.rate:      904,487 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            4,000 ms
+
+Iteration   2: 34,066 ns/op
+                 gc.alloc.rate:      895,671 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   3: 34,650 ns/op
+                 gc.alloc.rate:      880,476 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           2,000 counts
+                 gc.time:            1,000 ms
+
+Iteration   4: 34,583 ns/op
+                 gc.alloc.rate:      882,048 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            4,000 ms
+
+Iteration   5: 34,278 ns/op
+                 gc.alloc.rate:      890,062 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   6: 33,911 ns/op
+                 gc.alloc.rate:      899,742 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   7: 35,651 ns/op
+                 gc.alloc.rate:      855,834 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            1,000 ms
+
+Iteration   8: 41,221 ns/op
+                 gc.alloc.rate:      740,024 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           2,000 counts
+                 gc.time:            2,000 ms
+
+
+# Run progress: 11,11% complete, ETA 00:03:33
+# Fork: 3 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+39,895 ns/op
+# Warmup Iteration   2: 35,062 ns/op
+# Warmup Iteration   3: 33,665 ns/op
+# Warmup Iteration   4: 33,772 ns/op
+# Warmup Iteration   5: 33,448 ns/op
+Iteration   1: 33,946 ns/op
+                 gc.alloc.rate:      898,832 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           2,000 counts
+                 gc.time:            2,000 ms
+
+Iteration   2: 33,875 ns/op
+                 gc.alloc.rate:      900,625 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   3: 33,600 ns/op
+                 gc.alloc.rate:      908,055 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            2,000 ms
+
+Iteration   4: 32,897 ns/op
+                 gc.alloc.rate:      927,383 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            4,000 ms
+
+Iteration   5: 33,084 ns/op
+                 gc.alloc.rate:      921,965 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   6: 33,070 ns/op
+                 gc.alloc.rate:      922,633 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   7: 34,021 ns/op
+                 gc.alloc.rate:      896,675 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            2,000 ms
+
+Iteration   8: 33,915 ns/op
+                 gc.alloc.rate:      899,554 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            2,000 ms
+
+
+
+Result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.owner":
+  34,163 ±(99.9%) 1,246 ns/op [Average]
+  (min, avg, max) = (32,897, 34,163, 41,221), stdev = 1,620
+  CI (99.9%): [32,917, 35,409] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.owner:gc.alloc.rate":
+  894,645 ±(99.9%) 28,082 MB/sec [Average]
+  (min, avg, max) = (740,024, 894,645, 927,383), stdev = 36,515
+  CI (99.9%): [866,563, 922,727] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.owner:gc.alloc.rate.norm":
+  32,000 ±(99.9%) 0,001 B/op [Average]
+  (min, avg, max) = (32,000, 32,000, 32,000), stdev = 0,001
+  CI (99.9%): [32,000, 32,000] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.owner:gc.count":
+  68,000 ±(99.9%) 0,001 counts [Sum]
+  (min, avg, max) = (2,000, 2,833, 3,000), stdev = 0,381
+  CI (99.9%): [68,000, 68,000] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.owner:gc.time":
+  69,000 ±(99.9%) 0,001 ms [Sum]
+  (min, avg, max) = (1,000, 2,875, 4,000), stdev = 0,947
+  CI (99.9%): [69,000, 69,000] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 26.0.1, Java HotSpot(TM) 64-Bit Server VM, 26.0.1+8-34
+# VM invoker: /usr/lib/jvm/jdk-26.0.1-oracle-x64/bin/java
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 1 s each
+# Measurement: 8 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.owner
+# Parameters: (tagSets = 16)
+
+# Run progress: 16,67% complete, ETA 00:03:20
+# Fork: 1 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+37,251 ns/op
+# Warmup Iteration   2: 35,206 ns/op
+# Warmup Iteration   3: 37,900 ns/op
+# Warmup Iteration   4: 35,046 ns/op
+# Warmup Iteration   5: 34,581 ns/op
+Iteration   1: 34,866 ns/op
+                 gc.alloc.rate:      875,064 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           2,000 counts
+                 gc.time:            2,000 ms
+
+Iteration   2: 35,106 ns/op
+                 gc.alloc.rate:      869,091 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   3: 34,913 ns/op
+                 gc.alloc.rate:      873,882 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   4: 35,744 ns/op
+                 gc.alloc.rate:      853,540 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           2,000 counts
+                 gc.time:            1,000 ms
+
+Iteration   5: 35,246 ns/op
+                 gc.alloc.rate:      865,529 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   6: 37,096 ns/op
+                 gc.alloc.rate:      822,331 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   7: 34,554 ns/op
+                 gc.alloc.rate:      882,862 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   8: 34,412 ns/op
+                 gc.alloc.rate:      886,487 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            2,000 ms
+
+
+# Run progress: 22,22% complete, ETA 00:03:06
+# Fork: 2 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+36,443 ns/op
+# Warmup Iteration   2: 35,210 ns/op
+# Warmup Iteration   3: 35,681 ns/op
+# Warmup Iteration   4: 36,888 ns/op
+# Warmup Iteration   5: 36,112 ns/op
+Iteration   1: 38,002 ns/op
+                 gc.alloc.rate:      802,893 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   2: 35,266 ns/op
+                 gc.alloc.rate:      865,054 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   3: 35,212 ns/op
+                 gc.alloc.rate:      866,297 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           2,000 counts
+                 gc.time:            2,000 ms
+
+Iteration   4: 35,176 ns/op
+                 gc.alloc.rate:      867,197 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   5: 36,407 ns/op
+                 gc.alloc.rate:      837,984 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   6: 39,190 ns/op
+                 gc.alloc.rate:      778,503 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           2,000 counts
+                 gc.time:            1,000 ms
+
+Iteration   7: 35,185 ns/op
+                 gc.alloc.rate:      867,076 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   8: 37,072 ns/op
+                 gc.alloc.rate:      822,931 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+
+# Run progress: 27,78% complete, ETA 00:02:53
+# Fork: 3 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+36,285 ns/op
+# Warmup Iteration   2: 35,459 ns/op
+# Warmup Iteration   3: 38,650 ns/op
+# Warmup Iteration   4: 36,174 ns/op
+# Warmup Iteration   5: 36,520 ns/op
+Iteration   1: 36,467 ns/op
+                 gc.alloc.rate:      836,530 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   2: 36,885 ns/op
+                 gc.alloc.rate:      827,169 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           2,000 counts
+                 gc.time:            2,000 ms
+
+Iteration   3: 44,383 ns/op
+                 gc.alloc.rate:      687,278 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            8,000 ms
+
+Iteration   4: 36,858 ns/op
+                 gc.alloc.rate:      827,789 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           2,000 counts
+                 gc.time:            2,000 ms
+
+Iteration   5: 36,483 ns/op
+                 gc.alloc.rate:      836,176 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            2,000 ms
+
+Iteration   6: 36,442 ns/op
+                 gc.alloc.rate:      837,231 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           2,000 counts
+                 gc.time:            1,000 ms
+
+Iteration   7: 36,258 ns/op
+                 gc.alloc.rate:      841,466 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   8: 35,944 ns/op
+                 gc.alloc.rate:      848,706 MB/sec
+                 gc.alloc.rate.norm: 32,000 B/op
+                 gc.count:           3,000 counts
+                 gc.time:            4,000 ms
+
+
+
+Result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.owner":
+  36,382 ±(99.9%) 1,577 ns/op [Average]
+  (min, avg, max) = (34,412, 36,382, 44,383), stdev = 2,051
+  CI (99.9%): [34,805, 37,959] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.owner:gc.alloc.rate":
+  840,794 ±(99.9%) 32,212 MB/sec [Average]
+  (min, avg, max) = (687,278, 840,794, 886,487), stdev = 41,885
+  CI (99.9%): [808,582, 873,007] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.owner:gc.alloc.rate.norm":
+  32,000 ±(99.9%) 0,001 B/op [Average]
+  (min, avg, max) = (32,000, 32,000, 32,000), stdev = 0,001
+  CI (99.9%): [32,000, 32,000] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.owner:gc.count":
+  65,000 ±(99.9%) 0,001 counts [Sum]
+  (min, avg, max) = (2,000, 2,708, 3,000), stdev = 0,464
+  CI (99.9%): [65,000, 65,000] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.owner:gc.time":
+  66,000 ±(99.9%) 0,001 ms [Sum]
+  (min, avg, max) = (1,000, 2,750, 8,000), stdev = 1,359
+  CI (99.9%): [66,000, 66,000] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 26.0.1, Java HotSpot(TM) 64-Bit Server VM, 26.0.1+8-34
+# VM invoker: /usr/lib/jvm/jdk-26.0.1-oracle-x64/bin/java
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 1 s each
+# Measurement: 8 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.recordOnly
+# Parameters: (tagSets = 1)
+
+# Run progress: 33,33% complete, ETA 00:02:39
+# Fork: 1 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+27,984 ns/op
+# Warmup Iteration   2: 28,832 ns/op
+# Warmup Iteration   3: 28,084 ns/op
+# Warmup Iteration   4: 28,198 ns/op
+# Warmup Iteration   5: 29,295 ns/op
+Iteration   1: 29,623 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   2: 28,163 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   3: 29,877 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   4: 27,888 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   5: 29,802 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   6: 27,938 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   7: 27,939 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   8: 27,905 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+
+# Run progress: 38,89% complete, ETA 00:02:26
+# Fork: 2 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+27,948 ns/op
+# Warmup Iteration   2: 27,933 ns/op
+# Warmup Iteration   3: 27,869 ns/op
+# Warmup Iteration   4: 28,497 ns/op
+# Warmup Iteration   5: 27,917 ns/op
+Iteration   1: 28,269 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   2: 29,133 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   3: 27,900 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   4: 27,878 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   5: 27,859 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   6: 28,042 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   7: 28,405 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   8: 34,718 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+
+# Run progress: 44,44% complete, ETA 00:02:13
+# Fork: 3 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+29,404 ns/op
+# Warmup Iteration   2: 28,657 ns/op
+# Warmup Iteration   3: 28,411 ns/op
+# Warmup Iteration   4: 28,334 ns/op
+# Warmup Iteration   5: 28,722 ns/op
+Iteration   1: 28,309 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   2: 28,276 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   3: 28,237 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   4: 28,922 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   5: 28,070 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   6: 27,893 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   7: 27,977 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   8: 30,086 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+
+
+Result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.recordOnly":
+  28,713 ±(99.9%) 1,127 ns/op [Average]
+  (min, avg, max) = (27,859, 28,713, 34,718), stdev = 1,466
+  CI (99.9%): [27,586, 29,840] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.recordOnly:gc.alloc.rate":
+  0,007 ±(99.9%) 0,001 MB/sec [Average]
+  (min, avg, max) = (0,007, 0,007, 0,007), stdev = 0,001
+  CI (99.9%): [0,007, 0,007] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.recordOnly:gc.alloc.rate.norm":
+  ≈ 10⁻⁴ B/op
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.recordOnly:gc.count":
+  ≈ 0 counts
+
+
+# JMH version: 1.37
+# VM version: JDK 26.0.1, Java HotSpot(TM) 64-Bit Server VM, 26.0.1+8-34
+# VM invoker: /usr/lib/jvm/jdk-26.0.1-oracle-x64/bin/java
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 1 s each
+# Measurement: 8 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.recordOnly
+# Parameters: (tagSets = 16)
+
+# Run progress: 50,00% complete, ETA 00:01:59
+# Fork: 1 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+29,125 ns/op
+# Warmup Iteration   2: 27,884 ns/op
+# Warmup Iteration   3: 28,791 ns/op
+# Warmup Iteration   4: 28,638 ns/op
+# Warmup Iteration   5: 28,930 ns/op
+Iteration   1: 28,265 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   2: 27,954 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   3: 28,686 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   4: 29,694 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   5: 28,924 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   6: 28,283 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   7: 28,662 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   8: 28,273 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+
+# Run progress: 55,56% complete, ETA 00:01:46
+# Fork: 2 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+27,994 ns/op
+# Warmup Iteration   2: 31,203 ns/op
+# Warmup Iteration   3: 29,770 ns/op
+# Warmup Iteration   4: 28,129 ns/op
+# Warmup Iteration   5: 28,309 ns/op
+Iteration   1: 28,682 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   2: 31,178 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   3: 27,932 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   4: 28,052 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   5: 27,894 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   6: 27,905 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   7: 27,860 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   8: 27,861 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+
+# Run progress: 61,11% complete, ETA 00:01:33
+# Fork: 3 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+27,867 ns/op
+# Warmup Iteration   2: 27,779 ns/op
+# Warmup Iteration   3: 27,883 ns/op
+# Warmup Iteration   4: 27,868 ns/op
+# Warmup Iteration   5: 27,848 ns/op
+Iteration   1: 27,868 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   2: 27,882 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   3: 32,118 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   4: 28,586 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   5: 27,876 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   6: 27,859 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   7: 27,852 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   8: 27,880 ns/op
+                 gc.alloc.rate:      0,007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+
+
+Result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.recordOnly":
+  28,501 ±(99.9%) 0,831 ns/op [Average]
+  (min, avg, max) = (27,852, 28,501, 32,118), stdev = 1,081
+  CI (99.9%): [27,670, 29,332] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.recordOnly:gc.alloc.rate":
+  0,007 ±(99.9%) 0,001 MB/sec [Average]
+  (min, avg, max) = (0,007, 0,007, 0,007), stdev = 0,001
+  CI (99.9%): [0,007, 0,007] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.recordOnly:gc.alloc.rate.norm":
+  ≈ 10⁻⁴ B/op
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.recordOnly:gc.count":
+  ≈ 0 counts
+
+
+# JMH version: 1.37
+# VM version: JDK 26.0.1, Java HotSpot(TM) 64-Bit Server VM, 26.0.1+8-34
+# VM invoker: /usr/lib/jvm/jdk-26.0.1-oracle-x64/bin/java
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 1 s each
+# Measurement: 8 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.registerPerCall
+# Parameters: (tagSets = 1)
+
+# Run progress: 66,67% complete, ETA 00:01:19
+# Fork: 1 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+107,681 ns/op
+# Warmup Iteration   2: 81,312 ns/op
+# Warmup Iteration   3: 80,442 ns/op
+# Warmup Iteration   4: 80,679 ns/op
+# Warmup Iteration   5: 82,206 ns/op
+Iteration   1: 81,722 ns/op
+                 gc.alloc.rate:      5226,566 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            5,000 ms
+
+Iteration   2: 85,533 ns/op
+                 gc.alloc.rate:      4993,189 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            7,000 ms
+
+Iteration   3: 81,027 ns/op
+                 gc.alloc.rate:      5271,384 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            6,000 ms
+
+Iteration   4: 83,370 ns/op
+                 gc.alloc.rate:      5123,630 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            6,000 ms
+
+Iteration   5: 96,703 ns/op
+                 gc.alloc.rate:      4416,650 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            5,000 ms
+
+Iteration   6: 82,132 ns/op
+                 gc.alloc.rate:      5199,635 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            7,000 ms
+
+Iteration   7: 80,881 ns/op
+                 gc.alloc.rate:      5280,012 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            5,000 ms
+
+Iteration   8: 81,396 ns/op
+                 gc.alloc.rate:      5246,150 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            6,000 ms
+
+
+# Run progress: 72,22% complete, ETA 00:01:06
+# Fork: 2 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+106,993 ns/op
+# Warmup Iteration   2: 80,857 ns/op
+# Warmup Iteration   3: 81,035 ns/op
+# Warmup Iteration   4: 83,580 ns/op
+# Warmup Iteration   5: 81,235 ns/op
+Iteration   1: 81,724 ns/op
+                 gc.alloc.rate:      5225,640 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            6,000 ms
+
+Iteration   2: 81,487 ns/op
+                 gc.alloc.rate:      5241,021 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            6,000 ms
+
+Iteration   3: 81,477 ns/op
+                 gc.alloc.rate:      5241,745 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            5,000 ms
+
+Iteration   4: 81,844 ns/op
+                 gc.alloc.rate:      5218,505 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            5,000 ms
+
+Iteration   5: 81,472 ns/op
+                 gc.alloc.rate:      5242,863 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            6,000 ms
+
+Iteration   6: 90,373 ns/op
+                 gc.alloc.rate:      4725,815 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            6,000 ms
+
+Iteration   7: 97,979 ns/op
+                 gc.alloc.rate:      4358,273 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            4,000 ms
+
+Iteration   8: 81,505 ns/op
+                 gc.alloc.rate:      5240,236 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            5,000 ms
+
+
+# Run progress: 77,78% complete, ETA 00:00:53
+# Fork: 3 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+109,116 ns/op
+# Warmup Iteration   2: 81,843 ns/op
+# Warmup Iteration   3: 81,486 ns/op
+# Warmup Iteration   4: 81,825 ns/op
+# Warmup Iteration   5: 82,719 ns/op
+Iteration   1: 82,210 ns/op
+                 gc.alloc.rate:      5195,584 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            7,000 ms
+
+Iteration   2: 82,106 ns/op
+                 gc.alloc.rate:      5202,054 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            6,000 ms
+
+Iteration   3: 81,720 ns/op
+                 gc.alloc.rate:      5226,384 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            5,000 ms
+
+Iteration   4: 81,154 ns/op
+                 gc.alloc.rate:      5263,226 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            6,000 ms
+
+Iteration   5: 80,917 ns/op
+                 gc.alloc.rate:      5278,427 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            6,000 ms
+
+Iteration   6: 83,469 ns/op
+                 gc.alloc.rate:      5117,129 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            4,000 ms
+
+Iteration   7: 86,116 ns/op
+                 gc.alloc.rate:      4959,629 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            4,000 ms
+
+Iteration   8: 118,570 ns/op
+                 gc.alloc.rate:      3601,987 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           4,000 counts
+                 gc.time:            11,000 ms
+
+
+
+Result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.registerPerCall":
+  85,287 ±(99.9%) 6,532 ns/op [Average]
+  (min, avg, max) = (80,881, 85,287, 118,570), stdev = 8,493
+  CI (99.9%): [78,755, 91,818] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.registerPerCall:gc.alloc.rate":
+  5045,656 ±(99.9%) 307,426 MB/sec [Average]
+  (min, avg, max) = (3601,987, 5045,656, 5280,012), stdev = 399,741
+  CI (99.9%): [4738,229, 5353,082] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.registerPerCall:gc.alloc.rate.norm":
+  448,001 ±(99.9%) 0,001 B/op [Average]
+  (min, avg, max) = (448,001, 448,001, 448,001), stdev = 0,001
+  CI (99.9%): [448,001, 448,001] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.registerPerCall:gc.count":
+  127,000 ±(99.9%) 0,001 counts [Sum]
+  (min, avg, max) = (4,000, 5,292, 6,000), stdev = 0,550
+  CI (99.9%): [127,000, 127,000] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.registerPerCall:gc.time":
+  139,000 ±(99.9%) 0,001 ms [Sum]
+  (min, avg, max) = (4,000, 5,792, 11,000), stdev = 1,414
+  CI (99.9%): [139,000, 139,000] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 26.0.1, Java HotSpot(TM) 64-Bit Server VM, 26.0.1+8-34
+# VM invoker: /usr/lib/jvm/jdk-26.0.1-oracle-x64/bin/java
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 1 s each
+# Measurement: 8 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.registerPerCall
+# Parameters: (tagSets = 16)
+
+# Run progress: 83,33% complete, ETA 00:00:39
+# Fork: 1 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+112,351 ns/op
+# Warmup Iteration   2: 84,191 ns/op
+# Warmup Iteration   3: 93,662 ns/op
+# Warmup Iteration   4: 94,908 ns/op
+# Warmup Iteration   5: 87,502 ns/op
+Iteration   1: 87,226 ns/op
+                 gc.alloc.rate:      4896,533 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            4,000 ms
+
+Iteration   2: 88,048 ns/op
+                 gc.alloc.rate:      4850,575 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            4,000 ms
+
+Iteration   3: 83,578 ns/op
+                 gc.alloc.rate:      5110,650 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            5,000 ms
+
+Iteration   4: 83,554 ns/op
+                 gc.alloc.rate:      5112,050 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            4,000 ms
+
+Iteration   5: 84,269 ns/op
+                 gc.alloc.rate:      5068,590 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            3,000 ms
+
+Iteration   6: 89,646 ns/op
+                 gc.alloc.rate:      4764,825 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            4,000 ms
+
+Iteration   7: 83,616 ns/op
+                 gc.alloc.rate:      5108,372 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            5,000 ms
+
+Iteration   8: 82,106 ns/op
+                 gc.alloc.rate:      5202,048 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            8,000 ms
+
+
+# Run progress: 88,89% complete, ETA 00:00:26
+# Fork: 2 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+114,582 ns/op
+# Warmup Iteration   2: 87,281 ns/op
+# Warmup Iteration   3: 86,113 ns/op
+# Warmup Iteration   4: 85,117 ns/op
+# Warmup Iteration   5: 94,262 ns/op
+Iteration   1: 105,500 ns/op
+                 gc.alloc.rate:      4047,366 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           4,000 counts
+                 gc.time:            6,000 ms
+
+Iteration   2: 87,907 ns/op
+                 gc.alloc.rate:      4859,102 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            4,000 ms
+
+Iteration   3: 84,201 ns/op
+                 gc.alloc.rate:      5073,191 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            5,000 ms
+
+Iteration   4: 85,003 ns/op
+                 gc.alloc.rate:      5024,909 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            5,000 ms
+
+Iteration   5: 83,335 ns/op
+                 gc.alloc.rate:      5125,601 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            7,000 ms
+
+Iteration   6: 83,573 ns/op
+                 gc.alloc.rate:      5111,201 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            7,000 ms
+
+Iteration   7: 83,272 ns/op
+                 gc.alloc.rate:      5129,055 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            7,000 ms
+
+Iteration   8: 85,295 ns/op
+                 gc.alloc.rate:      5006,810 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            7,000 ms
+
+
+# Run progress: 94,44% complete, ETA 00:00:13
+# Fork: 3 of 3
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/dirk/IdeaProjects/legatium/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+116,297 ns/op
+# Warmup Iteration   2: 83,882 ns/op
+# Warmup Iteration   3: 85,198 ns/op
+# Warmup Iteration   4: 86,037 ns/op
+# Warmup Iteration   5: 86,679 ns/op
+Iteration   1: 87,682 ns/op
+                 gc.alloc.rate:      4870,774 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            6,000 ms
+
+Iteration   2: 88,239 ns/op
+                 gc.alloc.rate:      4840,932 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            4,000 ms
+
+Iteration   3: 84,585 ns/op
+                 gc.alloc.rate:      5049,602 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            7,000 ms
+
+Iteration   4: 84,100 ns/op
+                 gc.alloc.rate:      5078,642 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            6,000 ms
+
+Iteration   5: 84,663 ns/op
+                 gc.alloc.rate:      5045,209 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            7,000 ms
+
+Iteration   6: 84,161 ns/op
+                 gc.alloc.rate:      5075,021 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            6,000 ms
+
+Iteration   7: 86,346 ns/op
+                 gc.alloc.rate:      4946,255 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           6,000 counts
+                 gc.time:            7,000 ms
+
+Iteration   8: 83,830 ns/op
+                 gc.alloc.rate:      5094,358 MB/sec
+                 gc.alloc.rate.norm: 448,001 B/op
+                 gc.count:           5,000 counts
+                 gc.time:            6,000 ms
+
+
+
+Result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.registerPerCall":
+  85,989 ±(99.9%) 3,540 ns/op [Average]
+  (min, avg, max) = (82,106, 85,989, 105,500), stdev = 4,602
+  CI (99.9%): [82,449, 89,529] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.registerPerCall:gc.alloc.rate":
+  4978,820 ±(99.9%) 176,247 MB/sec [Average]
+  (min, avg, max) = (4047,366, 4978,820, 5202,048), stdev = 229,170
+  CI (99.9%): [4802,573, 5155,066] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.registerPerCall:gc.alloc.rate.norm":
+  448,001 ±(99.9%) 0,001 B/op [Average]
+  (min, avg, max) = (448,001, 448,001, 448,001), stdev = 0,001
+  CI (99.9%): [448,001, 448,001] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.registerPerCall:gc.count":
+  129,000 ±(99.9%) 0,001 counts [Sum]
+  (min, avg, max) = (4,000, 5,375, 6,000), stdev = 0,576
+  CI (99.9%): [129,000, 129,000] (assumes normal distribution)
+
+Secondary result "eu.inqudium.legatium.benchmarks.BodyMeterRecordBenchmark.registerPerCall:gc.time":
+  134,000 ±(99.9%) 0,001 ms [Sum]
+  (min, avg, max) = (3,000, 5,583, 8,000), stdev = 1,381
+  CI (99.9%): [134,000, 134,000] (assumes normal distribution)
+
+
+# Run complete. Total time: 00:03:59
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+NOTE: Current JVM experimentally supports Compiler Blackholes, and they are in use. Please exercise
+extra caution when trusting the results, look into the generated code to check the benchmark still
+works, and factor in a small probability of new VM bugs. Additionally, while comparisons between
+different JVMs are already problematic, the performance difference caused by different Blackhole
+modes can be very significant. Please make sure you use the consistent Blackhole mode for comparisons.
+
+Benchmark                                                    (tagSets)  Mode  Cnt     Score     Error   Units
+BodyMeterRecordBenchmark.owner                                       1  avgt   24    34,163 ±   1,246   ns/op
+BodyMeterRecordBenchmark.owner:gc.alloc.rate                         1  avgt   24   894,645 ±  28,082  MB/sec
+BodyMeterRecordBenchmark.owner:gc.alloc.rate.norm                    1  avgt   24    32,000 ±   0,001    B/op
+BodyMeterRecordBenchmark.owner:gc.count                              1  avgt   24    68,000            counts
+BodyMeterRecordBenchmark.owner:gc.time                               1  avgt   24    69,000                ms
+BodyMeterRecordBenchmark.owner                                      16  avgt   24    36,382 ±   1,577   ns/op
+BodyMeterRecordBenchmark.owner:gc.alloc.rate                        16  avgt   24   840,794 ±  32,212  MB/sec
+BodyMeterRecordBenchmark.owner:gc.alloc.rate.norm                   16  avgt   24    32,000 ±   0,001    B/op
+BodyMeterRecordBenchmark.owner:gc.count                             16  avgt   24    65,000            counts
+BodyMeterRecordBenchmark.owner:gc.time                              16  avgt   24    66,000                ms
+BodyMeterRecordBenchmark.recordOnly                                  1  avgt   24    28,713 ±   1,127   ns/op
+BodyMeterRecordBenchmark.recordOnly:gc.alloc.rate                    1  avgt   24     0,007 ±   0,001  MB/sec
+BodyMeterRecordBenchmark.recordOnly:gc.alloc.rate.norm               1  avgt   24    ≈ 10⁻⁴              B/op
+BodyMeterRecordBenchmark.recordOnly:gc.count                         1  avgt   24       ≈ 0            counts
+BodyMeterRecordBenchmark.recordOnly                                 16  avgt   24    28,501 ±   0,831   ns/op
+BodyMeterRecordBenchmark.recordOnly:gc.alloc.rate                   16  avgt   24     0,007 ±   0,001  MB/sec
+BodyMeterRecordBenchmark.recordOnly:gc.alloc.rate.norm              16  avgt   24    ≈ 10⁻⁴              B/op
+BodyMeterRecordBenchmark.recordOnly:gc.count                        16  avgt   24       ≈ 0            counts
+BodyMeterRecordBenchmark.registerPerCall                             1  avgt   24    85,287 ±   6,532   ns/op
+BodyMeterRecordBenchmark.registerPerCall:gc.alloc.rate               1  avgt   24  5045,656 ± 307,426  MB/sec
+BodyMeterRecordBenchmark.registerPerCall:gc.alloc.rate.norm          1  avgt   24   448,001 ±   0,001    B/op
+BodyMeterRecordBenchmark.registerPerCall:gc.count                    1  avgt   24   127,000            counts
+BodyMeterRecordBenchmark.registerPerCall:gc.time                     1  avgt   24   139,000                ms
+BodyMeterRecordBenchmark.registerPerCall                            16  avgt   24    85,989 ±   3,540   ns/op
+BodyMeterRecordBenchmark.registerPerCall:gc.alloc.rate              16  avgt   24  4978,820 ± 176,247  MB/sec
+BodyMeterRecordBenchmark.registerPerCall:gc.alloc.rate.norm         16  avgt   24   448,001 ±   0,001    B/op
+BodyMeterRecordBenchmark.registerPerCall:gc.count                   16  avgt   24   129,000            counts
+BodyMeterRecordBenchmark.registerPerCall:gc.time                    16  avgt   24   134,000                ms
+
+Benchmark result is saved to benchmarks/results/body-meter-record-2026-09-20.json
