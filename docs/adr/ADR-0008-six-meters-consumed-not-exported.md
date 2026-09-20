@@ -2,6 +2,7 @@
 
 **Status:** Accepted  
 **Date:** 2026-09-05  
+**Last updated:** 2026-09-20  
 **Deciders:** Dirk Haase (maintainer)  
 **Related:** ADR-0002 (`adapter.logging.correlation.id` watches its
 identity contract), ADR-0003 (the owner `ClientLoggingMetrics` lives
@@ -140,3 +141,27 @@ read. In the last case it is removed in the next major, not silently.
 - The body meters are opt-in and measure what flowed in every body
   mode (ADR-0006); switching body logging off does not switch them
   off.
+
+## History
+
+- **2026-09-05:** decided; the six families and the seventh name
+  as the review of that day left them.
+- **2026-09-19:** the dynamic body meters (the two size summaries
+  and the read-state counter) are resolved once per tag set and kept
+  in a cache that mirrors the registry's entries - a meter the
+  registry did not keep, or kept under folded tag values, is never
+  cached, and a removal listener drops an entry the host removes.
+  The cache is never written from inside the registry's lock
+  (Micrometer notifies removal listeners under its meter-map lock
+  while a registration takes that same lock); a miss resolves the
+  meter outside the map and publishes it with `putIfAbsent`.
+  Accepted residue of that order: between the registration returning
+  and the `putIfAbsent`, a host removal of that very meter can leave a
+  detached instance in the cache, which then takes every later sample
+  of its tag set until the owner is recreated - it costs the samples
+  of one tag set, never an event or a call, and closing it would take
+  a registry-wide lookup after every first-time registration.
+  `ClientLoggingMetrics` carries the rule; this entry is its reference.
+- **2026-09-20:** this history recorded, so the code names the ADR
+  instead of the analysis report that raised the residue (comment
+  audit of 2026-09-20, finding 51).

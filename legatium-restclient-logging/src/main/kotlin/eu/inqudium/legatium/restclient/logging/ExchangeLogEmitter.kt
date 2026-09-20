@@ -63,8 +63,9 @@ internal class ExchangeLogEmitter(
      * wire call - method, subject (the client's name, or the target), query, selected request headers -
      * at INFO on the exchange logger, under the exchange's MDC with the traceparent-derived trace
      * overlay: the scope OWNS the trace keys here exactly as at emission, so the arrival line carries
-     * the same `traceId`/`spanId` pair as the completion event. Deliberately WITHOUT `adapter_outcome`, status or duration: those exist only at
-     * completion, and their absence is what keeps outcome-keyed dashboards blind to this extra line.
+     * the same `traceId`/`spanId` pair as the completion event. Deliberately WITHOUT `adapter_outcome`,
+     * status or duration: those exist only at completion, and their absence is what keeps outcome-keyed
+     * dashboards blind to this extra line.
      */
     fun logRequestStart(exchange: Exchange) {
         // The guard covers the COMPLETE arrival operation including the level gate: isInfoEnabled is a
@@ -122,9 +123,10 @@ internal class ExchangeLogEmitter(
      * plain-text appender that drops key-values and MDC still shows the gist of the exchange.
      */
     fun logExchange(exchange: Exchange) {
-        // The fail-open guard covers EVERYTHING after the interceptor's exactly-once CAS: the pre-gate section reads
-        // host-provided beans (the time source) and the response object - an exception there must not
-        // escape into the client's close path and lose the event WITHOUT the emission counter seeing it.
+        // The fail-open guard covers EVERYTHING after the interceptor's exactly-once CAS: the pre-gate
+        // section reads host-provided beans (the time source) and the response object - an exception
+        // there must not escape into the client's close path and lose the event WITHOUT the emission
+        // counter seeing it.
         failOpen(
             onInterrupted = { e ->
                 metrics.emissionFailure()
@@ -240,7 +242,8 @@ internal class ExchangeLogEmitter(
      * ([ClientLogField.OUTCOME]): a timeout is WARN with its own outcome (the peer is slow, not broken),
      * any other thrown call is ERROR with `failure`; an answered call classifies by its status alone
      * ([Classification.ofStatus], shared with the WebClient twin): a 5xx is WARN `failure`, a 4xx is
-     * `rejected` at INFO - WARN for 401, 403, 408 and 429 (ADR-0012) - and INFO `success` otherwise.
+     * `rejected` at INFO - WARN for the [Classification.ESCALATED_REJECTIONS] (ADR-0012) - and INFO
+     * `success` otherwise.
      */
     private fun classify(
         failure: Throwable?,
@@ -309,9 +312,9 @@ internal class ExchangeLogEmitter(
         } ?: emptyList()
 
     /**
-     * Body fields only when the direction's [eu.inqudium.legatium.common.BodyLogMode] admits THIS outcome ("failed" = outcome not
-     * `success`, which since ADR-0012 includes a `rejected` 4xx); a count-only capture (size metrics) must
-     * not surface as an empty field.
+     * Body fields only when the direction's [eu.inqudium.legatium.common.BodyLogMode] admits THIS
+     * outcome ("failed" = outcome not `success`, which since ADR-0012 includes a `rejected` 4xx); a
+     * count-only capture (size metrics) must not surface as an empty field.
      */
     private fun loggedBodies(
         exchange: Exchange,

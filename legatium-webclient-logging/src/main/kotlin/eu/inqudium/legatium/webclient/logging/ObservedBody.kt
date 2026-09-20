@@ -38,11 +38,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * ## The limit of the heuristic
  *
- * The rule reads WHERE a cancel comes from, not WHY - two misreadings are accepted (the module guide,
- * §4.3, derives them with examples): a scheduler hop between this body and an early-exiting consumer
- * logs `cancelled`; a limit raised from WITHIN the delivery (`DataBufferUtils.join` over
- * `maxInMemorySize`) logs `success` with the read state `partial`. The direct paths `WebClient` itself
- * builds never hop.
+ * The rule reads WHERE a cancel comes from, not WHY - two misreadings are accepted (the module guide's
+ * section "Cancellation and the missing status" derives them with examples): a scheduler hop between
+ * this body and an early-exiting consumer logs `cancelled`; a limit raised from WITHIN the delivery
+ * (`DataBufferUtils.join` over `maxInMemorySize`) logs `success` with the read state `partial`. The
+ * direct paths `WebClient` itself builds never hop.
  *
  * ## Order of the terminal signal and the emission
  *

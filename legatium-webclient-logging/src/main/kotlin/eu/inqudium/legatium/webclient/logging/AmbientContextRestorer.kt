@@ -21,11 +21,10 @@ import reactor.util.context.ContextView
  * source, because on the blocking stack the thread IS the caller's context and a Reactor Context does
  * not exist. A deliberate stack difference, like `cancelled` (ADR-0010).
  *
- * Purely ADDITIVE, like the `MdcScope` that follows it: only values the context holds are installed,
- * a thread-local the context does not mention stays as the emitting thread has it, and the returned
- * scope restores every touched value on close. The trace keys are owned by the
- * [eu.inqudium.legatium.common.MdcScope] opened inside this scope, so a bridge's ids the accessors
- * restore never outrank the header's.
+ * Purely ADDITIVE, like the [eu.inqudium.legatium.common.MdcScope] that follows it: only values the
+ * context holds are installed, a thread-local the context does not mention stays as the emitting thread
+ * has it, and the returned scope restores every touched value on close. The trace keys are owned by the
+ * scope opened inside this one, so a bridge's ids the accessors restore never outrank the header's.
  */
 internal fun interface AmbientContextRestorer {
     /** Installs the thread-locals [ambient] holds; the returned scope restores the previous values. */

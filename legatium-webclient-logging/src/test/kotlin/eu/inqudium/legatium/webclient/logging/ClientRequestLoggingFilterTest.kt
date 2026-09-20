@@ -118,7 +118,8 @@ class ClientRequestLoggingFilterTest {
             //   subscription arriving AFTER the exchange completed leaves the emitted event alone, on a
             //   body that REFUSES that subscription, the shape of the JDK, Jetty and HttpComponents
             //   connector responses (see singleSubscriber). The second subscription from INSIDE the
-            //   first one's completion - Spring's exchangeToMono release - is the next test.
+            //   first one's completion - Spring's exchangeToMono release - is pinned by `should log a body
+            //   consumed inside exchangeToMono as success although Spring releases it a second time`.
             // Success criteria: a delivered response logs nothing until its body is consumed; releasing
             //   the body logs one success; releasing it again, once the event is out, is answered with
             //   the body's own error, passed through to that second subscriber, and neither logs a
@@ -509,8 +510,9 @@ class ClientRequestLoggingFilterTest {
             //   consumer decided it has read enough. That is consumption, not abandonment.
             // Success criteria: INFO, outcome success, the received 200, and the read-state counter shows
             //   `partial` for the exchange.
-            // Why it matters: the same signal shape is Spring's own body skip (next test); logging it as
-            //   cancelled flags healthy calls at WARN.
+            // Why it matters: the same signal shape is Spring's own body skip (pinned by `should log
+            //   Spring's body skip for a Void body type as success`); logging it as cancelled flags healthy
+            //   calls at WARN.
             // Given: a measuring filter and a response whose body never ends
             val registry = SimpleMeterRegistry()
             val measuring = filterWith(properties.copy(measureResponseBodySize = true), ticker, registry)
@@ -558,8 +560,9 @@ class ClientRequestLoggingFilterTest {
             // Success criteria: one WARN event, outcome cancelled, with the received 200 - and the cancel
             //   reached the body's source.
             // Why it matters: this is the disposition the reactive stack adds; it must survive the
-            //   consumption-limited distinction above - and the body operator must forward the cancel
-            //   upstream, or the engine keeps reading the abandoned body and holds the connection.
+            //   consumption-limited distinction (`should log a body the consumer stopped reading from
+            //   within its delivery as success, partially read`) - and the body operator must forward
+            //   the cancel upstream, or the engine keeps reading the abandoned body and holds the connection.
             // Given: a response whose body never ends and records a cancel, one buffer delivered, then
             //   the caller cancels later
             val bodyCancelled = AtomicBoolean(false)

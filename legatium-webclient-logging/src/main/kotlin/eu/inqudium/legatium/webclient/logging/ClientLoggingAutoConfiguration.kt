@@ -53,8 +53,7 @@ import org.springframework.core.io.ResourceLoader
  * client observation and Micrometer Tracing are wired next to the module - the decision behind the
  * identity contract of ADR-0002, which has no property ([ClientObservationWiring]) -, one when the
  * customizer is registered, and one per `WebClient.Builder` the customizer attached the filter to. With
- * `adapter-logging.enabled=false`
- * none of them appears - Boot's condition evaluation report (DEBUG on
+ * `adapter-logging.enabled=false` none of them appears - Boot's condition evaluation report (DEBUG on
  * `org.springframework.boot.autoconfigure`) then names the property as the reason.
  *
  * At TRACE the bean line is followed by the ORIGIN of every `adapter-logging.*` value Boot bound - the
@@ -125,10 +124,9 @@ class ClientLoggingAutoConfiguration {
     }
 
     /**
-     * The observation line of the wiring report ([ClientObservationWiring]) - logged once every singleton
-     * exists, because Boot declares its observation customizers under their interface type and only the
-     * instance tells them apart from a host's. Independent of the filter bean above: the line is about the
-     * context, and appears also when a host replaced the bean.
+     * The observation line of the wiring report - logged once every singleton exists, for the reason
+     * [ClientObservationWiring.describe] gives. Independent of the filter bean above: the line is about
+     * the context, and appears also when a host replaced the bean.
      */
     @Bean
     fun clientLoggingWebClientObservationReport(
