@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * The registration behaviour of the shared metrics owner, driven directly - ONCE here, for both stacks,
- * instead of once per twin through its entry point (architecture review of 2026-09-05, finding 1):
+ * instead of once per twin through its entry point (decision of 2026-09-05):
  * pre-registration, the one-owner-per-registry-and-stack rule, the fail-open registration paths, the
  * guarded counter updates and the body meters' cardinality rules. The twins' metrics tests keep the
  * lifecycle facts only their entry point can show (when the gauge moves, what the emitter counts).

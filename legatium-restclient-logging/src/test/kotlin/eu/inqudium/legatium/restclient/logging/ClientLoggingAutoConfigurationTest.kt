@@ -162,7 +162,8 @@ class ClientLoggingAutoConfigurationTest {
         //   observation registry alone.
         // Success criteria: with tracing, the line names both builders as observed and traced (trace
         //   id is the request id, no correlation header); without a tracer, the observed-not-traced
-        //   line with the generated-id consequence. The no-observation line is pinned by the test above.
+        //   line with the generated-id consequence. The no-observation line is pinned by
+        //   `should report at DEBUG that it is enabled and every builder it configured`.
         // Why it matters: the decision has no property; this line is where an operator reads why the
         //   peer sees (or does not see) an X-Correlation-Id - and the test breaks when a Boot upgrade
         //   renames the customizer beans the detection looks for.

@@ -38,7 +38,8 @@ import reactor.util.context.Context
  * before the module's customizer - is cancelled by Reactor's `onOperatorError` from inside `onNext`
  * on the delivering thread, which reads as "the downstream took it". The response is dropped without
  * its body subscribed or released, so the exchange stays RESPONDED on the gauge, like a raw
- * `exchange()` caller that drops the response (module guide, §4.4): the host must read or release a
+ * `exchange()` caller that drops the response (module guide, "A body nobody consumes"): the host must
+ * read or release a
  * response it discards.
  */
 internal class ObservedResponse(

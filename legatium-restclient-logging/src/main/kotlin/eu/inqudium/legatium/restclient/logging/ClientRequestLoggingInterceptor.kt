@@ -281,10 +281,9 @@ class ClientRequestLoggingInterceptor
          * never comes; `Content-Length` otherwise, when present and no `Content-Encoding`
          * other than `identity` is on the response; [BoundedBodyCapture.UNKNOWN_LENGTH] for the rest
          * (chunked, possibly decoded by the engine, or a value that is not a number). The header is
-         * PEER-CONTROLLED input: it only
-         * ever feeds the completeness comparison - never an allocation or a read - and a malformed value
-         * (Spring parses it with `Long.parseLong`) is folded to unknown here rather than counted as a
-         * wiring failure.
+         * PEER-CONTROLLED input: it only ever feeds the completeness comparison - never an allocation or
+         * a read - and a malformed value (Spring parses it with `Long.parseLong`) is folded to unknown
+         * here rather than counted as a wiring failure.
          */
         private fun declaredBodyLength(
             method: String,

@@ -53,10 +53,10 @@ internal class ExchangeLogEmitter(
      * Restores the caller's thread-locals from the exchange's Reactor Context around each emission
      * (ADR-0010). Detected against this module's class loader by default (manual wiring); mutable for
      * the auto-configuration, which re-detects against the context's class loader, and for the tests,
-     * which swap in a throwing restorer to drive the fail-open path. A post-construction write rather
-     * than a constructor parameter of the filter on purpose: the restorer has no RestClient counterpart
-     * (there the thread IS the caller's context), and the twins' entry points keep one constructor
-     * signature.
+     * which swap in a throwing restorer to drive the fail-open path. A post-construction seam rather
+     * than a constructor parameter of the filter, in both twins - the RestClient emitter's
+     * `callerMdcRestorer` is the counterpart (ADR-0011) - so the entry points keep one constructor
+     * signature and the tests swap the restorer.
      */
     internal var ambientRestorer: AmbientContextRestorer = AmbientContextRestorer.detect(),
 ) {
@@ -239,8 +239,8 @@ internal class ExchangeLogEmitter(
      * error signal is ERROR with `failure`, a subscription the caller abandoned (a downstream timeout
      * operator, a disposed caller) is WARN with `cancelled`; an answered exchange classifies by its
      * status alone ([Classification.ofStatus], shared with the RestClient twin): a 5xx is WARN `failure`,
-     * a 4xx is `rejected` at INFO - WARN for 401, 403, 408 and 429 (ADR-0012) - and INFO `success`
-     * otherwise.
+     * a 4xx is `rejected` at INFO - WARN for the [Classification.ESCALATED_REJECTIONS] (ADR-0012) - and
+     * INFO `success` otherwise.
      */
     private fun classify(
         failure: Throwable?,
@@ -308,9 +308,9 @@ internal class ExchangeLogEmitter(
         } ?: emptyList()
 
     /**
-     * Body fields only when the direction's [eu.inqudium.legatium.common.BodyLogMode] admits THIS outcome ("failed" = outcome not
-     * `success`, which since ADR-0012 includes a `rejected` 4xx); a count-only capture (size metrics) must
-     * not surface as an empty field.
+     * Body fields only when the direction's [eu.inqudium.legatium.common.BodyLogMode] admits THIS
+     * outcome ("failed" = outcome not `success`, which since ADR-0012 includes a `rejected` 4xx); a
+     * count-only capture (size metrics) must not surface as an empty field.
      */
     private fun loggedBodies(
         exchange: Exchange,

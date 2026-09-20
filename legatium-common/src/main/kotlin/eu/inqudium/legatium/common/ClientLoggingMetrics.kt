@@ -124,20 +124,15 @@ internal enum class ClientStack(
  * host and client name) are resolved ONCE per tag set and kept in a cache that mirrors the registry's
  * entries under those three names - one entry per meter the registry HOLDS, so the cache adds no
  * cardinality and needs no size policy of its own; the `uri` folding ([uriTag]) and the documented host
- * precondition bound both alike. A meter the registry did NOT keep - a denying `MeterFilter` (Boot's
- * `management.metrics.enable.*`, a tag cap) or a closed registry answers with a detached no-op instance
- * - is used for its exchange but never cached: nothing would ever release it, and the cache would grow
- * per tag set exactly where the operator bounded the registry. The same for a meter the registry kept
- * under OTHER tag values than the key's - a tag-folding filter answering every host beyond its cap with
- * one shared meter - so the cache never holds more entries than the registry holds meters, whichever
- * way a host bounds the tag. Without the cache every measured exchange
- * rebuilt the builder, the tags and the `Meter.Id` three times only to hit Micrometer's deduplicating
- * lookup (measured in `benchmarks/`: `BodyMeterRecordBenchmark`). The one way cache and registry could
- * drift apart - a host removing one of the dynamic meters - is closed by a removal listener that drops
- * the entry, so the next exchange registers anew instead of recording into a detached instance. The
- * listener covers the dynamic meters ONLY: the fixed meters are registered once at construction, and a
- * host that removes one of them (a `clear()` on a test registry) has decided against it - the owner
- * keeps counting into the detached instance rather than re-registering behind the host's back.
+ * precondition bound both alike, and which meters are admitted is [cacheBodyMeter]'s rule. Without the
+ * cache every measured exchange rebuilt the builder, the tags and the `Meter.Id` three times only to
+ * hit Micrometer's deduplicating lookup - the `BodyMeterRecordBenchmark` in `benchmarks/` measured it.
+ * The one way cache and registry could drift apart - a host removing one of the dynamic meters - is
+ * closed by a removal listener that drops the entry, so the next exchange registers anew instead of
+ * recording into a detached instance. The listener covers the dynamic meters ONLY: the fixed meters are
+ * registered once at construction, and a host that removes one of them (a `clear()` on a test registry)
+ * has decided against it - the owner keeps counting into the detached instance rather than
+ * re-registering behind the host's back.
  *
  * LOCK ORDER: Micrometer notifies removal listeners while holding its registry-wide meter-map lock, and
  * registering a new id takes that same lock. The cache is therefore never written from inside a
@@ -147,7 +142,7 @@ internal enum class ClientStack(
  * `putIfAbsent` ([cacheBodyMeter]); a lost race registers the same id twice, which Micrometer
  * deduplicates to one instance anyway.
  *
- * ACCEPTED RESIDUE of that order (defect analysis of 2026-09-19, night, finding 1): between the
+ * ACCEPTED RESIDUE of that order (decided 2026-09-19, recorded in ADR-0008): between the
  * registration returning and the `putIfAbsent` lies a window of microseconds in which a host removal
  * of that very meter runs the listener against a cache that holds no entry yet; the detached instance
  * is then published and takes every later sample of its tag set, unseen by any exporter, until the
@@ -268,8 +263,8 @@ internal class ClientLoggingMetrics private constructor(
      * (`MeterFilter.replaceTagValues`, `ignoreTags`, a custom `map`; Micrometer's `maximumAllowableTags`
      * is not one - it denies, never maps) answers every raw tag set beyond its allowance with ONE real
      * meter, and caching that meter under each raw key would again hold more entries than the registry
-     * holds meters. Three tag reads on the miss path alone. The window between [resolve] returning and the `putIfAbsent` is the
-     * accepted residue of the class KDoc.
+     * holds meters. The window between [resolve] returning and the `putIfAbsent` is the accepted residue
+     * of the class KDoc.
      */
     private fun <M : Meter> cacheBodyMeter(
         cache: ConcurrentHashMap<BodyMeterKey, M>,

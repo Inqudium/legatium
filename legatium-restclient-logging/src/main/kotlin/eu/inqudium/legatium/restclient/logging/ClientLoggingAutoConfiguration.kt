@@ -116,10 +116,9 @@ class ClientLoggingAutoConfiguration {
     }
 
     /**
-     * The observation line of the wiring report ([ClientObservationWiring]) - logged once every singleton
-     * exists, because Boot declares its observation customizers under their interface type and only the
-     * instance tells them apart from a host's. Independent of the interceptor bean above: the line is about the
-     * context, and appears also when a host replaced the bean.
+     * The observation line of the wiring report - logged once every singleton exists, for the reason
+     * [ClientObservationWiring.describe] gives. Independent of the interceptor bean above: the line is
+     * about the context, and appears also when a host replaced the bean.
      */
     @Bean
     fun clientLoggingRestClientObservationReport(

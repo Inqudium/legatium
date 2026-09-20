@@ -375,7 +375,8 @@ class ClientRequestLoggingMetricsTest {
             // What is tested: the conservative side of the declared-length rule - with a
             //   Content-Encoding on the response an engine may hand the application a decoded body of
             //   another length, so the capture must not trust Content-Length and falls back to the EOF.
-            // Success criteria: the same length-exact read as above counts state=partial.
+            // Success criteria: the same length-exact read as in `should count a body the ByteArray
+            //   converter reads to its declared length as complete` counts state=partial.
             // Why it matters: a wrong `complete` is worse than a conservative `partial` - the rule may
             //   only fire where the declared length is the length the application reads.
             // Given: measuring, a response declaring length AND encoding, on an engine-like stream
@@ -395,8 +396,9 @@ class ClientRequestLoggingMetricsTest {
             // What is tested: the one encoding the rule exempts - `identity` names the bytes as they
             //   are, so no engine can decode them to another length and Content-Length stays the
             //   length the application reads.
-            // Success criteria: the same length-exact read as above, with `Content-Encoding: identity`
-            //   on the response, counts state=complete and nothing under state=partial.
+            // Success criteria: the same length-exact read as in `should count a body the ByteArray
+            //   converter reads to its declared length as complete`, with `Content-Encoding: identity` on
+            //   the response, counts state=complete and nothing under state=partial.
             // Why it matters: a rule reading "any Content-Encoding -> unknown" passes the gzip case
             //   above and would turn every byte[] answer of a peer that declares identity into a
             //   partial read - the false alarm the declared-length rule exists to prevent.

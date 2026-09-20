@@ -27,7 +27,8 @@ import reactor.util.context.ContextView
  * The WebClient twin of `legatium-restclient-logging`'s `ClientRequestLoggingInterceptor`: ONE
  * structured `adapter_*` line per outbound HTTP exchange, identical message and field format, identical
  * `adapter-logging.*` configuration (see [ClientLoggingProperties]). Stack-inherent differences to the
- * RestClient twin - this list is the canonical one, the module README's table mirrors it:
+ * RestClient twin - this list is the canonical one; the module README's table mirrors it and adds the
+ * tee's concurrency model, an internal matter:
  *
  * - **Disposition vocabulary:** `cancelled` in addition to `success`/`failure`/`timeout` - a subscription
  *   the CALLER abandoned (a downstream `timeout()` operator, a disposed caller, a client that
@@ -38,8 +39,9 @@ import reactor.util.context.ContextView
  *   applies reaches this filter as a CANCEL and logs `cancelled`; a timeout the CONNECTOR raises
  *   (Reactor Netty's response timeout) arrives as an error signal and logs `timeout`.
  * - **No call-wide THREAD-LOCAL MDC:** the call hops event-loop threads; the exchange identity rides
- *   the emission's `MdcScope` (and the message inline). Handler-side propagation of the identity into
- *   reactive operators is the host's context-propagation business, not this filter's.
+ *   the emission's [eu.inqudium.legatium.common.MdcScope] (and the message inline). Handler-side
+ *   propagation of the identity into reactive operators is the host's context-propagation business, not
+ *   this filter's.
  * - **The caller's context comes from the Reactor Context, not from a thread:** the `ContextView` the
  *   caller subscribed with is captured at subscription and restored into thread-locals around the
  *   exchange line ([AmbientContextRestorer], ADR-0010), so the client line joins the server line on
@@ -56,7 +58,16 @@ import reactor.util.context.ContextView
  *   FRESH id, where the blocking twin's mutable request keeps the header of attempt 1 and every
  *   re-entry sends the same id. A traced call carries the same trace id on every attempt on both
  *   stacks.
- * - **Emission point:** the response BODY's terminal signal instead of a `close()` - the next section.
+ * - **Request body:** teed at the connector's `writeWith` as the caller's `BodyInserter` writes it - the
+ *   request is rebuilt with a wrapping inserter ([withRequestBodyTee]); a bodiless request stays
+ *   untouched. The blocking twin copies the byte array the client hands its interceptor.
+ * - **Read failure mid-body:** the body `Flux`'s error signal - `failure` with the received status -
+ *   where the blocking twin sees an `IOException` from its tee stream, reported and rethrown.
+ * - **Attachment:** one `WebClientCustomizer` (`builder.filter(...)`) where the blocking twin needs a
+ *   `RestClientCustomizer` and a `RestTemplateCustomizer`; late in both, so the module runs innermost.
+ * - **Emission point:** the response BODY's terminal signal instead of a `close()`, and a body nobody
+ *   subscribes to or releases stays open on the gauge, like a response the blocking twin's application
+ *   never closes - the next section.
  *
  * ## Emission point: the body's terminal signal
  *
@@ -71,7 +82,8 @@ import reactor.util.context.ContextView
  * guess (every `retrieve`/`exchangeToMono`/`exchangeToFlux` path of `WebClient` subscribes or
  * releases; a raw `exchange()` caller owns that duty - and so does an OUTER host filter that fails
  * synchronously on the delivered response without reading or releasing its body, see
- * [ObservedResponse] and the module guide, §4.2/§4.4).
+ * [ObservedResponse] and the module guide's sections "Cancellation and the missing status" and "A body
+ * nobody consumes").
  *
  * ## Where it sits in the filter chain
  *

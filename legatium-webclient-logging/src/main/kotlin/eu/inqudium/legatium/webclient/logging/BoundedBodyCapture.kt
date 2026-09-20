@@ -19,11 +19,10 @@ import kotlin.concurrent.withLock
  * The reactive stack does NOT guarantee that body delivery has ended when the exchange is emitted: a
  * CANCEL (a downstream `take`, a timeout operator) completes the exchange at once ([ObservedBody]),
  * while Reactive Streams still permits an already-requested `onNext` to arrive on another thread
- * afterwards. The capture
- * therefore guards itself instead of relying on a single-writer assumption: every mutation and every
- * read runs under one uncontended [ReentrantLock], and the emitter calls [freeze] FIRST - from then on
- * the capture is immutable, a late tee call is a no-op, and the logged body and the size sample are one
- * consistent snapshot instead of a moving target.
+ * afterwards. The capture therefore guards itself instead of relying on a single-writer assumption: every
+ * mutation and every read runs under one uncontended [ReentrantLock], and the emitter calls [freeze]
+ * FIRST - from then on the capture is immutable, a late tee call is a no-op, and the logged body and
+ * the size sample are one consistent snapshot instead of a moving target.
  *
  * With `maxBytes = 0` the capture runs in COUNT-ONLY mode: nothing is buffered, [totalBytes] still
  * counts every byte - the mode the body-size metrics use when body logging is off; a negative limit is

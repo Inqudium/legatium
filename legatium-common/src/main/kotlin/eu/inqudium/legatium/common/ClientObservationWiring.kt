@@ -18,11 +18,10 @@ import org.springframework.util.ClassUtils
  * and gets NO correlation header, a traceless one gets a generated id and the header.
  *
  * [describe] asks the context for beans of the customizer and tracer classes and renders one of three
- * lines: observation with tracing, observation without tracing, no observation. The twins call it once
- * every singleton exists (a `SmartInitializingSingleton`): Boot declares the RestClient customizer under
- * its interface type, so only the INSTANCE reveals it. It reports the wiring at context start, not the
- * fate of a call: a host can still switch the observation off per client, filter it with an
- * `ObservationPredicate` or build a client by hand. The exchange line itself stays the per-call truth.
+ * lines: observation with tracing, observation without tracing, no observation. It reports the wiring
+ * at context start, not the fate of a call: a host can still switch the observation off per client,
+ * filter it with an `ObservationPredicate` or build a client by hand. The exchange line itself stays
+ * the per-call truth.
  *
  * The classes are named as strings, so the common module compiles without the optional observation
  * and tracing libraries; a class that is not on the classpath counts as "no such bean".
@@ -36,7 +35,9 @@ internal object ClientObservationWiring {
      * observe, in the twin's wording ("RestClient.Builder") - against the beans of [beanFactory].
      * [correlationIdHeader] is the CONFIGURED header name ([ClientLoggingProperties.correlationIdHeader]),
      * so the line names the header the host actually sees. [tracerClass] is [TRACER]; the tests inject a
-     * class of their own classpath.
+     * class of their own classpath. Call it once every singleton exists (the twins do, from a
+     * `SmartInitializingSingleton`): Boot declares its observation customizers under their interface
+     * type, so only the INSTANCE reveals them.
      */
     fun describe(
         beanFactory: ListableBeanFactory,

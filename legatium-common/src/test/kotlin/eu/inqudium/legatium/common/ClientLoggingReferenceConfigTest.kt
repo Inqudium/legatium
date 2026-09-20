@@ -48,8 +48,8 @@ class ClientLoggingReferenceConfigTest {
     @Test
     fun `should document only keys that actually exist and every key that does`() {
         // What is tested: that the reference contains no stale or misspelled keys - the Binder silently
-        //   IGNORES unknown keys, so the equality test above cannot catch a typo on its own - and that
-        //   no existing key goes undocumented.
+        //   IGNORES unknown keys, so `should bind the reference configuration to exactly the built-in
+        //   defaults` cannot catch a typo on its own - and that no existing key goes undocumented.
         // Success criteria: the adapter-logging.* key set of the YAML equals the property names derived
         //   from the class's primary constructor (nested sections recursed).
         // Why it matters: a documented key that does not bind is worse than an undocumented one - readers

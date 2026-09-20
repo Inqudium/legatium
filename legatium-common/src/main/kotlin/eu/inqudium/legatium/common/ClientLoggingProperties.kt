@@ -96,7 +96,8 @@ data class ClientLoggingProperties(
      * stack the interceptor copies the serialized body BEFORE the wire call and has no seam at the
      * write, so it records the sample only for an exchange that received a response - the one proof
      * that the bytes went out; the reactive stack tees at the connector's write and needs no such rule.
-     * What each sample measures per direction and stack is the Common guide's section 7.8.
+     * What each sample measures per direction and stack is the Common guide's section "What the body
+     * sizes measure".
      */
     val measureRequestBodySize: Boolean = false,
     /**

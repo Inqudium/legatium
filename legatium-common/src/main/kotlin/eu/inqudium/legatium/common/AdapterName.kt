@@ -10,11 +10,13 @@ package eu.inqudium.legatium.common
  * An attribute rather than a header, a property or a URI rule: a header would go on the wire and change
  * the request the module only observes; a property is per application, and the point is telling several
  * clients of ONE application apart; a rule on the URI is what breaks behind a sidecar in the first
- * place. The attribute name is ONE for both twins, so a host that carries both jars names its clients
- * with one constant.
+ * place.
  */
 internal object AdapterName {
-    /** The request attribute both twins read the client's name from; the same string on both stacks. */
+    /**
+     * The request attribute both twins read the client's name from - ONE string on both stacks, so a
+     * host that carries both jars names its clients with one constant.
+     */
     const val ATTRIBUTE = "eu.inqudium.legatium.adapterName"
 
     /**
