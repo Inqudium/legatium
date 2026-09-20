@@ -20,9 +20,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * the cancel can tell them apart:
  *
  * - **The consumer decided it has read enough** - and says so from WITHIN the delivery of a buffer to
- *   it: Spring's own body skip (`bodyToMono(Void.class)`, `toEntity(Void.class)`, an unsupported media
- *   type) drains a `ClientHttpResponse` through `takeWhile(release; false)`, which cancels upstream in
- *   `onNext` of the FIRST buffer; a `take(n)` cancels in `onNext` of the n-th. The exchange is over,
+ *   it. Assumption: Spring's own body skip (`bodyToMono(Void.class)`, `toEntity(Void.class)`, an
+ *   unsupported media type) drains a `ClientHttpResponse` through `takeWhile(release; false)`, which
+ *   cancels upstream in `onNext` of the FIRST buffer; a `take(n)` cancels in `onNext` of the n-th. The
+ *   exchange is over,
  *   the peer answered, the application chose not to read the rest: the outcome is `success`, and the
  *   read state stays `partial` (the size counter shows what was consumed). Logging these as
  *   `cancelled` would flag every fire-and-forget call at WARN and, in `on-failure` body mode, write both

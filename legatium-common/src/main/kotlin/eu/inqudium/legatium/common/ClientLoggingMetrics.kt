@@ -134,9 +134,9 @@ internal enum class ClientStack(
  * has decided against it - the owner keeps counting into the detached instance rather than
  * re-registering behind the host's back.
  *
- * LOCK ORDER: Micrometer notifies removal listeners while holding its registry-wide meter-map lock, and
- * registering a new id takes that same lock. The cache is therefore never written from inside a
- * `ConcurrentHashMap.computeIfAbsent` - its mapping function runs under the map's bin lock, and a
+ * Invariant: the cache is never written from inside a `ConcurrentHashMap.computeIfAbsent` - the LOCK
+ * ORDER. Micrometer notifies removal listeners while holding its registry-wide meter-map lock, and
+ * registering a new id takes that same lock; a mapping function runs under the map's bin lock, and a
  * registration in there would wait for the registry lock while the listener, holding it, waits for the
  * bin lock to drop the removed entry. A miss resolves the meter OUTSIDE the map and publishes it with
  * `putIfAbsent` ([cacheBodyMeter]); a lost race registers the same id twice, which Micrometer

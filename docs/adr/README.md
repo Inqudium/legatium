@@ -53,6 +53,7 @@ each exchange line carries, and finally the cluster you are touching.
 | ADR | Title | Status |
 |-----|-------|--------|
 | [0001](ADR-0001-fuzz-workflow-is-the-fuzzing-signal.md) | The Fuzz workflow, not the Scorecard score, is the fuzzing signal | Accepted; also establishes the ADR series as reference target |
+| [0013](ADR-0013-comment-prefixes-name-what-a-grep-must-find.md) | Comment prefixes name what a grep must find: `Invariant:`, `Assumption:`, `Workaround:`, `Rationale:`, `Safety:`, `Compatibility:`, `ELK:` | Accepted |
 
 ## Superseded
 

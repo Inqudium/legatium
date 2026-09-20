@@ -17,8 +17,9 @@ import java.nio.charset.Charset
  * thread at a time, and the emission reads once, at response close. On the blocking stack that is the
  * SAME thread in the overwhelming majority of cases; visibility across a handoff to another thread
  * (a response passed to a worker and closed there) is still established by THIS class rather than
- * assumed: [totalBytes] is `@Volatile` and is written LAST in every mutation, so the reader's initial
- * [totalBytes] read publishes all preceding buffer writes (a piggybacked happens-before edge).
+ * assumed. Invariant: [totalBytes] is `@Volatile`, written LAST in every mutation and read FIRST, so the
+ * reader's initial [totalBytes] read publishes all preceding buffer writes (a piggybacked happens-before
+ * edge).
  *
  * With `maxBytes = 0` the capture runs in COUNT-ONLY mode: nothing is buffered, [totalBytes] still
  * counts every byte - the mode the body-size metrics use when body logging is off; a negative limit is
@@ -54,8 +55,8 @@ internal class BoundedBodyCapture(
 
     /**
      * Every byte that flowed, including those beyond the capture limit - the size metrics' source.
-     * Volatile, and always the LAST write of a mutation: its write publishes the buffer state to the
-     * close-time reader (the handoff model of the class KDoc), and readers must read it FIRST.
+     * Invariant: volatile, the LAST write of every mutation and the reader's FIRST read - its write
+     * publishes the buffer state to the close-time reader (the handoff model of the class KDoc).
      */
     @Volatile
     var totalBytes: Long = 0
