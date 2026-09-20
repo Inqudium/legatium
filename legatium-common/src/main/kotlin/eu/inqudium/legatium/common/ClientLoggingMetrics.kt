@@ -190,27 +190,6 @@ internal class ClientLoggingMetrics private constructor(
         }
     }
 
-    /**
-     * The miss path of the body-meter caches: resolves the meter through [resolve] OUTSIDE [cache] and
-     * publishes it with `putIfAbsent`, never `computeIfAbsent` (the lock order of the class KDoc); a
-     * racing resolver's instance is the same registry-deduplicated meter, so either one serves. A meter
-     * the host registry did not keep ([NoopMeter]: a denying filter or a closed registry) is returned
-     * for this exchange but NOT cached - the removal listener could never release it, and one entry per
-     * denied tag set would grow the cache exactly where the operator bounded the registry. The window
-     * between [resolve] returning and the `putIfAbsent` is the accepted residue of the class KDoc.
-     */
-    private fun <M : Meter> cacheBodyMeter(
-        cache: ConcurrentHashMap<BodyMeterKey, M>,
-        key: BodyMeterKey,
-        resolve: () -> M,
-    ): M {
-        val meter = resolve()
-        if (meter is NoopMeter) {
-            return meter
-        }
-        return cache.putIfAbsent(key, meter) ?: meter
-    }
-
     /** [FAIL_OPEN_METER], pre-registered per stage. */
     private val failOpenCounters =
         FailOpenStage.entries.associateWith { stage ->
@@ -271,6 +250,27 @@ internal class ClientLoggingMetrics private constructor(
                     ).register(registry)
             }
         }
+
+    /**
+     * The miss path of the body-meter caches: resolves the meter through [resolve] OUTSIDE [cache] and
+     * publishes it with `putIfAbsent`, never `computeIfAbsent` (the lock order of the class KDoc); a
+     * racing resolver's instance is the same registry-deduplicated meter, so either one serves. A meter
+     * the host registry did not keep ([NoopMeter]: a denying filter or a closed registry) is returned
+     * for this exchange but NOT cached - the removal listener could never release it, and one entry per
+     * denied tag set would grow the cache exactly where the operator bounded the registry. The window
+     * between [resolve] returning and the `putIfAbsent` is the accepted residue of the class KDoc.
+     */
+    private fun <M : Meter> cacheBodyMeter(
+        cache: ConcurrentHashMap<BodyMeterKey, M>,
+        key: BodyMeterKey,
+        resolve: () -> M,
+    ): M {
+        val meter = resolve()
+        if (meter is NoopMeter) {
+            return meter
+        }
+        return cache.putIfAbsent(key, meter) ?: meter
+    }
 
     fun emissionFailure() = failOpenCounters.getValue(FailOpenStage.EMISSION).increment()
 
@@ -456,33 +456,6 @@ internal class ClientLoggingMetrics private constructor(
     companion object {
         private val internalLog = LoggerFactory.getLogger(ClientLoggingMetrics::class.java)
 
-        // Both sides weak: the KEY must not pin a host registry that outlives its context, and the VALUE
-        // must not pin the owner beyond the registry. The owner lives exactly as long as its registry:
-        // the removal listener the registry holds captures the owner, so the reference here is never
-        // cleared while the registry is reachable, and a new entry point on a live registry always
-        // finds the existing owner (never its own gauge id left behind by a collected one).
-        private val perRegistry = WeakHashMap<MeterRegistry, EnumMap<ClientStack, WeakReference<ClientLoggingMetrics>>>()
-
-        /**
-         * The metrics owner for [registry] and [stack] - created on first use, SHARED by every later
-         * caller with the same registry and stack, so the open-exchanges gauge is the total across the
-         * entry points on one registry (the one-instance rule of the class KDoc).
-         */
-        fun forRegistry(
-            registry: MeterRegistry,
-            stack: ClientStack,
-        ): ClientLoggingMetrics =
-            synchronized(perRegistry) {
-                val owners = perRegistry.getOrPut(registry) { EnumMap(ClientStack::class.java) }
-                owners[stack]?.get() ?: ClientLoggingMetrics(registry, stack).also { owners[stack] = WeakReference(it) }
-            }
-
-        /**
-         * The `uri` tag for a recorded template: the template itself when it carries a placeholder,
-         * [UNTEMPLATED_URI] otherwise.
-         */
-        fun uriTag(template: String?): String = template?.takeIf { '{' in it } ?: UNTEMPLATED_URI
-
         /**
          * Meter counting logging failures the fail-open path swallowed, tagged `stage=emission` (the
          * exchange event was LOST), `stage=arrival` (the optional start line was lost) or `stage=wiring`
@@ -557,5 +530,34 @@ internal class ClientLoggingMetrics private constructor(
 
         /** The `client` tag of the open-exchanges gauge, distinguishing the two twins' gauges in one registry. */
         const val CLIENT_TAG = "client"
+
+        // Both sides weak: the KEY must not pin a host registry that outlives its context, and the VALUE
+        // must not pin the owner beyond the registry. The owner lives exactly as long as its registry:
+        // the removal listener the registry holds captures the owner, so the reference here is never
+        // cleared while the registry is reachable, and a new entry point on a live registry always
+        // finds the existing owner (never its own gauge id left behind by a collected one).
+        private val perRegistry = WeakHashMap<MeterRegistry, EnumMap<ClientStack, WeakReference<ClientLoggingMetrics>>>()
+
+        /**
+         * The metrics owner for [registry] and [stack] - created on first use, SHARED by every later
+         * caller with the same registry and stack, so the open-exchanges gauge is the total across the
+         * entry points on one registry (the one-instance rule of the class KDoc). Static for the Java
+         * caller (the benchmarks).
+         */
+        @JvmStatic
+        fun forRegistry(
+            registry: MeterRegistry,
+            stack: ClientStack,
+        ): ClientLoggingMetrics =
+            synchronized(perRegistry) {
+                val owners = perRegistry.getOrPut(registry) { EnumMap(ClientStack::class.java) }
+                owners[stack]?.get() ?: ClientLoggingMetrics(registry, stack).also { owners[stack] = WeakReference(it) }
+            }
+
+        /**
+         * The `uri` tag for a recorded template: the template itself when it carries a placeholder,
+         * [UNTEMPLATED_URI] otherwise.
+         */
+        fun uriTag(template: String?): String = template?.takeIf { '{' in it } ?: UNTEMPLATED_URI
     }
 }

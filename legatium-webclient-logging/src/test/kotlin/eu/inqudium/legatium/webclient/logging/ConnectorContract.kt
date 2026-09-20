@@ -19,7 +19,9 @@ import java.time.Duration
  * those seams hold against each real engine - the body tees on the engine's own buffers, the wire
  * correlation header - and that the exception types each engine raises for its CONNECT and RESPONSE
  * timeouts are the ones the shared `Timeouts` classification recognises. A refused connection is the
- * control: a failure that must NOT read as a timeout.
+ * control: a failure that must NOT read as a timeout. The engine's exception TYPE is engine-internal
+ * detail the contract does not promise (CONTRIBUTING.md, test rules): those scenarios pin the
+ * classification and that an exception exists, never which one.
  *
  * A subclass supplies the engine; every scenario, assertion and expected line is the same.
  */
@@ -39,13 +41,13 @@ import java.time.Duration
     ],
 )
 abstract class ConnectorContract : IntegrationFixture() {
+    private val closeables = mutableListOf<AutoCloseable>()
+
     /** The engine under test, built with the given connect and response timeouts. */
     protected abstract fun connector(
         connectTimeout: Duration,
         responseTimeout: Duration,
     ): ClientHttpConnector
-
-    private val closeables = mutableListOf<AutoCloseable>()
 
     /** Registers an engine resource to be released after the test. */
     protected fun <T : AutoCloseable> closing(resource: T): T = resource.also { closeables += it }
@@ -153,8 +155,7 @@ abstract class ConnectorContract : IntegrationFixture() {
                     .block(AWAIT)
             }
 
-        // Then: the engine's exception type is engine-internal detail the contract does not promise
-        // (CONTRIBUTING.md, test rules) - the classification below is what is pinned
+        // Then
         assertThat(thrown).isNotNull()
         val event = log.awaitEvents(1).single()
         assertThat(event.level).describedAs("event for %s", thrown).isEqualTo(Level.WARN)
@@ -184,8 +185,7 @@ abstract class ConnectorContract : IntegrationFixture() {
                     .block(AWAIT)
             }
 
-        // Then: the engine's exception type is engine-internal detail the contract does not promise
-        // (CONTRIBUTING.md, test rules) - the classification below is what is pinned
+        // Then
         assertThat(thrown).isNotNull()
         val event = log.awaitEvents(1).single()
         assertThat(event.level).describedAs("event for %s", thrown).isEqualTo(Level.WARN)
@@ -211,8 +211,7 @@ abstract class ConnectorContract : IntegrationFixture() {
                     .block(AWAIT)
             }
 
-        // Then: the engine's exception type is engine-internal detail the contract does not promise
-        // (CONTRIBUTING.md, test rules) - the classification below is what is pinned
+        // Then
         assertThat(thrown).isNotNull()
         val event = log.awaitEvents(1).single()
         assertThat(event.level).describedAs("event for %s", thrown).isEqualTo(Level.ERROR)

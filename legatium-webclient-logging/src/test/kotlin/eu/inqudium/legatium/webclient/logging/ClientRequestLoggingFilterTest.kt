@@ -33,6 +33,7 @@ import java.time.Duration
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
@@ -77,7 +78,11 @@ class ClientRequestLoggingFilterTest {
             // Why it matters: identical logging is this module's core requirement - dashboards must not
             //   care which client produced an event.
             // Given: a GET answered 200, the body consumed 42 ms later
-            val next = ExchangeFunction { _ -> ticker.addAndGet(42_000_000).let { answering(body = "ok").exchange(request()) } }
+            val next =
+                ExchangeFunction { req ->
+                    ticker.addAndGet(42_000_000)
+                    answering(body = "ok").exchange(req)
+                }
 
             // When: the response Mono completes and the body is consumed - verified as SIGNALS
             StepVerifier
@@ -510,13 +515,7 @@ class ClientRequestLoggingFilterTest {
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.INFO)
             assertThat(keyValues(event)).containsEntry("adapter_outcome", "success").containsEntry("adapter_response_status_code", 200)
-            assertThat(
-                registry
-                    .get(ClientLoggingMetrics.RESPONSE_BODY_READ_METER)
-                    .tag("state", "partial")
-                    .counter()
-                    .count(),
-            ).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "state", "partial")).isEqualTo(1.0)
         }
 
         @Test
@@ -591,7 +590,11 @@ class ClientRequestLoggingFilterTest {
             // Why it matters: level carries severity and outcome carries semantics; a slow call
             //   must alert without being counted as a failure.
             // Given
-            val next = ExchangeFunction { req -> ticker.addAndGet(200_000_000).let { answering().exchange(req) } }
+            val next =
+                ExchangeFunction { req ->
+                    ticker.addAndGet(200_000_000)
+                    answering().exchange(req)
+                }
 
             // When
             filter.call(request(), next)
@@ -615,7 +618,13 @@ class ClientRequestLoggingFilterTest {
 
             fun slowFlagAfter(elapsedNanos: Long): Boolean {
                 log.appender.list.clear()
-                precise.call(request(), ExchangeFunction { req -> ticker.addAndGet(elapsedNanos).let { answering().exchange(req) } })
+                precise.call(
+                    request(),
+                    ExchangeFunction { req ->
+                        ticker.addAndGet(elapsedNanos)
+                        answering().exchange(req)
+                    },
+                )
                 return keyValues(log.events.single()).containsKey("adapter_slow")
             }
 
@@ -632,7 +641,7 @@ class ClientRequestLoggingFilterTest {
             // Why it matters: invoked bare, the throw would skip the callbacks and leak the gauge.
             // Given/When
             StepVerifier
-                .create(filter.filter(request(), ExchangeFunction { throw IllegalStateException("assembly") }))
+                .create(filter.filter(request(), ExchangeFunction { error("assembly") }))
                 .expectErrorMessage("assembly")
                 .verify()
 
@@ -735,18 +744,13 @@ class ClientRequestLoggingFilterTest {
             //   carry the same id as the completion line to be joined with it.
             // Given
             val startLogging = filterWith(properties.copy(logRequestStart = true), ticker)
-            var eventsAtCallTime = listOf<String>()
-            val next =
-                ExchangeFunction { req ->
-                    eventsAtCallTime = log.events.map { it.formattedMessage }
-                    answering().exchange(req)
-                }
+            val next = ObservingExchange { log.events.map { it.formattedMessage } }
 
             // When
             startLogging.call(request(method = HttpMethod.POST), next)
 
             // Then
-            assertThat(eventsAtCallTime)
+            assertThat(next.seen)
                 .containsExactly("Adapter http exchange started POST https://api.example.com/things [adapter_request_id=generated-42]")
             assertThat(log.events).hasSize(2)
             assertThat(keyValues(log.events.first())).doesNotContainKey("adapter_outcome")
@@ -763,18 +767,16 @@ class ClientRequestLoggingFilterTest {
         // The body completes on another thread here, and the emission runs there AFTER the terminal
         // signal reached the blocking caller: the events are awaited, not read, and the appender pins
         // each event's MDC to the emitting thread (see AwaitingAppender).
-        private val awaiting = AwaitingAppender().apply { start() }
+        private val awaiting = AwaitingLogger(properties.loggerName)
 
         @BeforeEach
-        fun attachAwaiting() {
+        fun clearAmbientKey() {
             MDC.remove(key)
-            log.logger.addAppender(awaiting)
         }
 
         @AfterEach
         fun removeAccessor() {
-            log.logger.detachAppender(awaiting)
-            awaiting.stop()
+            awaiting.detach()
             MDC.remove(key)
             accessor.close()
         }
@@ -896,7 +898,7 @@ class ClientRequestLoggingFilterTest {
             // Why it matters: the restoration is an extra; a failing extra must cost the ambient keys,
             //   never the event.
             // Given
-            filter.emitter.ambientRestorer = AmbientContextRestorer { throw IllegalStateException("accessor refused") }
+            filter.emitter.ambientRestorer = AmbientContextRestorer { error("accessor refused") }
 
             // When
             try {
@@ -913,13 +915,7 @@ class ClientRequestLoggingFilterTest {
             val event = awaiting.awaitEvents(1).single()
             assertThat(keyValues(event)).containsEntry("adapter_outcome", "success")
             assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42").doesNotContainKey(key)
-            assertThat(
-                meterRegistry
-                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
-                    .tag("stage", "wiring")
-                    .counter()
-                    .count(),
-            ).isEqualTo(1.0)
+            assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
         }
 
         @Test
@@ -931,7 +927,7 @@ class ClientRequestLoggingFilterTest {
             // Why it matters: the restorer's close runs in the emission's finally; a close that threw
             //   INTO the emission guard would count a lost line where the line was written.
             // Given: a restorer whose scope refuses to close
-            filter.emitter.ambientRestorer = AmbientContextRestorer { AutoCloseable { throw IllegalStateException("scope refused") } }
+            filter.emitter.ambientRestorer = AmbientContextRestorer { AutoCloseable { error("scope refused") } }
 
             // When
             try {
@@ -947,20 +943,8 @@ class ClientRequestLoggingFilterTest {
             // Then
             val event = awaiting.awaitEvents(1).single()
             assertThat(keyValues(event)).containsEntry("adapter_outcome", "success")
-            assertThat(
-                meterRegistry
-                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
-                    .tag("stage", "wiring")
-                    .counter()
-                    .count(),
-            ).isEqualTo(1.0)
-            assertThat(
-                meterRegistry
-                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
-                    .tag("stage", "emission")
-                    .counter()
-                    .count(),
-            ).isZero()
+            assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
+            assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "emission")).isZero()
         }
     }
 
@@ -997,8 +981,8 @@ class ClientRequestLoggingFilterTest {
             //   table): the blocking twin's mutable request keeps the header of attempt 1 and re-sends
             //   the same id. A change to either side must be a visible decision.
             // Given: a counting generator and a connector that records what it is handed
-            var next = 0
-            val counting = ClientRequestLoggingFilter(properties, NanoTimeSource { ticker.get() }, CorrelationIdGenerator { "gen-${next++}" }, meterRegistry)
+            val generated = AtomicInteger()
+            val counting = ClientRequestLoggingFilter(properties, NanoTimeSource { ticker.get() }, CorrelationIdGenerator { "gen-${generated.getAndIncrement()}" }, meterRegistry)
             val sentHeaders = mutableListOf<String?>()
             val call =
                 counting.filter(
@@ -1016,13 +1000,7 @@ class ClientRequestLoggingFilterTest {
             // Then
             assertThat(log.events.map { it.mdcPropertyMap[MdcKeys.REQUEST_ID] }).containsExactly("gen-0", "gen-1")
             assertThat(sentHeaders).containsExactly("gen-0", "gen-1")
-            assertThat(
-                meterRegistry
-                    .get(ClientLoggingMetrics.CORRELATION_METER)
-                    .tag("source", "generated")
-                    .counter()
-                    .count(),
-            ).isEqualTo(2.0)
+            assertThat(meterRegistry.count(ClientLoggingMetrics.CORRELATION_METER, "source", "generated")).isEqualTo(2.0)
         }
 
         @Test
@@ -1041,7 +1019,7 @@ class ClientRequestLoggingFilterTest {
             assertThat(event.level).isEqualTo(Level.ERROR)
             assertThat(event.formattedMessage).contains("-> - [")
             assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").doesNotContainKey("adapter_response_status_code")
-            assertThat(event.throwableProxy.message).isEqualTo(ClientRequestLoggingFilter.NO_RESPONSE_MESSAGE)
+            assertThat(event.throwableProxy?.message).isEqualTo(ClientRequestLoggingFilter.NO_RESPONSE_MESSAGE)
         }
 
         @Test

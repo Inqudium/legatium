@@ -18,7 +18,7 @@ package eu.inqudium.legatium.common
  * WebClient twin's connector suites. Anything else is a plain failure.
  */
 internal object Timeouts {
-    private val timeoutClassNames =
+    private val TIMEOUT_CLASS_NAMES =
         setOf(
             "java.util.concurrent.TimeoutException",
             "java.net.SocketTimeoutException",
@@ -51,5 +51,5 @@ internal object Timeouts {
         return false
     }
 
-    private fun isTimeoutType(type: Class<*>): Boolean = generateSequence(type) { it.superclass }.any { it.name in timeoutClassNames }
+    private fun isTimeoutType(type: Class<*>): Boolean = generateSequence(type) { it.superclass }.any { it.name in TIMEOUT_CLASS_NAMES }
 }

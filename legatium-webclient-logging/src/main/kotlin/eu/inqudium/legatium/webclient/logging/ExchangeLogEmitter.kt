@@ -53,7 +53,10 @@ internal class ExchangeLogEmitter(
      * Restores the caller's thread-locals from the exchange's Reactor Context around each emission
      * (ADR-0010). Detected against this module's class loader by default (manual wiring); mutable for
      * the auto-configuration, which re-detects against the context's class loader, and for the tests,
-     * which swap in a throwing restorer to drive the fail-open path.
+     * which swap in a throwing restorer to drive the fail-open path. A post-construction write rather
+     * than a constructor parameter of the filter on purpose: the restorer has no RestClient counterpart
+     * (there the thread IS the caller's context), and the twins' entry points keep one constructor
+     * signature.
      */
     internal var ambientRestorer: AmbientContextRestorer = AmbientContextRestorer.detect(),
 ) {

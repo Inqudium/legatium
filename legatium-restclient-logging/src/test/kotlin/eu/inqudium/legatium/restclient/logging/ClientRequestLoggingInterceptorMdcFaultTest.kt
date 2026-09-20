@@ -100,13 +100,6 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
         moduleLog.detach()
     }
 
-    private fun failOpenCount(stage: String): Double =
-        meterRegistry
-            .get(ClientLoggingMetrics.FAIL_OPEN_METER)
-            .tag("stage", stage)
-            .counter()
-            .count()
-
     private fun breadcrumbs(): List<Pair<Level, String>> = moduleLog.events.map { it.level to it.formattedMessage }
 
     @Test
@@ -120,23 +113,17 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
         // Given: every put refused while the interceptor wires the call, working again inside the call
         adapter.failPut = setOf(MdcKeys.REQUEST_ID, MdcKeys.REQUEST_METHOD, MdcKeys.ROUTE)
         adapter.armed = true
-        var seenDuringCall: Map<String, String>? = null
-        val execution =
-            ClientHttpRequestExecution { _, _ ->
-                seenDuringCall = MDC.getCopyOfContextMap() ?: emptyMap()
-                adapter.armed = false
-                MockClientHttpResponse("ok".toByteArray(), HttpStatus.OK)
-            }
+        val execution = ObservingExecution(answering(body = "ok")) { MDC.getCopyOfContextMap().orEmpty().also { adapter.armed = false } }
 
         // When
         val body = interceptor.intercept(request(), ByteArray(0), execution).consumeAndClose()
 
         // Then
         assertThat(body).isEqualTo("ok")
-        assertThat(seenDuringCall).doesNotContainKeys(MdcKeys.REQUEST_ID, MdcKeys.REQUEST_METHOD, MdcKeys.ROUTE)
+        assertThat(execution.seen).doesNotContainKeys(MdcKeys.REQUEST_ID, MdcKeys.REQUEST_METHOD, MdcKeys.ROUTE)
         assertThat(keyValues(log.events.single())).containsEntry("adapter_outcome", "success")
-        assertThat(failOpenCount("wiring")).isEqualTo(1.0)
-        assertThat(failOpenCount("emission")).isZero()
+        assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
+        assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "emission")).isZero()
         assertThat(breadcrumbs()).anySatisfy { (level, message) ->
             assertThat(level).isEqualTo(Level.ERROR)
             assertThat(message).contains("MDC scope could not be opened")
@@ -167,14 +154,14 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
         // Then
         assertThat(MDC.get(MdcKeys.REQUEST_ID)).isEqualTo("generated-42")
         assertThat(MDC.get(MdcKeys.REQUEST_METHOD)).isNull()
-        assertThat(failOpenCount("wiring")).isEqualTo(1.0)
+        assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
         assertThat(breadcrumbs()).anySatisfy { (level, message) ->
             assertThat(level).isEqualTo(Level.WARN)
             assertThat(message).contains("MDC restoration failed")
         }
         assertThat(response.consumeAndClose()).isEqualTo("ok")
         assertThat(keyValues(log.events.single())).containsEntry("adapter_outcome", "success")
-        assertThat(failOpenCount("emission")).isZero()
+        assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "emission")).isZero()
     }
 
     @Test
@@ -200,8 +187,8 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
         // Then
         assertThat(thrown).isInstanceOf(IOException::class.java).hasMessage("connection reset")
         assertThat(keyValues(log.events.single())).containsEntry("adapter_outcome", "failure")
-        assertThat(failOpenCount("wiring")).isEqualTo(1.0)
-        assertThat(failOpenCount("emission")).isZero()
+        assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
+        assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "emission")).isZero()
     }
 
     @Test
@@ -225,7 +212,7 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
         val event = pinned.events.single()
         assertThat(keyValues(event)).containsEntry("adapter_outcome", "success")
         assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42").doesNotContainKey("endpoint_request_id")
-        assertThat(failOpenCount("wiring")).isEqualTo(1.0)
+        assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
         assertThat(breadcrumbs()).anySatisfy { (level, message) ->
             assertThat(level).isEqualTo(Level.WARN)
             assertThat(message).contains("could not be captured")

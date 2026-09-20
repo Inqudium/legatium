@@ -603,7 +603,7 @@ class ClientLoggingMetricsTest {
                             // The removing thread is stuck behind a lock this thread holds; proceeding
                             // into Micrometer's lock would complete the deadlock and hang the suite, so
                             // fail the registration instead - registerOrFallback then releases the lock.
-                            throw IllegalStateException("the host's removal is stuck behind the cache's lock")
+                            error("the host's removal is stuck behind the cache's lock")
                         }
                     }
                     return id

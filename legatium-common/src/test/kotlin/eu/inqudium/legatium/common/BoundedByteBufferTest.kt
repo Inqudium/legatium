@@ -36,12 +36,16 @@ class BoundedByteBufferTest {
             // Given
             val buffer = BoundedByteBuffer(16)
 
-            // When
+            // When: 11 bytes in three writes
             buffer.write("abc")
             buffer.write('d'.code)
             buffer.write("efghijk")
+
+            // Then: 11 buffered, 5 left
             assertThat(buffer.size).isEqualTo(11)
             assertThat(buffer.remaining).isEqualTo(5)
+
+            // When: 8 more bytes, of which 5 fit
             buffer.write("lmnopqr")
             buffer.write('s'.code)
 

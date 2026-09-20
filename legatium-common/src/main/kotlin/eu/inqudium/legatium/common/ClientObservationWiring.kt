@@ -34,33 +34,45 @@ internal object ClientObservationWiring {
     /**
      * One line for [customizers] - Boot's observation customizer classes mapped to the builder they
      * observe, in the twin's wording ("RestClient.Builder") - against the beans of [beanFactory].
-     * [tracerClass] is [TRACER]; the tests inject a class of their own classpath.
+     * [correlationIdHeader] is the CONFIGURED header name ([ClientLoggingProperties.correlationIdHeader]),
+     * so the line names the header the host actually sees. [tracerClass] is [TRACER]; the tests inject a
+     * class of their own classpath.
      */
     fun describe(
         beanFactory: ListableBeanFactory,
         customizers: Map<String, String>,
+        correlationIdHeader: String,
         tracerClass: String = TRACER,
     ): String {
         val observed = customizers.filterKeys { hasBean(beanFactory, it) }.values.joinToString(" and ")
         return when {
-            observed.isEmpty() -> noObservation(customizers.values.joinToString(" and "))
-            hasBean(beanFactory, tracerClass) -> observedAndTraced(observed)
-            else -> observedNotTraced(observed)
+            observed.isEmpty() -> noObservation(customizers.values.joinToString(" and "), correlationIdHeader)
+            hasBean(beanFactory, tracerClass) -> observedAndTraced(observed, correlationIdHeader)
+            else -> observedNotTraced(observed, correlationIdHeader)
         }
     }
 
-    private fun noObservation(builders: String): String =
+    private fun noObservation(
+        builders: String,
+        header: String,
+    ): String =
         "Adapter logging found no client observation - Boot's observation auto-configuration for $builders is not active " +
             "(no ObservationRegistry bean, or the observation module is absent); the module generates the request id and " +
-            "sends X-Correlation-Id on every call that carries no traceparent"
+            "sends $header on every call that carries no traceparent"
 
-    private fun observedAndTraced(builders: String): String =
+    private fun observedAndTraced(
+        builders: String,
+        header: String,
+    ): String =
         "Adapter logging found Boot's client observation with Micrometer Tracing wired for $builders - every call built there " +
-            "goes out with a traceparent, its trace id is the request id and no X-Correlation-Id is generated"
+            "goes out with a traceparent, its trace id is the request id and no $header is generated"
 
-    private fun observedNotTraced(builders: String): String =
+    private fun observedNotTraced(
+        builders: String,
+        header: String,
+    ): String =
         "Adapter logging found Boot's client observation wired for $builders but no Micrometer Tracing - calls are observed, " +
-            "not traced, so the module generates the request id and sends X-Correlation-Id on every call that carries no traceparent"
+            "not traced, so the module generates the request id and sends $header on every call that carries no traceparent"
 
     /** Whether the context holds a bean of [className] - matched by instance once the singletons exist. */
     private fun hasBean(

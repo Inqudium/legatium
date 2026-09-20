@@ -52,16 +52,6 @@ class ClientRequestLoggingMetricsTest {
         log.detach()
     }
 
-    private fun counter(
-        name: String,
-        vararg tags: String,
-    ): Double =
-        registry
-            .get(name)
-            .tags(*tags)
-            .counter()
-            .count()
-
     private fun gauge(): Double = registry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()
 
     /**
@@ -127,10 +117,10 @@ class ClientRequestLoggingMetricsTest {
             // Why it matters: a rate() alert must see the zero before the first occurrence; the client
             //   tag is what keeps this twin's gauge apart from the reactive twin's in one host.
             // Given: nothing happened yet
-            assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "success")).isZero()
-            assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "rejected")).isZero()
-            assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "failure")).isZero()
-            assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "timeout")).isZero()
+            assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "success")).isZero()
+            assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "rejected")).isZero()
+            assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "failure")).isZero()
+            assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "timeout")).isZero()
             assertThat(registry.get(ClientLoggingMetrics.FAIL_OPEN_METER).counters()).hasSize(3)
             assertThat(registry.get(ClientLoggingMetrics.CORRELATION_METER).counters()).hasSize(3)
             assertThat(
@@ -148,10 +138,10 @@ class ClientRequestLoggingMetricsTest {
             catchThrowable { interceptor.intercept(request(), ByteArray(0)) { _, _ -> throw SocketTimeoutException("read") } }
 
             // Then
-            assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "success")).isEqualTo(1.0)
-            assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "rejected")).isEqualTo(1.0)
-            assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "failure")).isEqualTo(1.0)
-            assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", "timeout")).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "success")).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "rejected")).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "failure")).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "timeout")).isEqualTo(1.0)
         }
 
         @Test
@@ -193,9 +183,9 @@ class ClientRequestLoggingMetricsTest {
             interceptor.intercept(request(), ByteArray(0), answering()).consumeAndClose()
 
             // Then
-            assertThat(counter(ClientLoggingMetrics.CORRELATION_METER, "source", "trace")).isEqualTo(1.0)
-            assertThat(counter(ClientLoggingMetrics.CORRELATION_METER, "source", "header")).isEqualTo(1.0)
-            assertThat(counter(ClientLoggingMetrics.CORRELATION_METER, "source", "generated")).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.CORRELATION_METER, "source", "trace")).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.CORRELATION_METER, "source", "header")).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.CORRELATION_METER, "source", "generated")).isEqualTo(1.0)
         }
 
         @Test
@@ -254,11 +244,11 @@ class ClientRequestLoggingMetricsTest {
                     .summary()
                     .totalAmount(),
             ).isEqualTo(6.0)
-            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, *tags, "state", BodyReadState.COMPLETE.tagValue)).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, *tags, "state", BodyReadState.COMPLETE.tagValue)).isEqualTo(1.0)
             assertThat(log.events).isEmpty()
             // And: the events counter agrees with the appender - it counts after the level gate
             listOf("success", "rejected", "failure", "timeout").forEach {
-                assertThat(counter(ClientLoggingMetrics.EVENTS_METER, "outcome", it)).describedAs(it).isZero()
+                assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", it)).describedAs(it).isZero()
             }
         }
 
@@ -280,7 +270,7 @@ class ClientRequestLoggingMetricsTest {
             measuring.intercept(request(), ByteArray(0), answering(body = "dropped")).close()
 
             // Then: unread counted under UNKNOWN template; no summary sample (zero bytes flowed)
-            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "unread"))
+            assertThat(registry.count(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "unread"))
                 .isEqualTo(1.0)
             assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_SIZE_METER).summary()).isNull()
         }
@@ -308,7 +298,7 @@ class ClientRequestLoggingMetricsTest {
             measuring.intercept(request(), ByteArray(0), answering { it.headers.contentLength = 0 }).close()
 
             // Then
-            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(4.0)
+            assertThat(registry.count(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(4.0)
             assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "unread").counter()).isNull()
         }
 
@@ -328,7 +318,7 @@ class ClientRequestLoggingMetricsTest {
             measuring.intercept(request(HttpMethod.HEAD), ByteArray(0), answering { it.headers.contentLength = 1234 }).close()
 
             // Then
-            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(1.0)
             assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "unread").counter()).isNull()
         }
 
@@ -376,7 +366,7 @@ class ClientRequestLoggingMetricsTest {
 
             // Then
             assertThat(read).isEqualTo("world!".toByteArray())
-            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(1.0)
             assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "partial").counter()).isNull()
         }
 
@@ -397,7 +387,7 @@ class ClientRequestLoggingMetricsTest {
             response.close()
 
             // Then
-            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "partial")).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "partial")).isEqualTo(1.0)
         }
 
         @Test
@@ -419,7 +409,7 @@ class ClientRequestLoggingMetricsTest {
             response.close()
 
             // Then
-            assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "complete")).isEqualTo(1.0)
             assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "partial").counter()).isNull()
         }
 
@@ -449,9 +439,9 @@ class ClientRequestLoggingMetricsTest {
 
                 // Then
                 assertThat(keyValues(log.events.single())).containsEntry("adapter_response_status_code", 200)
-                assertThat(counter(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isZero()
+                assertThat(registry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isZero()
                 assertThat(moduleLog.events).isEmpty()
-                assertThat(counter(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "partial")).isEqualTo(1.0)
+                assertThat(registry.count(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "UNKNOWN", "host", "api.example.com", "state", "partial")).isEqualTo(1.0)
             } finally {
                 moduleLog.detach()
             }
@@ -485,7 +475,7 @@ class ClientRequestLoggingMetricsTest {
             // Success criteria: the call succeeds untouched, no event, wiring=1, gauge untouched.
             // Why it matters: a logging component must never fail the call it describes.
             // Given
-            val broken = ClientRequestLoggingInterceptor(properties, NanoTimeSource { ticker.get() }, CorrelationIdGenerator { throw IllegalStateException("no ids") }, registry)
+            val broken = ClientRequestLoggingInterceptor(properties, NanoTimeSource { ticker.get() }, CorrelationIdGenerator { error("no ids") }, registry)
 
             // When
             val body = broken.intercept(request(), ByteArray(0), answering(body = "served")).consumeAndClose()
@@ -493,7 +483,7 @@ class ClientRequestLoggingMetricsTest {
             // Then
             assertThat(body).isEqualTo("served")
             assertThat(log.events).isEmpty()
-            assertThat(counter(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
             assertThat(gauge()).isZero()
         }
 
@@ -510,7 +500,7 @@ class ClientRequestLoggingMetricsTest {
             //   line mentions would hand the peer an id nothing explains, and an origin counted for an
             //   exchange that was never opened would let the correlation sum drift from the events sum.
             // Given: a time source that throws on its wiring-time read, a traceless request without headers
-            val broken = ClientRequestLoggingInterceptor(properties, NanoTimeSource { throw IllegalStateException("no clock") }, CorrelationIdGenerator { "generated-42" }, registry)
+            val broken = ClientRequestLoggingInterceptor(properties, NanoTimeSource { error("no clock") }, CorrelationIdGenerator { "generated-42" }, registry)
             val request = request()
 
             // When
@@ -520,8 +510,8 @@ class ClientRequestLoggingMetricsTest {
             assertThat(body).isEqualTo("served")
             assertThat(request.headers.getFirst(properties.correlationIdHeader)).isNull()
             assertThat(request.attributes).isEmpty()
-            assertThat(counter(ClientLoggingMetrics.CORRELATION_METER, "source", "generated")).isZero()
-            assertThat(counter(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.CORRELATION_METER, "source", "generated")).isZero()
+            assertThat(registry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
             assertThat(log.events).isEmpty()
             assertThat(gauge()).isZero()
         }
@@ -537,7 +527,7 @@ class ClientRequestLoggingMetricsTest {
             val flaky =
                 ClientRequestLoggingInterceptor(
                     properties,
-                    NanoTimeSource { if (reads.incrementAndGet() == 1L) 0L else throw IllegalStateException("clock broke") },
+                    NanoTimeSource { if (reads.incrementAndGet() == 1L) 0L else error("clock broke") },
                     CorrelationIdGenerator { "generated-42" },
                     registry,
                 )
@@ -549,7 +539,7 @@ class ClientRequestLoggingMetricsTest {
             // Then
             assertThat(thrown).isNull()
             assertThat(log.events).isEmpty()
-            assertThat(counter(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "emission")).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "emission")).isEqualTo(1.0)
             assertThat(gauge()).isZero()
         }
 
@@ -572,24 +562,18 @@ class ClientRequestLoggingMetricsTest {
             context.addTurboFilter(dying)
             try {
                 val announcing = interceptorWith(properties.copy(logRequestStart = true), ticker, registry)
-                var wireCalled = false
+                val wire = ObservingExecution {}
 
                 // When
-                val thrown =
-                    catchThrowable {
-                        announcing.intercept(request(), ByteArray(0)) { _, _ ->
-                            wireCalled = true
-                            MockClientHttpResponse(ByteArray(0), HttpStatus.OK)
-                        }
-                    }
+                val thrown = catchThrowable { announcing.intercept(request(), ByteArray(0), wire) }
 
                 // Then
                 assertThat(thrown).isInstanceOf(LinkageError::class.java).hasMessage("backend died")
-                assertThat(wireCalled).isFalse()
+                assertThat(wire.called).isFalse()
                 assertThat(gauge()).isZero()
                 assertThat(MDC.get(MdcKeys.REQUEST_ID)).isNull()
                 assertThat(log.events).isEmpty()
-                assertThat(counter(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "arrival")).isZero()
+                assertThat(registry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "arrival")).isZero()
             } finally {
                 context.turboFilterList.remove(dying)
             }
@@ -620,7 +604,7 @@ class ClientRequestLoggingMetricsTest {
 
                 // Then
                 assertThat(body).isEqualTo("served")
-                assertThat(counter(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "arrival")).isEqualTo(1.0)
+                assertThat(registry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "arrival")).isEqualTo(1.0)
                 assertThat(log.events).hasSize(1)
             } finally {
                 context.turboFilterList.remove(throwing)

@@ -44,7 +44,7 @@ class ClientIdentityTest {
         //   decision.
         // Why it matters: both twins inline this class (ADR-0003); until here its precedence was proven
         //   through the blocking twin alone, and the reactive twin has no re-entry path at all.
-        // Given
+        // Given/When
         val trace = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
         val cases =
             mapOf(
@@ -64,7 +64,7 @@ class ClientIdentityTest {
                     (resolved(headers("X-Correlation-Id" to "caller-1"), generatedEarlier = "generated-42") to Expected("caller-1", RequestIdSource.HEADER, null, null, false)),
             )
 
-        // When/Then
+        // Then
         cases.forEach { (name, actualAndExpected) ->
             val (actual, expected) = actualAndExpected
             assertThat(actual).describedAs(name).isEqualTo(expected)

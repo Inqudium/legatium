@@ -53,6 +53,18 @@ internal class BoundedBodyCapture(
     val readState: BodyReadState
         get() = lock.withLock { state }
 
+    /** Every byte that flowed, including those beyond the capture limit - the size metrics' source. */
+    val totalBytes: Long
+        get() = lock.withLock { total }
+
+    /** The declared length the buffer is sized by, [UNKNOWN_LENGTH] without one - exposed for the tests. */
+    internal val expectedBytes: Long
+        get() = lock.withLock { buffer.expectedBytes }
+
+    /** Whether [freeze] has been called - exposed for `BoundedBodyCaptureTest`. */
+    internal val isFrozen: Boolean
+        get() = lock.withLock { frozen }
+
     /** The application subscribed to the body: from now on it counts as (at least) partially read. */
     fun markStarted() =
         lock.withLock {
@@ -69,10 +81,6 @@ internal class BoundedBodyCapture(
             }
         }
 
-    /** Every byte that flowed, including those beyond the capture limit - the size metrics' source. */
-    val totalBytes: Long
-        get() = lock.withLock { total }
-
     /**
      * The body length the peer or the caller declared, as the buffer's SIZING hint
      * ([BoundedByteBuffer.expect]): ignored once a byte is buffered and once frozen. A wrong hint costs
@@ -85,10 +93,6 @@ internal class BoundedBodyCapture(
             }
         }
 
-    /** The declared length the buffer is sized by, [UNKNOWN_LENGTH] without one - exposed for the tests. */
-    internal val expectedBytes: Long
-        get() = lock.withLock { buffer.expectedBytes }
-
     /**
      * Buffers the prefix of a chunk that [count] has ALREADY counted - the tee counts a chunk in full
      * before it copies, so a copy that throws costs the logged text of that chunk, never its size. Up to
@@ -98,11 +102,9 @@ internal class BoundedBodyCapture(
         bytes: ByteArray,
         offset: Int,
         length: Int,
-    ) {
-        lock.withLock {
-            if (!frozen) {
-                buffer.write(bytes, offset, length)
-            }
+    ) = lock.withLock {
+        if (!frozen) {
+            buffer.write(bytes, offset, length)
         }
     }
 
@@ -137,10 +139,6 @@ internal class BoundedBodyCapture(
             frozen = true
         }
 
-    /** Whether [freeze] has been called - exposed for `BoundedBodyCaptureTest`. */
-    val isFrozen: Boolean
-        get() = lock.withLock { frozen }
-
     /**
      * The captured bytes decoded with [charset], suffixed with a truncation note when the body was larger
      * than the capture limit. Returns `null` for a body of zero bytes, so the log emission can omit the
@@ -154,5 +152,17 @@ internal class BoundedBodyCapture(
     companion object {
         /** No trustworthy declared length: the buffer is sized by what flows. */
         const val UNKNOWN_LENGTH = BoundedByteBuffer.UNKNOWN_LENGTH
+
+        /**
+         * The `Content-Length` a request or response declares, read through [declared], folded to
+         * [UNKNOWN_LENGTH] when the value is malformed: Spring parses the header with `Long.parseLong`
+         * and throws, and a peer's or a caller's bad header must never be thrown into the delivery.
+         */
+        inline fun declaredLength(declared: () -> Long): Long =
+            try {
+                declared()
+            } catch (e: NumberFormatException) {
+                UNKNOWN_LENGTH
+            }
     }
 }

@@ -2,8 +2,12 @@ package eu.inqudium.legatium.restclient.logging
 
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.springframework.http.HttpRequest
 import org.springframework.http.HttpStatus
+import org.springframework.http.client.ClientHttpRequestExecution
 import org.springframework.http.client.ClientHttpRequestFactory
+import org.springframework.http.client.ClientHttpRequestInterceptor
+import org.springframework.http.client.ClientHttpResponse
 import org.springframework.mock.http.client.MockClientHttpRequest
 import org.springframework.mock.http.client.MockClientHttpResponse
 import org.springframework.web.client.RestClient
@@ -19,21 +23,34 @@ class UriTemplateAttributeTest {
             MockClientHttpRequest(method, uri).apply { setResponse(MockClientHttpResponse(ByteArray(0), HttpStatus.OK)) }
         }
 
-    /** The attributes and the URI of the last request the recording interceptor saw. */
-    private var seen: Map<String, Any>? = null
-    private var seenUri: URI? = null
+    /** An interceptor in the position the module's takes, recording the attributes and the URI of the last request it saw. */
+    private class RecordingInterceptor : ClientHttpRequestInterceptor {
+        var attributes: Map<String, Any> = emptyMap()
+            private set
+        var uri: URI? = null
+            private set
 
-    /** A real client over the mock factory, with a recording interceptor in the position the module's interceptor takes. */
+        override fun intercept(
+            request: HttpRequest,
+            body: ByteArray,
+            execution: ClientHttpRequestExecution,
+        ): ClientHttpResponse {
+            attributes = request.attributes.toMap()
+            uri = request.uri
+            return execution.execute(request, body)
+        }
+    }
+
+    private val recording = RecordingInterceptor()
+
+    /** A real client over the mock factory, with the recording interceptor in the position the module's interceptor takes. */
     private val client =
         RestClient
             .builder()
             .baseUrl("https://api.example.com")
             .requestFactory(requestFactory)
-            .requestInterceptor { request, body, execution ->
-                seen = request.attributes.toMap()
-                seenUri = request.uri
-                execution.execute(request, body)
-            }.build()
+            .requestInterceptor(recording)
+            .build()
 
     @Test
     fun `should see the URI template RestClient records for the template form of uri`() {
@@ -52,8 +69,8 @@ class UriTemplateAttributeTest {
             .toBodilessEntity()
 
         // Then
-        assertThat(seenUri).isEqualTo(URI.create("https://api.example.com/things/7"))
-        assertThat(seen).containsEntry(ClientRequestLoggingInterceptor.URI_TEMPLATE_ATTRIBUTE, "https://api.example.com/things/{id}")
+        assertThat(recording.uri).isEqualTo(URI.create("https://api.example.com/things/7"))
+        assertThat(recording.attributes).containsEntry(ClientRequestLoggingInterceptor.URI_TEMPLATE_ATTRIBUTE, "https://api.example.com/things/{id}")
     }
 
     @Test
@@ -71,7 +88,7 @@ class UriTemplateAttributeTest {
             .toBodilessEntity()
 
         // Then
-        assertThat(seen).doesNotContainKey(ClientRequestLoggingInterceptor.URI_TEMPLATE_ATTRIBUTE)
+        assertThat(recording.attributes).doesNotContainKey(ClientRequestLoggingInterceptor.URI_TEMPLATE_ATTRIBUTE)
     }
 
     @Test

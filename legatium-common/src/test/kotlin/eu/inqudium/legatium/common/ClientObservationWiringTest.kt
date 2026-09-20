@@ -26,7 +26,7 @@ class ClientObservationWiringTest {
         factory.registerBeanDefinition("tracer", RootBeanDefinition(Class.forName(TRACER)))
 
         // When
-        val line = ClientObservationWiring.describe(factory, customizers, tracerClass = TRACER)
+        val line = ClientObservationWiring.describe(factory, customizers, HEADER, tracerClass = TRACER)
 
         // Then
         assertThat(line)
@@ -37,23 +37,26 @@ class ClientObservationWiringTest {
 
     @Test
     fun `should report observation without tracing when no tracer is defined`() {
-        // What is tested: describe over a factory defining both customizers and no tracer.
+        // What is tested: describe over a factory defining both customizers and no tracer, with a
+        //   host-configured correlation header.
         // Success criteria: the observed-not-traced line naming both builders, and the generated-id
-        //   consequence.
+        //   consequence naming the CONFIGURED header, not the default.
         // Why it matters: observation without a tracing bridge measures but injects no traceparent -
-        //   the identity contract is the traceless one, which the line must say.
+        //   the identity contract is the traceless one, which the line must say, and the header it
+        //   names must be the one the peer will see.
         // Given
         val factory = DefaultListableBeanFactory()
         factory.registerBeanDefinition("builderObservation", RootBeanDefinition(Class.forName(BUILDER_CUSTOMIZER)))
         factory.registerBeanDefinition("templateObservation", RootBeanDefinition(Class.forName(TEMPLATE_CUSTOMIZER)))
 
         // When
-        val line = ClientObservationWiring.describe(factory, customizers, tracerClass = TRACER)
+        val line = ClientObservationWiring.describe(factory, customizers, correlationIdHeader = "X-Request-Id", tracerClass = TRACER)
 
         // Then
         assertThat(line)
             .startsWith("Adapter logging found Boot's client observation wired for RestClient.Builder and RestTemplate but no Micrometer Tracing - ")
-            .contains("the module generates the request id and sends X-Correlation-Id")
+            .contains("the module generates the request id and sends X-Request-Id")
+            .doesNotContain("X-Correlation-Id")
     }
 
     @Test
@@ -69,8 +72,8 @@ class ClientObservationWiringTest {
         withTracerOnly.registerBeanDefinition("tracer", RootBeanDefinition(Class.forName(TRACER)))
 
         // When
-        val line = ClientObservationWiring.describe(withTracerOnly, customizers, tracerClass = TRACER)
-        val withoutClasses = ClientObservationWiring.describe(DefaultListableBeanFactory(), mapOf("no.such.Customizer" to "RestClient.Builder"), tracerClass = "no.such.Tracer")
+        val line = ClientObservationWiring.describe(withTracerOnly, customizers, HEADER, tracerClass = TRACER)
+        val withoutClasses = ClientObservationWiring.describe(DefaultListableBeanFactory(), mapOf("no.such.Customizer" to "RestClient.Builder"), HEADER, tracerClass = "no.such.Tracer")
 
         // Then
         assertThat(line)
@@ -84,5 +87,8 @@ class ClientObservationWiringTest {
         const val BUILDER_CUSTOMIZER = "java.lang.StringBuilder"
         const val TEMPLATE_CUSTOMIZER = "java.lang.StringBuffer"
         const val TRACER = "java.lang.Thread"
+
+        /** The default correlation header, as the lines of the other two tests expect it. */
+        const val HEADER = "X-Correlation-Id"
     }
 }

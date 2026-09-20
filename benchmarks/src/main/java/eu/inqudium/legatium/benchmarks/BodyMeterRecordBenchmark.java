@@ -24,17 +24,22 @@ import org.openjdk.jmh.annotations.Warmup;
  * what gets measured:
  *
  * <ul>
- *   <li>{@link #owner}: the owner's {@code requestBodySize} - the production path, which resolves the
- *       summary once per tag set and caches it;</li>
- *   <li>{@link #registerPerCall}: the path the owner took before the cache - builder, three tags and a
- *       {@code Meter.Id} per call, resolved through Micrometer's deduplicating lookup;</li>
- *   <li>{@link #recordOnly}: {@code DistributionSummary.record} on a pre-resolved summary - the floor
- *       nothing above it can go below.</li>
+ *   <li>{@link #owner}: the owner's {@code requestBodySize} - the production path, which resolves
+ *       the summary once per tag set and caches it;</li>
+ *   <li>{@link #registerPerCall}: the path the owner took before the cache - builder, three tags
+ *       and a {@code Meter.Id} per call, resolved through Micrometer's deduplicating lookup;</li>
+ *   <li>{@link #recordOnly}: {@code DistributionSummary.record} on a pre-resolved summary - the
+ *       floor nothing above it can go below.</li>
  * </ul>
  *
  * <p>{@code -prof gc} is the metric that matters: the per-call allocations the cache removes are
- * short-lived and the JIT hides much of their time. The owner's cache is warmed for every tag set in
- * setup, so the measurement is the steady state a long-running host sees.
+ * short-lived and the JIT hides much of their time. The owner's cache is warmed for every tag set
+ * in setup, so the measurement is the steady state a long-running host sees.
+ *
+ * <p>The registry, the owner and the resolved summaries are shared by every thread of a run (the
+ * benchmark scope: one owner per registry is the production shape); the rotation over the tag
+ * sets is per thread ({@link Rotation}), so a {@code -t N} run measures contention on the owner,
+ * not on a counter of the benchmark's own.
  */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -48,7 +53,7 @@ public class BodyMeterRecordBenchmark {
     private static final String NAME = "things";
     private static final long BYTES = 1_024;
 
-    /** Distinct tag sets the calls rotate over; powers of two, so the rotation is a mask. */
+    /** Distinct tag sets the calls rotate over; a power of two, so the rotation is a mask. */
     @Param({"1", "16"})
     public int tagSets;
 
@@ -56,28 +61,39 @@ public class BodyMeterRecordBenchmark {
     private ClientLoggingMetrics metrics;
     private String[] templates;
     private DistributionSummary[] resolved;
-    private int next;
+
+    /** Each thread's position in the rotation over the tag sets. */
+    @State(Scope.Thread)
+    public static class Rotation {
+        int next;
+    }
 
     @Setup
     public void setup() {
+        if (Integer.bitCount(tagSets) != 1) {
+            throw new IllegalArgumentException("tagSets must be a power of two, got " + tagSets);
+        }
         registry = new SimpleMeterRegistry();
-        metrics = ClientLoggingMetrics.Companion.forRegistry(registry, ClientStack.RESTCLIENT);
+        metrics = ClientLoggingMetrics.forRegistry(registry, ClientStack.RESTCLIENT);
         templates = new String[tagSets];
         resolved = new DistributionSummary[tagSets];
         for (int i = 0; i < tagSets; i++) {
-            templates[i] = "https://api.example.com/things/" + i + "/{id}";
+            templates[i] = "https://" + HOST + "/" + NAME + "/" + i + "/{id}";
             resolved[i] = summaryFor(templates[i]);
             metrics.requestBodySize(templates[i], HOST, NAME, BYTES);
         }
     }
 
-    private int slot() {
-        int i = next;
-        next = (i + 1) & (tagSets - 1);
+    private int slot(Rotation rotation) {
+        int i = rotation.next;
+        rotation.next = (i + 1) & (tagSets - 1);
         return i;
     }
 
-    /** What the owner did per call before the cache; the same builder chain, so the ids are identical. */
+    /**
+     * What the owner did per call before the cache; the same builder chain, so the ids are
+     * identical.
+     */
     private DistributionSummary summaryFor(String template) {
         return DistributionSummary.builder(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER)
                 .baseUnit("bytes")
@@ -89,17 +105,17 @@ public class BodyMeterRecordBenchmark {
     }
 
     @Benchmark
-    public void owner() {
-        metrics.requestBodySize(templates[slot()], HOST, NAME, BYTES);
+    public void owner(Rotation rotation) {
+        metrics.requestBodySize(templates[slot(rotation)], HOST, NAME, BYTES);
     }
 
     @Benchmark
-    public void registerPerCall() {
-        summaryFor(templates[slot()]).record(BYTES);
+    public void registerPerCall(Rotation rotation) {
+        summaryFor(templates[slot(rotation)]).record(BYTES);
     }
 
     @Benchmark
-    public void recordOnly() {
-        resolved[slot()].record(BYTES);
+    public void recordOnly(Rotation rotation) {
+        resolved[slot(rotation)].record(BYTES);
     }
 }

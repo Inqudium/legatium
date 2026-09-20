@@ -18,6 +18,7 @@ import org.junit.jupiter.api.extension.ExtensionContext
 import org.junit.jupiter.api.extension.TestInstancePostProcessor
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpMethod
+import org.springframework.http.HttpRequest
 import org.springframework.http.HttpStatus
 import org.springframework.http.client.ClientHttpRequestExecution
 import org.springframework.http.client.ClientHttpResponse
@@ -25,10 +26,30 @@ import org.springframework.mock.http.client.MockClientHttpRequest
 import org.springframework.mock.http.client.MockClientHttpResponse
 import java.net.URI
 import java.nio.charset.StandardCharsets
+import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+
+/** The read timeout that IS the subject of the Spring suites' timeout scenarios: well below the peer's `/slow` delay. */
+internal val SHORT: Duration = Duration.ofMillis(200)
+
+/**
+ * The tracing bridge - on the test classpath for the tracing suite - excluded, so the calls of a suite
+ * are TRACELESS: an active bridge injects a traceparent into EVERY call, sampled or not, and the
+ * correlation contract must be what goes on the wire.
+ */
+internal const val TRACELESS_CALLS =
+    "spring.autoconfigure.exclude=" +
+        "org.springframework.boot.micrometer.tracing.brave.autoconfigure.BraveAutoConfiguration," +
+        "org.springframework.boot.micrometer.tracing.autoconfigure.MicrometerTracingAutoConfiguration"
+
+/** The count of the counter [name] carries under [tags] - the one registry read every meter assertion makes. */
+internal fun MeterRegistry.count(
+    name: String,
+    vararg tags: String,
+): Double = get(name).tags(*tags).counter().count()
 
 /** The key-value pairs of an event as a map, for assertions on the `adapter_*` family. */
 internal fun keyValues(event: ILoggingEvent): Map<String, Any?> = event.keyValuePairs?.associate { it.key to it.value } ?: emptyMap()
@@ -44,6 +65,31 @@ internal fun interceptorWith(
     registry: MeterRegistry = SimpleMeterRegistry(),
     correlationId: String = "generated-42",
 ): ClientRequestLoggingInterceptor = ClientRequestLoggingInterceptor(properties, NanoTimeSource { ticker.get() }, CorrelationIdGenerator { correlationId }, registry)
+
+/**
+ * An execution that observes the calling thread at the moment of the wire call - its MDC, the log so
+ * far - through [observe], then answers through [delegate]. What was seen is read once the call returned.
+ */
+internal class ObservingExecution<T : Any>(
+    private val delegate: ClientHttpRequestExecution = answering(),
+    private val observe: () -> T,
+) : ClientHttpRequestExecution {
+    /** What [observe] returned on the wire call; null before it. */
+    var seen: T? = null
+        private set
+
+    /** Whether the wire call happened at all. */
+    val called: Boolean
+        get() = seen != null
+
+    override fun execute(
+        request: HttpRequest,
+        body: ByteArray,
+    ): ClientHttpResponse {
+        seen = observe()
+        return delegate.execute(request, body)
+    }
+}
 
 /**
  * Runs [block] on a fresh thread and returns its result - the case of a close that does not happen on
@@ -109,7 +155,7 @@ internal class CapturedLogger(
     val logger: Logger = LoggerFactory.getLogger(loggerName) as Logger
     val appender: ListAppender<ILoggingEvent> = ListAppender<ILoggingEvent>().apply { start() }
 
-    // The level the logger had before - null when it inherited one - restored by [detach], so a test
+    // The level the logger had before - null when it inherited one - restored by `detach`, so a test
     // that raises or silences a logger (Level.OFF in the metrics tests) leaves the JVM-global logger
     // tree as it found it and the suite stays order-independent.
     private val previousLevel: Level? = logger.level

@@ -134,7 +134,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
                     NanoTimeSource { ticker.get() },
                     CorrelationIdGenerator { "generated-42" },
                     registry,
-                    HeaderValueMasker { throw IllegalStateException("masker broke") },
+                    HeaderValueMasker { error("masker broke") },
                 )
             val request = request().apply { headers.set("Authorization", "Bearer secret-token") }
 
@@ -146,20 +146,8 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             assertThat(request.headers.getFirst(base.correlationIdHeader)).isEqualTo("generated-42")
             assertThat(request.attributes).containsEntry(ClientRequestLoggingInterceptor.GENERATED_ID_ATTRIBUTE, "generated-42")
             assertThat(log.events).isEmpty()
-            assertThat(
-                registry
-                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
-                    .tags("stage", "wiring")
-                    .counter()
-                    .count(),
-            ).isEqualTo(1.0)
-            assertThat(
-                registry
-                    .get(ClientLoggingMetrics.CORRELATION_METER)
-                    .tags("source", "generated")
-                    .counter()
-                    .count(),
-            ).isZero()
+            assertThat(registry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.CORRELATION_METER, "source", "generated")).isZero()
             assertThat(registry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
         }
 
@@ -454,33 +442,6 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             // Then
             assertThat(keyValues(log.events.single())).containsEntry("adapter_response_body", "payload")
             assertThat(registry.get(ClientLoggingMetrics.FAIL_OPEN_METER).counters().sumOf { it.count() }).isZero()
-        }
-
-        @Test
-        fun `should record the read state of the response body as unread, partial or complete`() {
-            // What is tested: the observation points of the read state - opening the stream marks
-            //   PARTIAL, observing EOF marks COMPLETE, never opening it leaves UNREAD.
-            // Success criteria: three exchanges, three states, read off the captures.
-            // Why it matters: the state is the one signal that tells a discarded response body from an
-            //   absent one.
-            // Given
-            val capture = BoundedBodyCapture(8)
-            val response =
-                CapturingClientHttpResponse(
-                    MockClientHttpResponse("ab".toByteArray(), HttpStatus.OK),
-                    capture,
-                    onFailure = {},
-                    onClose = {},
-                )
-
-            // When/Then
-            assertThat(capture.readState).isEqualTo(BodyReadState.UNREAD)
-            val stream = response.body
-            assertThat(capture.readState).isEqualTo(BodyReadState.PARTIAL)
-            stream.read()
-            assertThat(capture.readState).isEqualTo(BodyReadState.PARTIAL)
-            stream.readAllBytes()
-            assertThat(capture.readState).isEqualTo(BodyReadState.COMPLETE)
         }
 
         @Test

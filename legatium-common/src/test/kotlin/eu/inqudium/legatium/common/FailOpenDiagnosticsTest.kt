@@ -3,6 +3,8 @@ package eu.inqudium.legatium.common
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /** The shared fail-open guard shape: interrupt-flag restoration and the confined diagnostics channel. */
 class FailOpenDiagnosticsTest {
@@ -21,19 +23,19 @@ class FailOpenDiagnosticsTest {
         // Why it matters: a swallowed interrupt on a pooled thread is a hang or a late cancellation in the
         //   host - the one outcome a fail-open logging guard must not produce.
         // Given
-        var interruptedSeen = 0
-        var failureSeen = 0
+        val interruptedSeen = AtomicInteger()
+        val failureSeen = AtomicInteger()
 
         // When
         failOpen(
-            onInterrupted = { interruptedSeen++ },
-            onFailure = { failureSeen++ },
+            onInterrupted = { interruptedSeen.incrementAndGet() },
+            onFailure = { failureSeen.incrementAndGet() },
         ) { throw InterruptedException("stop") }
 
         // Then
         assertThat(Thread.currentThread().isInterrupted).isTrue()
-        assertThat(interruptedSeen).isEqualTo(1)
-        assertThat(failureSeen).isZero()
+        assertThat(interruptedSeen).hasValue(1)
+        assertThat(failureSeen).hasValue(0)
     }
 
     @Test
@@ -61,13 +63,13 @@ class FailOpenDiagnosticsTest {
         // Why it matters: the guard wraps every emitter and callback; touching the interrupt flag or
         //   reporting on success would count a fail-open event for every healthy call.
         // Given/When
-        var ran = false
-        var handled = 0
-        failOpen(onInterrupted = { handled++ }, onFailure = { handled++ }) { ran = true }
+        val ran = AtomicBoolean()
+        val handled = AtomicInteger()
+        failOpen(onInterrupted = { handled.incrementAndGet() }, onFailure = { handled.incrementAndGet() }) { ran.set(true) }
 
         // Then
         assertThat(ran).isTrue()
-        assertThat(handled).isZero()
+        assertThat(handled).hasValue(0)
         assertThat(Thread.currentThread().isInterrupted).isFalse()
     }
 }

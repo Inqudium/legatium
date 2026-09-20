@@ -51,19 +51,6 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
         log.detach()
     }
 
-    /** An exchange function that WRITES the request body to a mock connector request, then answers. */
-    private fun writingThenAnswering(
-        response: ClientResponse = ClientResponse.create(HttpStatus.OK).build(),
-        onWritten: (MockClientHttpRequest) -> Unit = {},
-    ): ExchangeFunction =
-        ExchangeFunction { request ->
-            val connectorRequest = MockClientHttpRequest(request.method(), request.url())
-            request
-                .writeTo(connectorRequest, ExchangeStrategies.withDefaults())
-                .then(Mono.fromCallable { onWritten(connectorRequest) })
-                .then(Mono.just(response))
-        }
-
     @Nested
     inner class `Header selection and masking` {
         @Test
@@ -222,7 +209,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             // Why it matters: the tee must be a passive copy at the one place every encoder passes.
             // Given
             val filter = filterWith(base.copy(logRequestBody = BodyLogMode.ALWAYS), ticker)
-            var written: String? = null
+            val connector = WritingExchange()
             val request =
                 request(method = HttpMethod.POST) {
                     header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
@@ -230,10 +217,10 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
                 }
 
             // When
-            filter.call(request, writingThenAnswering { written = it.bodyAsString.block() })
+            filter.call(request, connector)
 
             // Then
-            assertThat(written).isEqualTo("""{"name":"thing"}""")
+            assertThat(checkNotNull(connector.received).bodyAsString.block()).isEqualTo("""{"name":"thing"}""")
             assertThat(keyValues(log.events.single())).containsEntry("adapter_request_body", """{"name":"thing"}""")
         }
 
@@ -304,7 +291,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             // Why it matters: an operator sizing heap by the cap must be able to rely on the bound.
             // Given
             val capture = BoundedBodyCapture(8)
-            val buffer = DefaultDataBufferFactory.sharedInstance.wrap("0123456789abcdef".toByteArray())
+            val buffer = buffer("0123456789abcdef")
 
             // When
             val passed = tee(capture, buffer)
@@ -326,7 +313,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             //   must cost no allocation per buffer while keeping the size sample exact.
             // Given: limit 0 - the measure-only mode
             val capture = BoundedBodyCapture(0)
-            val buffer = DefaultDataBufferFactory.sharedInstance.wrap("payload".toByteArray())
+            val buffer = buffer("payload")
 
             // When
             tee(capture, buffer)
@@ -480,7 +467,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
                         dest: ByteBuffer,
                         destPos: Int,
                         length: Int,
-                    ): Unit = throw IllegalStateException("tee broke")
+                    ): Unit = error("tee broke")
                 }
             val response = ClientResponse.create(HttpStatus.OK).body(Flux.just<DataBuffer>(broken)).build()
 
@@ -491,13 +478,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             assertThat(body).isEqualTo("payload")
             val event = log.events.single()
             assertThat(keyValues(event)).containsEntry("adapter_outcome", "success").containsEntry("adapter_response_body", "... [truncated, 7 bytes total]")
-            assertThat(
-                registry
-                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
-                    .tags("stage", "wiring")
-                    .counter()
-                    .count(),
-            ).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
         }
 
         @Test
@@ -548,20 +529,8 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
                 .blockLast()
 
             // Then: the counters carry one complete and one partial
-            assertThat(
-                registry
-                    .get(ClientLoggingMetrics.RESPONSE_BODY_READ_METER)
-                    .tag("state", "complete")
-                    .counter()
-                    .count(),
-            ).isEqualTo(1.0)
-            assertThat(
-                registry
-                    .get(ClientLoggingMetrics.RESPONSE_BODY_READ_METER)
-                    .tag("state", "partial")
-                    .counter()
-                    .count(),
-            ).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "state", "complete")).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "state", "partial")).isEqualTo(1.0)
         }
     }
 
@@ -693,12 +662,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             // Why it matters: for a connection that dropped after the upload the request body is
             //   the only payload evidence there is; it must survive to the failure line.
             // Given: a connector that takes the body and then fails without a response
-            val refused =
-                ExchangeFunction { request ->
-                    request
-                        .writeTo(MockClientHttpRequest(request.method(), request.url()), ExchangeStrategies.withDefaults())
-                        .then(Mono.error<ClientResponse>(IOException("Connection refused")))
-                }
+            val refused = WritingExchange { Mono.error(IOException("Connection refused")) }
 
             // When
             val thrown = catchThrowable { filterWith(onFailure, ticker).filter(posting("sent"), refused).block() }
@@ -716,7 +680,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             // What is tested: the gate follows the outcome alone - a 4xx is `rejected` (the peer answered;
             //   the request was wrong, ADR-0012), which is not `success` and exactly the case a body explains.
             // Success criteria: INFO and outcome rejected, and BOTH bodies on the line.
-            // Why it matters: a validation error\'s response body is the most wanted body of all; hiding it
+            // Why it matters: a validation error's response body is the most wanted body of all; hiding it
             //   behind the outcome vocabulary would make on-failure useless for client errors.
             // Given/When: a 404 with a body
             filterWith(onFailure, ticker).call(posting("sent"), writingThenAnswering(answer(HttpStatus.NOT_FOUND, "no such thing")))

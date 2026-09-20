@@ -32,8 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   takes the trace id as its request id and gets no `X-Correlation-Id`), which has no property and was
   so far readable only per call. One of three lines, logged once every singleton exists: observation
   with tracing, observation without a tracing bridge, no observation (`ClientObservationWiring` in
-  `legatium-common`, matching by class name so the optional libraries stay optional). Pinned by the
-  auto-configuration tests against Boot's real observation and Brave auto-configurations.
+  `legatium-common`, matching by class name so the optional libraries stay optional), naming the
+  configured `correlation-id-header`, not its default. Pinned by the auto-configuration tests against
+  Boot's real observation and Brave auto-configurations.
 
 ### Changed
 

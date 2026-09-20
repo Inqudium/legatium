@@ -78,37 +78,54 @@ internal class MdcScope(
     private val previous: Map<String, String?> = (applied.keys + removed).associateWith { MDC.get(it) }
 
     init {
-        try {
-            applied.forEach { (key, value) -> MDC.put(key, value) }
+        installMdcEntries(applied, previous) {
             removed.forEach { MDC.remove(it) }
-        } catch (e: Exception) {
-            // Roll back a PARTIAL install before propagating: a broken MDC adapter failing mid-put must
-            // not leave half an identity on a pooled thread.
-            try {
-                close()
-            } catch (rollback: Exception) {
-                e.addSuppressed(rollback)
-            }
-            throw e
         }
     }
 
-    /**
-     * Restores every key BEST-EFFORT: one failing adapter call must not leave the remaining module-owned
-     * entries on a pooled thread. The first failure is rethrown after the loop, later ones attached as
-     * suppressed; the partial-install rollback above attaches a restoration failure to the ORIGINAL
-     * install exception instead of replacing it.
-     */
-    override fun close() {
-        var failure: Exception? = null
-        previous.forEach { (key, value) ->
-            try {
-                if (value == null) MDC.remove(key) else MDC.put(key, value)
-            } catch (e: Exception) {
-                val first = failure
-                if (first == null) failure = e else first.addSuppressed(e)
-            }
+    /** Restores every key the scope touched - [restoreMdcEntries] has the best-effort rule. */
+    override fun close() = restoreMdcEntries(previous)
+}
+
+/**
+ * Puts [entries] into the MDC, then runs [andThen] (the removals a scope owns), and rolls back to
+ * [previous] when either throws: a broken MDC adapter failing mid-put must not leave half an identity
+ * on a pooled thread. A rollback failure is attached to the ORIGINAL install exception as suppressed
+ * instead of replacing it. Shared by [MdcScope] and the RestClient twin's caller snapshot, so the
+ * partial-install rule has one owner.
+ */
+internal inline fun installMdcEntries(
+    entries: Map<String, String>,
+    previous: Map<String, String?>,
+    andThen: () -> Unit = {},
+) {
+    try {
+        entries.forEach { (key, value) -> MDC.put(key, value) }
+        andThen()
+    } catch (e: Exception) {
+        try {
+            restoreMdcEntries(previous)
+        } catch (rollback: Exception) {
+            e.addSuppressed(rollback)
         }
-        failure?.let { throw it }
+        throw e
     }
+}
+
+/**
+ * Restores [previous] BEST-EFFORT - a null value removes the key: one failing adapter call must not
+ * leave the remaining entries on a pooled thread. The first failure is rethrown after the loop, later
+ * ones attached as suppressed. Shared by [MdcScope] and the RestClient twin's caller snapshot.
+ */
+internal fun restoreMdcEntries(previous: Map<String, String?>) {
+    var failure: Exception? = null
+    previous.forEach { (key, value) ->
+        try {
+            if (value == null) MDC.remove(key) else MDC.put(key, value)
+        } catch (e: Exception) {
+            val first = failure
+            if (first == null) failure = e else first.addSuppressed(e)
+        }
+    }
+    failure?.let { throw it }
 }

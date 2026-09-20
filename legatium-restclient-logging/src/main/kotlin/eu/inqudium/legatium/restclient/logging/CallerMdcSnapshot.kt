@@ -3,6 +3,8 @@ package eu.inqudium.legatium.restclient.logging
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.NoOpScope
 import eu.inqudium.legatium.common.TraceMdcKeys
+import eu.inqudium.legatium.common.installMdcEntries
+import eu.inqudium.legatium.common.restoreMdcEntries
 import org.slf4j.MDC
 
 /**
@@ -37,38 +39,16 @@ internal class CallerMdcSnapshot private constructor(
             return NoOpScope
         }
         val previous = entries.keys.associateWith { MDC.get(it) }
-        try {
-            entries.forEach { (key, value) -> MDC.put(key, value) }
-        } catch (e: Exception) {
-            // Roll back a PARTIAL install before propagating, as MdcScope does.
-            try {
-                restorePrevious(previous)
-            } catch (rollback: Exception) {
-                e.addSuppressed(rollback)
-            }
-            throw e
-        }
-        return AutoCloseable { restorePrevious(previous) }
-    }
-
-    private fun restorePrevious(previous: Map<String, String?>) {
-        var failure: Exception? = null
-        previous.forEach { (key, value) ->
-            try {
-                if (value == null) MDC.remove(key) else MDC.put(key, value)
-            } catch (e: Exception) {
-                val first = failure
-                if (first == null) failure = e else first.addSuppressed(e)
-            }
-        }
-        failure?.let { throw it }
+        // The partial-install rollback and the best-effort restore are MdcScope's rules, shared.
+        installMdcEntries(entries, previous)
+        return AutoCloseable { restoreMdcEntries(previous) }
     }
 
     companion object {
         private val OWNED_KEYS = setOf(MdcKeys.REQUEST_ID, MdcKeys.REQUEST_METHOD, MdcKeys.ROUTE, TraceMdcKeys.TRACE_ID, TraceMdcKeys.SPAN_ID)
 
         /** No snapshot: restores nothing, wherever it is closed. */
-        val NONE = CallerMdcSnapshot(null, emptyMap())
+        val NONE: CallerMdcSnapshot = CallerMdcSnapshot(null, emptyMap())
 
         /**
          * The current thread's MDC, the module's own and the trace keys left out. An empty MDC costs
@@ -89,6 +69,6 @@ internal fun interface CallerMdcRestorer {
     fun restore(snapshot: CallerMdcSnapshot): AutoCloseable
 
     companion object {
-        val DEFAULT = CallerMdcRestorer { it.restore() }
+        val DEFAULT: CallerMdcRestorer = CallerMdcRestorer { it.restore() }
     }
 }

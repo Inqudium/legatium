@@ -185,15 +185,8 @@ class ClientRequestLoggingFilter
         ): ClientResponse {
             exchange.response = response
             val capture = exchange.responseCapture
-            // The declared length sizes the capture's buffer; a peer's malformed value is folded to
-            // unknown (Spring parses it with Long.parseLong), never thrown into the delivery.
-            capture?.expectBytes(
-                try {
-                    response.headers().contentLength().orElse(BoundedBodyCapture.UNKNOWN_LENGTH)
-                } catch (e: NumberFormatException) {
-                    BoundedBodyCapture.UNKNOWN_LENGTH
-                },
-            )
+            // The declared length sizes the capture's buffer, a malformed one folded to unknown.
+            capture?.expectBytes(BoundedBodyCapture.declaredLength { response.headers().contentLength().orElse(BoundedBodyCapture.UNKNOWN_LENGTH) })
             return response
                 .mutate()
                 .body { body -> ObservedBody(body, exchange, capture, ::complete, ::teeFailure) }
@@ -221,7 +214,14 @@ class ClientRequestLoggingFilter
             }
             reportQuietly {
                 metrics.exchangeCompleted()
-                internalLog.warn("Adapter http exchange abandoned: {} {} - {} [{}={}]", exchange.method, exchange.target, error.toString(), MdcKeys.REQUEST_ID, exchange.requestId)
+                internalLog.warn(
+                    "Adapter http exchange abandoned: {} {} - {} [{}={}]",
+                    exchange.method,
+                    exchange.target,
+                    error.toString(),
+                    MdcKeys.REQUEST_ID,
+                    exchange.requestId,
+                )
             }
         }
 
@@ -375,7 +375,7 @@ class ClientRequestLoggingFilter
         )
 
         /** The wired [exchange] plus the (possibly rebuilt) request the connector receives. */
-        internal class Wiring(
+        private class Wiring(
             val exchange: Exchange,
             val request: ClientRequest,
         )

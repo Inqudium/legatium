@@ -5,6 +5,7 @@ import eu.inqudium.legatium.common.ClientStack
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Literal pins of the twin contract this stack OWNS: the outcome vocabulary it pre-registers and the
@@ -38,7 +39,7 @@ class TwinContractTest {
         //   divergence in one twin would otherwise ship silently.
         // Given
         val properties = ClientLoggingProperties(loggerName = "adapter-http-exchange-twin-message-test", logRequestStart = true)
-        val interceptor = ClientRequestLoggingInterceptor(properties, { 0L }, { "generated-42" }, SimpleMeterRegistry())
+        val interceptor = interceptorWith(properties, AtomicLong())
         val log = CapturedLogger(properties.loggerName)
         try {
             // When: one successful call of an unnamed client, one of a named client

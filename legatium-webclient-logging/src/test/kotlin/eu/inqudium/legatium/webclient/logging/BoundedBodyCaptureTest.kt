@@ -163,11 +163,11 @@ class BoundedBodyCaptureTest {
             val capture = BoundedBodyCapture(32)
             val publisher = ManualPublisher()
             Flux.from(publisher).map { tee(capture, it) }.subscribe()
-            publisher.emit(DefaultDataBufferFactory.sharedInstance.wrap(bytes("before")))
+            publisher.emit(buffer("before"))
 
             // When: the emission freezes the capture, then a late buffer arrives
             capture.freeze()
-            publisher.emit(DefaultDataBufferFactory.sharedInstance.wrap(bytes("-late")))
+            publisher.emit(buffer("-late"))
 
             // Then: the late buffer left no trace in the capture
             assertThat(capture.totalBytes).isEqualTo(6L)

@@ -463,7 +463,14 @@ class ClientRequestLoggingInterceptor
             }
             reportQuietly {
                 metrics.exchangeCompleted()
-                internalLog.warn("Adapter http exchange abandoned: {} {} - {} [{}={}]", exchange.method, exchange.target, error.toString(), MdcKeys.REQUEST_ID, exchange.requestId)
+                internalLog.warn(
+                    "Adapter http exchange abandoned: {} {} - {} [{}={}]",
+                    exchange.method,
+                    exchange.target,
+                    error.toString(),
+                    MdcKeys.REQUEST_ID,
+                    exchange.requestId,
+                )
             }
         }
 
