@@ -2,7 +2,7 @@
 
 **Status:** Accepted  
 **Date:** 2026-09-03  
-**Last updated:** 2026-09-05  
+**Last updated:** 2026-09-20  
 **Deciders:** Dirk Haase (maintainer)  
 **Related:** ADR-0002 (the `Traceparent` parser and `MdcScope` it
 relies on are shared by this ADR's criterion), ADR-0004
@@ -59,6 +59,7 @@ every move is recorded in [History](#history).
 | `Classification.ofStatus` with the escalation set (one `rejected` and one status table on both stacks)        | 2026-09-19 | ADR-0012                                                                |
 | `SharedContractTest` (the shared literals, pinned once)                                                        | 2026-09-05 | `ARCHITECTURE_REVIEW-2026-09-05T00-24-58.md`, finding 3                 |
 | `BoundedByteBuffer` (the byte-bounded buffer beneath both `BoundedBodyCapture`s, with unit test and fuzz target) | 2026-09-17 | extraction with the mark/reset and buffer-sizing work                   |
+| `BodyCaptures` (which direction gets a buffering, a count-only or no capture; each twin passes its own capture type) | 2026-09-20 | `COMMENT_AUDIT-2026-09-05T01-57-47.R2.md`, finding 28; round 3, pass 4 |
 
 Later residents that arrive with ordinary changes follow the same
 criterion; the module's source tree is the authoritative list.
@@ -277,3 +278,8 @@ of both jars.
   joined `Classification` in common (ADR-0012): the status half of
   both twins' `classify` is one function, so a 4xx is `rejected` and
   401/403/408/429 are WARN on both lines by construction.
+- **2026-09-20:** `BodyCaptures` joined common: the choice of a
+  buffering, a count-only or no capture per direction was byte-identical
+  in both entry points (comment audit of 2026-09-16, finding 28). The
+  twins pass their capture constructor, so each keeps its own capture
+  type and concurrency model; the rule has one unit test in common.
