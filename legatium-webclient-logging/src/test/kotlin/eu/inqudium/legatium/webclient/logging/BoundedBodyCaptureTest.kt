@@ -156,8 +156,9 @@ class BoundedBodyCaptureTest {
             //   already-requested buffer.
             // Success criteria: the buffer passes the tee (downstream is unaffected) but the capture's
             //   text and count are unchanged.
-            // Why it matters: `doFinally(CANCEL)` runs immediately after cancellation is forwarded while
-            //   an onNext may still be in flight; without the freeze the log snapshot would be taken
+            // Why it matters: the body operator's `cancel` completes the exchange right after the
+            //   cancellation is forwarded upstream, while an onNext may still be in flight (Reactive
+            //   Streams permits it); without the freeze the log snapshot would be taken
             //   from a buffer that another thread is mutating.
             // Given: a teed response body whose publisher is driven by hand
             val capture = BoundedBodyCapture(32)

@@ -148,7 +148,7 @@ class ClientRequestLoggingFilterIntegrationTest : IntegrationFixture() {
     @Test
     fun `should log a refused connection as ERROR failure without a status`() {
         // What is tested: the no-response path against a real closed port - the connector errors
-        //   before a status line, the exchange completes through doFinally on the response Mono.
+        //   before a status line, the exchange completes through the response operator's onError.
         // Success criteria: the caller gets a WebClientRequestException; the single event is ERROR
         //   with outcome failure, "-> -" in the message and no status field.
         // Why it matters: a connection refused is the most common outage signature; the line must

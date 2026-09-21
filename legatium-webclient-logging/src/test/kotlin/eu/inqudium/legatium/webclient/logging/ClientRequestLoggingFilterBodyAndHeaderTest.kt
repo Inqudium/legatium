@@ -656,7 +656,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
         @Test
         fun `should log the teed request body of a call that failed after sending it`() {
             // What is tested: on-failure with an error signal AFTER the request body was written -
-            //   no response exists, the exchange completes through doFinally on the response Mono.
+            //   no response exists, the exchange completes through the response operator's onError.
             // Success criteria: the caller gets the IOException, the line carries outcome failure
             //   and the request body, and no response body key.
             // Why it matters: for a connection that dropped after the upload the request body is

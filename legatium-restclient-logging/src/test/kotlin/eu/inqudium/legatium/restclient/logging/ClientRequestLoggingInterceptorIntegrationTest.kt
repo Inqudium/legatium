@@ -65,7 +65,7 @@ class ClientRequestLoggingInterceptorIntegrationTest : PeerIntegrationSuite() {
     private fun clientAgainstClosedPort(): RestClient =
         restClientBuilder
             .baseUrl("http://127.0.0.1:1")
-            .requestFactory(JdkClientHttpRequestFactory(closing(HttpClient.newBuilder().connectTimeout(CONNECT_GUARD).build())))
+            .requestFactory(JdkClientHttpRequestFactory(closingJdkClient(HttpClient.newBuilder().connectTimeout(CONNECT_GUARD).build())))
             .build()
 
     @Test
@@ -266,7 +266,7 @@ class ClientRequestLoggingInterceptorIntegrationTest : PeerIntegrationSuite() {
         val client =
             restClientBuilder
                 .baseUrl(peer.baseUrl)
-                .requestFactory(JdkClientHttpRequestFactory(closing(HttpClient.newBuilder().build())).apply { setReadTimeout(SHORT) })
+                .requestFactory(JdkClientHttpRequestFactory(closingJdkClient(HttpClient.newBuilder().build())).apply { setReadTimeout(SHORT) })
                 .build()
 
         // When

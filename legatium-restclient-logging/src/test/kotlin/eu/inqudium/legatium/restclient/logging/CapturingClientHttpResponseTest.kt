@@ -92,6 +92,36 @@ class CapturingClientHttpResponseTest {
     }
 
     @Test
+    fun `should rewind the capture to a mark taken mid-stream, not to the start`() {
+        // What is tested: the tee's forwarding of mark() to the capture - a mark taken AFTER some bytes
+        //   were read, which Spring's own peek (mark(1) before any read) never takes: there the
+        //   capture's default mark, the start of the stream, coincides with the tee's.
+        // Success criteria: with "hello" read 2, marked, read 2, reset and read to the end, the total
+        //   is the body's 5 bytes and the logged text is "hello" - the prefix before the mark is
+        //   neither lost nor counted twice; the state is COMPLETE, no failure was reported.
+        // Why it matters: a custom extractor peeking mid-stream on a buffered response rewinds the
+        //   stream to its mark; without the forwarding the capture rewinds to the START and the logged
+        //   body loses its prefix while the size sample under-counts - silently, on every such call.
+        // Given
+        val capture = BoundedBodyCapture(16)
+        val body = wrapping(ByteArrayInputStream("hello".toByteArray()), capture).body
+
+        // When: two bytes consumed, a mark, two more, a rewind to the mark, the rest
+        assertThat(body.readNBytes(2).toString(StandardCharsets.UTF_8)).isEqualTo("he")
+        body.mark(8)
+        assertThat(body.readNBytes(2).toString(StandardCharsets.UTF_8)).isEqualTo("ll")
+        body.reset()
+        val rest = body.readAllBytes().toString(StandardCharsets.UTF_8)
+
+        // Then
+        assertThat(rest).isEqualTo("llo")
+        assertThat(capture.totalBytes).isEqualTo(5L)
+        assertThat(capture.loggedValue(StandardCharsets.UTF_8)).isEqualTo("hello")
+        assertThat(capture.readState).isEqualTo(BodyReadState.COMPLETE)
+        assertThat(failures).isEmpty()
+    }
+
+    @Test
     fun `should report an engine stream as not rewindable and count a refused reset as a failure`() {
         // What is tested: the tee over a stream without mark support - the answer is forwarded, a
         //   mark is the no-op the contract allows, and the IOException of a reset the engine refuses

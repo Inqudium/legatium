@@ -3,7 +3,7 @@ package eu.inqudium.legatium.common
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.EnumSource
+import org.junit.jupiter.params.provider.CsvSource
 
 /**
  * The capture rule shared by both twins (ADR-0003): which direction gets a buffering, a count-only or
@@ -17,16 +17,30 @@ class BodyCapturesTest {
     )
 
     @ParameterizedTest
-    @EnumSource(BodyLogMode::class, names = ["ON_FAILURE", "ALWAYS"])
-    fun `should buffer up to the limit when the body is logged, in any mode`(mode: BodyLogMode) {
+    @CsvSource("ON_FAILURE, false", "ON_FAILURE, true", "ALWAYS, false", "ALWAYS, true")
+    fun `should buffer up to the limit when the body is logged, in any mode, measured or not`(
+        mode: BodyLogMode,
+        measured: Boolean,
+    ) {
         // What is tested: a direction whose mode captures gets a capture with the configured limit -
-        //   on-failure as much as always, because the request body flows before the outcome is known.
+        //   on-failure as much as always, because the request body flows before the outcome is known -
+        //   with the measuring switch in BOTH positions: the logged-and-measured cell is the one the
+        //   rule's branch ORDER decides.
         // Success criteria: both directions carry a capture of maxBodyBytes; the measuring switches
         //   are irrelevant once the mode captures.
         // Why it matters: a smaller limit for on-failure would truncate exactly the bodies the mode
-        //   exists to show.
+        //   exists to show; and were the measured branch consulted first, every operator who wants
+        //   both the body and its size would get a count-only capture - the body logged as the bare
+        //   truncation note, in the very configuration that switches both on.
         // Given
-        val properties = ClientLoggingProperties(logRequestBody = mode, logResponseBody = mode, maxBodyBytes = 512)
+        val properties =
+            ClientLoggingProperties(
+                logRequestBody = mode,
+                logResponseBody = mode,
+                measureRequestBodySize = measured,
+                measureResponseBodySize = measured,
+                maxBodyBytes = 512,
+            )
 
         // When
         val captures = BodyCaptures.of(properties, ::FakeCapture)

@@ -6,6 +6,7 @@ import io.micrometer.core.instrument.DistributionSummary
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Meter
 import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.composite.CompositeMeterRegistry
 import io.micrometer.core.instrument.config.MeterFilter
 import io.micrometer.core.instrument.distribution.DistributionStatisticConfig
@@ -691,6 +692,40 @@ class ClientLoggingMetricsTest {
         assertThat(summaries.sumOf { it.count() }).isEqualTo(3L)
         assertThat(summaries.map { it.id.getTag("host") }).containsExactlyInAnyOrder("a.example.com", "OTHER")
         assertThat(cachedBodyMeters(metrics).values).singleElement().satisfies({ assertThat(it.id.getTag("host")).isEqualTo("a.example.com") })
+    }
+
+    @Test
+    fun `should cache a body meter a tag-adding filter kept under the key's values plus its own`() {
+        // What is tested: the cache under an ADDING MeterFilter - Boot's commonTags, which
+        //   management.metrics.tags.* installs in practically every real host: the registry keeps the
+        //   meter with the key's uri/host/name values AND the added tag (Micrometer's merge prefers
+        //   the meter's own value on a conflict, so the key's values survive).
+        // Success criteria: two samples under one tag set register one summary carrying both the key's
+        //   tags and application=shop, count 2 - and the owner's cache holds exactly that meter, keyed
+        //   once: the lenient direction of the folding guard.
+        // Why it matters: the guard must read "still carries the key's values", not "has exactly the
+        //   key's tags" - an over-strict rewrite would leave the cache empty in nearly every real host
+        //   and rebuild builder, id and filter chain on every measured exchange, the cost the cache
+        //   exists to remove, with every registry assertion still green.
+        // Given: a common tag on every meter
+        val registry = SimpleMeterRegistry()
+        registry.config().meterFilter(MeterFilter.commonTags(Tags.of("application", "shop")))
+        val metrics = ClientLoggingMetrics.forRegistry(registry, ClientStack.RESTCLIENT)
+
+        // When
+        repeat(2) { metrics.requestBodySize("https://api.example.com/things/{id}", "api.example.com", "things", 5) }
+
+        // Then
+        val summary = registry.get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).summary()
+        assertThat(summary.count()).isEqualTo(2L)
+        assertThat(summary.id.getTag("application")).isEqualTo("shop")
+        assertThat(cachedBodyMeters(metrics).values).singleElement().satisfies({ cached ->
+            assertThat(cached).isSameAs(summary)
+            assertThat(cached.id.getTag("uri")).isEqualTo("https://api.example.com/things/{id}")
+            assertThat(cached.id.getTag("host")).isEqualTo("api.example.com")
+            assertThat(cached.id.getTag("name")).isEqualTo("things")
+            assertThat(cached.id.getTag("application")).isEqualTo("shop")
+        })
     }
 
     @Test
