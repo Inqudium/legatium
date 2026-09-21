@@ -71,9 +71,9 @@ internal inline fun failOpen(
 /**
  * What a failure of stage `wiring` COST the exchange - the one choice a wiring guard makes when it
  * reports. The level of its breadcrumb and whether the stack trace goes along follow from the cost, so
- * the guards of both twins share one form and cannot drift apart in it (they had - some warned, some
- * errored, some carried the trace and some did not, with no rule behind the difference: architecture
- * review of 2026-09-21, finding 1). The sentence stays the guard's own.
+ * the guards of both twins share one form and cannot drift apart in it (they had, until 2026-09-21:
+ * some warned, some errored, some carried the trace and some did not, with no rule behind the
+ * difference). The sentence stays the guard's own.
  */
 internal enum class WiringCost(
     /** The breadcrumb's level. */
