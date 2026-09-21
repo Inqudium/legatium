@@ -6,11 +6,14 @@ import ch.qos.logback.classic.LoggerContext
 import ch.qos.logback.classic.turbo.TurboFilter
 import ch.qos.logback.core.spi.FilterReply
 import eu.inqudium.legatium.common.BodyReadState
+import eu.inqudium.legatium.common.CapturedLogger
 import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.NanoTimeSource
+import eu.inqudium.legatium.common.count
+import eu.inqudium.legatium.common.keyValues
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable

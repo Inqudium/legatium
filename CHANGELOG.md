@@ -39,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Build: the test helpers both twins used as copies (`PeerServer`, `Tarpit`, the Logback capture
+  fixtures with `keyValues`, the `MeterRegistry.count` assertion, the MDC adapter swap) live once in
+  `legatium-common`'s test sources and reach the twins as its **test-jar** - unpublished like the
+  module, test scope only, never shaded; the twins' test compilation friends it like the main
+  classes, so the helpers stay `internal`. The test-helper exception of ADR-0003 is revoked, as the
+  sibling project limesium revoked its own on 2026-09-05. No change to the published artifacts.
+
 - Both twins: the fail-open breadcrumbs of stage `wiring` follow one rule for their level and stack
   trace, written once in `legatium-common` (`reportWiringFailure`, `WiringCost`) instead of at each
   of the thirteen guards: ERROR with the stack trace when the call lost a feature (no logging, no

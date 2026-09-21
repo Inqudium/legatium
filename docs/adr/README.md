@@ -31,7 +31,7 @@ each exchange line carries, and finally the cluster you are touching.
 
 | ADR | Title | Status |
 |-----|-------|--------|
-| [0003](ADR-0003-legatium-common-inlined-by-shade.md) | Byte-identical twin code lives in legatium-common, inlined by Shade | Accepted; last updated 2026-09-21 |
+| [0003](ADR-0003-legatium-common-inlined-by-shade.md) | Byte-identical twin code lives in legatium-common, inlined by Shade; shared test helpers as its test-jar | Accepted; last updated 2026-09-21 |
 
 ### Configuration & logged content
 

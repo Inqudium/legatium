@@ -3,6 +3,8 @@ package eu.inqudium.legatium.restclient.logging
 import ch.qos.logback.classic.Level
 import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.MdcKeys
+import eu.inqudium.legatium.common.count
+import eu.inqudium.legatium.common.keyValues
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat

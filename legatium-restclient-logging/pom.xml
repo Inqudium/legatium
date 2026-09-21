@@ -25,6 +25,16 @@
             <artifactId>legatium-common</artifactId>
             <version>${revision}</version>
         </dependency>
+        <!-- The shared TEST helpers of legatium-common (PeerServer, Tarpit, CapturedLogger, keyValues,
+             MeterRegistry.count, installMdcAdapter) - a test-scoped test-jar, unpublished and never
+             shaded; its `internal` helpers resolve through the friend paths below. -->
+        <dependency>
+            <groupId>eu.inqudium</groupId>
+            <artifactId>legatium-common</artifactId>
+            <version>${revision}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
         <!-- A library, not an application: only what the auto-configuration and the properties class
              need - no starter, no logging/YAML transitives forced onto the host. -->
         <dependency>
@@ -147,8 +157,10 @@
                              basedir-relative (not session/execution-root properties): the IDE's
                              Maven import resolves ${project.basedir} into the Kotlin facet, while
                              session properties exist only at build time - an unresolved friend
-                             path leaves every shared `internal` red in the editor. -->
-                        <arg>-Xfriend-paths=${project.build.outputDirectory},${project.basedir}/../legatium-common/target/classes,${project.basedir}/../legatium-common/target/legatium-common-${project.version}.jar</arg>
+                             path leaves every shared `internal` red in the editor. The test-classes
+                             directory and the tests jar are the same pair for the shared TEST helpers
+                             (the test-jar dependency above). -->
+                        <arg>-Xfriend-paths=${project.build.outputDirectory},${project.basedir}/../legatium-common/target/classes,${project.basedir}/../legatium-common/target/legatium-common-${project.version}.jar,${project.basedir}/../legatium-common/target/test-classes,${project.basedir}/../legatium-common/target/legatium-common-${project.version}-tests.jar</arg>
                     </args>
                 </configuration>
                 <executions>

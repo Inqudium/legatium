@@ -1,5 +1,6 @@
 package eu.inqudium.legatium.webclient.logging
 
+import eu.inqudium.legatium.common.PeerServer
 import org.junit.jupiter.api.extension.BeforeAllCallback
 import org.junit.jupiter.api.extension.ExtensionContext
 import org.junit.jupiter.api.extension.TestInstancePostProcessor

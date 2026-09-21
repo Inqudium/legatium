@@ -5,9 +5,11 @@ import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.AppenderBase
 import ch.qos.logback.core.read.ListAppender
+import eu.inqudium.legatium.common.CapturedLogger
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.NanoTimeSource
+import eu.inqudium.legatium.common.PeerServer
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.AfterEach
@@ -48,15 +50,6 @@ internal const val TRACELESS_CALLS =
     "spring.autoconfigure.exclude=" +
         "org.springframework.boot.micrometer.tracing.brave.autoconfigure.BraveAutoConfiguration," +
         "org.springframework.boot.micrometer.tracing.autoconfigure.MicrometerTracingAutoConfiguration"
-
-/** The count of the counter [name] carries under [tags] - the one registry read every meter assertion makes. */
-internal fun MeterRegistry.count(
-    name: String,
-    vararg tags: String,
-): Double = get(name).tags(*tags).counter().count()
-
-/** The key-value pairs of an event as a map, for assertions on the `adapter_*` family. */
-internal fun keyValues(event: ILoggingEvent): Map<String, Any?> = event.keyValuePairs?.associate { it.key to it.value } ?: emptyMap()
 
 /**
  * An interceptor with its two functional collaborators pinned - [ticker] as the clock,
@@ -147,35 +140,6 @@ internal class PinnedMdcAppender : AppenderBase<ILoggingEvent>() {
     override fun append(event: ILoggingEvent) {
         event.prepareForDeferredProcessing()
         events.add(event)
-    }
-}
-
-/** A list appender attached to [loggerName] at INFO, detached - and the previous level restored - by [detach]. */
-internal class CapturedLogger(
-    loggerName: String,
-    /** The level the logger is raised to while captured - INFO for the exchange lines, DEBUG for the wiring report. */
-    level: Level = Level.INFO,
-) {
-    val logger: Logger = LoggerFactory.getLogger(loggerName) as Logger
-    val appender: ListAppender<ILoggingEvent> = ListAppender<ILoggingEvent>().apply { start() }
-
-    // The level the logger had before - null when it inherited one - restored by `detach`, so a test
-    // that raises or silences a logger (Level.OFF in the metrics tests) leaves the JVM-global logger
-    // tree as it found it and the suite stays order-independent.
-    private val previousLevel: Level? = logger.level
-
-    init {
-        logger.addAppender(appender)
-        logger.level = level
-    }
-
-    val events: List<ILoggingEvent>
-        get() = appender.list.toList()
-
-    fun detach() {
-        logger.detachAppender(appender)
-        appender.stop()
-        logger.level = previousLevel
     }
 }
 
