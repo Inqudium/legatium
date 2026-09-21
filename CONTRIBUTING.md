@@ -239,7 +239,21 @@ makes it a major one.
    `central` server (Central Portal user token) in `~/.m2/settings.xml`:
 
    ```bash
-   mvn --batch-mode -Prelease -DskipTests -Djacoco.skip=true deploy
+   mvn --batch-mode -Prelease -DskipTests -Djacoco.skip=true clean deploy
+   ```
+
+   `clean` is not optional. The Kotlin compiler is incremental and never
+   deletes a class file whose source is gone, and Shade packs whatever
+   `target/classes` holds: the 1.2.0 deploy of 2026-09-21 ran without `clean`
+   in a working copy that had built the previous days' commits, and the
+   shaded jars carried three deleted classes per twin (`CallerMdcRestorer`
+   among them). Central validated the bundle without complaint; only the
+   byte comparison of step 4 against the release assets caught it, and the
+   deployment had to be dropped before anything was published:
+
+   ```bash
+   curl -X DELETE -H "Authorization: Bearer $TOKEN" \
+     https://central.sonatype.com/api/v1/publisher/deployment/<deployment-id>   # 204
    ```
 
    The `release` profile attaches sources and the Dokka-rendered javadoc jar,
@@ -271,8 +285,11 @@ makes it a major one.
    ```
 
    A mismatch means a build input differs from the tag (JDK below 24, a stale
-   `~/.m2` snapshot of `legatium-common`, a local change) - rebuild from a clean
-   checkout of the tag before publishing.
+   `~/.m2` snapshot of `legatium-common`, a local change, or stale class files
+   from a deploy without `clean` - `unzip -l` both jars and diff the entry
+   lists; a surplus class that no longer has a source is that case) - drop the
+   validated deployment, rebuild from a clean checkout of the tag with
+   `clean deploy`, and compare again before publishing.
 5. **Next development version.** A follow-up pull request
    `(chore) start 1.1.1-SNAPSHOT` sets `<revision>` and the version pins of
    step 1 to the next patch `-SNAPSHOT`.
