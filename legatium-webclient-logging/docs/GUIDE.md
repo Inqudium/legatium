@@ -231,35 +231,45 @@ WebClient.retrieve()/exchangeToMono()/exchange()
                        │
                        ├─ shouldNotFilter(url)?  ──yes──▶ next.exchange(request)   (untouched pass-through)
                        │
-                       ├─ wireOrNull(request)    ──null─▶ next.exchange(request)   (fail-open, stage=wiring)
-                       │     • request id: traceparent trace id, else header on the request, else generated
-                       │       and ADDED (the request is rebuilt: ClientRequest is immutable)
-                       │     • body captures created if logging OR measuring is on; the request body
-                       │       inserter wrapped with the tee decorator
-                       │     • request headers selected and masked from the OUTGOING request
-                       │     • traceId/spanId parsed; startNanos read; gauge exchanges.open += 1
-                       │
-                       ├─ logRequestStartIfEnabled
-                       │
-                       └─ Mono.defer { ObservedResponse(next.exchange(outgoing), exchange, …) }
-                            onNext(response):  state OPEN → DELIVERING
-                                               observed = onResponse(exchange, response)
-                                               actual.onNext(observed)                 ← the downstream takes it
-                                               state DELIVERING → RESPONDED            ← the body owns the exchange
-                            onError(t):        exchange.failure = t; complete
-                            onComplete():      empty (still OPEN) → failure "no response"; complete unless RESPONDED
-                            cancel():          from another thread while OPEN or DELIVERING → cancelled, complete;
-                                               from within the delivery (a `next()`) or once RESPONDED → ignored
+                       └─ Mono.deferContextual { ambient ->        (everything below runs once per SUBSCRIPTION:
+                            │                                       a retrying outer filter gets one exchange per attempt)
+                            ├─ wireOrNull(request, ambient) ──null─▶ next.exchange(request)   (fail-open, stage=wiring)
+                            │     • request id: traceparent trace id, else header on the request, else generated
+                            │       and ADDED (the request is rebuilt: ClientRequest is immutable)
+                            │     • body captures created if logging OR measuring is on; the request body
+                            │       inserter wrapped with the tee decorator
+                            │     • request headers selected and masked from the OUTGOING request
+                            │     • traceId/spanId parsed; startNanos read; gauge exchanges.open += 1
+                            │
+                            ├─ logRequestStartIfEnabled                (the arrival line, inside the same try as the call)
+                            │
+                            └─ ObservedResponse(next.exchange(outgoing), exchange, …) }
+                                 onNext(response):  state OPEN → DELIVERING
+                                                    observed = onResponse(exchange, response)
+                                                    actual.onNext(observed)                 ← the downstream takes it
+                                                    state DELIVERING → RESPONDED            ← the body owns the exchange
+                                 onError(t):        exchange.failure = t; actual.onError(t); finally complete
+                                 onComplete():      empty (still OPEN) → failure "no response";
+                                                    actual.onComplete(); finally complete unless RESPONDED
+                                 cancel():          from another thread while OPEN or DELIVERING → cancelled, complete;
+                                                    from within the delivery (a `next()`) or once RESPONDED → ignored
 
- onResponse: response.mutate().body { flux ->
-                 Flux.defer { capture.markStarted(); flux }
-                     .map { tee(capture, it) }
-                     .doOnComplete { capture.markCompleted() }
-                     .doOnError    { exchange.failure = it }
-                     .doOnCancel   { exchange.cancelled = true }
-                     .doFinally    { complete(exchange) }          ← emission
-             }.build()
+ onResponse: response.mutate().body { flux -> ObservedBody(flux, exchange, capture, complete, …) }.build()
+                 subscribe:         only the FIRST subscription is observed (Spring's release path subscribes again);
+                                    capture.markStarted()
+                 onNext(buffer):    actual.onNext(tee(capture, buffer))   ← a passive copy, fail-open
+                 onComplete():      capture.markCompleted(); actual.onComplete(); finally complete   ← emission
+                 onError(t):        exchange.failure = t;  actual.onError(t);  finally complete      ← emission
+                 cancel():          from within the delivery (the consumer's own `take`, Spring's skip) → success, partial;
+                                    from any other thread → cancelled; either way complete            ← emission
 ```
+
+The terminal signal is handed on **first** and the exchange completed in a `finally` afterwards: the
+consumer's synchronous terminal work (the decoder's join, an `onErrorResume`, a synchronous `retry`) runs
+before the line is written, and the duration includes it — the counterpart of the blocking twin's response
+occupancy, whose close comes after the converter's read (`ObservedBody`, section "Order of the terminal
+signal and the emission"). A downstream that throws from its terminal callback still gets the exchange
+completed and the gauge closed.
 
 `complete` is the **exactly-once** gate: a `getAndSet(COMPLETED)` on `Exchange.state` decides which
 signal wins; the winner decrements the gauge and calls `ExchangeLogEmitter.logExchange`. The emitter
@@ -280,9 +290,10 @@ filter therefore mutates the delivered response so that its body carries the tee
 | response `Mono` errors (connection refused, a connector timeout) | `ObservedResponse.onError` | immediately; `-> -`, no status |
 | response `Mono` is cancelled before a response (a downstream `timeout()`, a disposed caller) | `ObservedResponse.cancel` in `OPEN` | immediately; `cancelled`, `-> -` |
 | response `Mono` is cancelled from another thread **while the response is being handed to the downstream** (a cancelling downstream drops the response and never subscribes to the body) | `ObservedResponse.cancel` in `DELIVERING` | immediately; `cancelled` with the received status |
-| response delivered, body completes | `doFinally` on the body flux | at completion — status, headers, body and duration final |
-| response delivered, body errors (reset mid-stream) | `doFinally` on the body flux | at the error — `failure` with the received status |
-| response delivered, body subscription cancelled (`take`, a timeout after the status line) | `doFinally` on the body flux | at the cancel — `cancelled` with the received status |
+| response delivered, body completes | `ObservedBody.onComplete`, after the downstream's `onComplete` returned | at completion — status, headers, body and duration final |
+| response delivered, body errors (reset mid-stream) | `ObservedBody.onError`, after the downstream's `onError` returned | at the error — `failure` with the received status |
+| response delivered, body cancelled by the consumer from within its own delivery (`take`, Spring's body skip) | `ObservedBody.cancel` on the delivering thread | at the cancel — `success` with the received status, read state `partial` ([§4.2](#42-cancellation-and-the-missing-status)) |
+| response delivered, body cancelled from anywhere else (a `timeout()` after the status line, a disposed caller) | `ObservedBody.cancel` on another thread | at the cancel — `cancelled` with the received status |
 | response delivered, body never subscribed nor released | — | never: the exchange stays open on the gauge ([§4.4](#44-a-body-nobody-consumes)) |
 
 Every path of `WebClient` that hands the response to application code subscribes or releases the body:
@@ -994,7 +1005,7 @@ runs dry; when no raw `exchange()` caller exists, look at the outer filters.
 ### 4.5 Late body chunks after cancellation
 
 Reactive Streams permits an already-requested `onNext` to arrive **after** a cancellation — on another
-thread, after `doFinally` ran. The capture therefore does not rely on a single-writer assumption: every
+thread, after the exchange completed. The capture therefore does not rely on a single-writer assumption: every
 mutation and read is under one lock, and the emitter's first step is `freeze()`. From then on a late tee
 call is a no-op, so the logged body text and the size sample are one consistent snapshot instead of a
 moving target.

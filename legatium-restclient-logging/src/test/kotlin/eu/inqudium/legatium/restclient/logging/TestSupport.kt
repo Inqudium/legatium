@@ -25,6 +25,7 @@ import org.springframework.http.client.ClientHttpResponse
 import org.springframework.mock.http.client.MockClientHttpRequest
 import org.springframework.mock.http.client.MockClientHttpResponse
 import java.net.URI
+import java.net.http.HttpClient
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
@@ -34,6 +35,9 @@ import java.util.concurrent.atomic.AtomicLong
 
 /** The read timeout that IS the subject of the Spring suites' timeout scenarios: well below the peer's `/slow` delay. */
 internal val SHORT: Duration = Duration.ofMillis(200)
+
+/** The bound on releasing a JDK client after a test ([PeerIntegrationSuite.closingJdkClient]): generous, since it only matters when the JDK hangs. */
+internal val ENGINE_RELEASE: Duration = Duration.ofSeconds(30)
 
 /**
  * The tracing bridge - on the test classpath for the tracing suite - excluded, so the calls of a suite
@@ -204,10 +208,28 @@ abstract class PeerIntegrationSuite {
 
     /**
      * Registers an engine resource to be released after the test. The release must be BOUNDED in time by
-     * the resource itself (a JDK `HttpClient`: `shutdownNow()` plus `awaitTermination(Duration)`, not
-     * `close()`): the teardown's `runCatching` bounds exceptions, not time.
+     * the resource itself (a JDK `HttpClient` goes through [closingJdkClient], never here: its `close()`
+     * waits without a bound): the teardown's `runCatching` bounds exceptions, not time.
      */
     protected fun <T : AutoCloseable> closing(resource: T): T = resource.also { closeables += it }
+
+    /**
+     * Registers a JDK `HttpClient` for a BOUNDED release after the test - the one engine whose own
+     * `close()` is `shutdown()` plus an UNBOUNDED `awaitTermination()`. A client of these suites still
+     * owns a cancelled connect (a closed port, the Tarpit) or a cancelled read (`/slow`) whose
+     * selector-side cleanup must finish first; a JDK whose cleanup hangs would hang the suite until the
+     * job timeout instead of failing with a cause. `shutdownNow()` plus [ENGINE_RELEASE] releases what
+     * can be released. Every JDK client of the module's suites goes through here, never through [closing].
+     */
+    protected fun closingJdkClient(client: HttpClient): HttpClient {
+        closing(
+            AutoCloseable {
+                client.shutdownNow()
+                client.awaitTermination(ENGINE_RELEASE)
+            },
+        )
+        return client
+    }
 
     @BeforeEach
     fun attachLogAndClearPeerRecord() {

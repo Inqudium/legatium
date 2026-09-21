@@ -1261,6 +1261,52 @@ class ClientRequestLoggingFilterTest {
         }
 
         @Test
+        fun `should include the consumer's synchronous terminal work in the duration of a delivered body`() {
+            // What is tested: the order rule of the body operator ("Order of the terminal signal and
+            //   the emission") - the terminal signal is handed on FIRST, the exchange completes in the
+            //   finally afterwards, so work the consumer does synchronously inside its completion
+            //   (Spring's decoder joining and decoding the body) is still inside the measured duration.
+            // Success criteria: 42 ms advanced by the decoded body's own success hook - which runs
+            //   inside the body's onComplete - show up as adapter_duration_ms = 42 of the single event.
+            // Why it matters: the duration's parity with the blocking twin, whose occupancy ends at the
+            //   close AFTER the converter's read; with the completion moved in front of the handover the
+            //   duration would silently stop at the last buffer, and the retry-line order would flip.
+            // Given: a delivered response, the clock still at the send
+            val response = requireNotNull(filter.filter(request(), answering(body = "ok")).block())
+
+            // When: the body decoded, the clock advanced from within the decoder's completion
+            val text = response.bodyToMono(String::class.java).doOnSuccess { ticker.addAndGet(42_000_000) }.block()
+
+            // Then
+            assertThat(text).isEqualTo("ok")
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_outcome", "success").containsEntry("adapter_duration_ms", 42L)
+        }
+
+        @Test
+        fun `should include the consumer's synchronous error handling in the duration of a failed response Mono`() {
+            // What is tested: the same order rule at the response operator's error path - onError is
+            //   handed on first, the exchange completes in the finally, so a consumer's synchronous
+            //   error handling (an onErrorResume, a retry's resubscription) precedes the emission.
+            // Success criteria: 42 ms advanced by the caller's error hook show up as
+            //   adapter_duration_ms = 42 of the single failure event.
+            // Why it matters: the mirror of the body's rule for the no-response path; each of the two
+            //   operators has its own terminal handover and each order is pinned, so neither can be
+            //   swapped alone.
+            // Given/When: a refused connection, the clock advanced from within the caller's error hook
+            val thrown =
+                catchThrowable {
+                    filter
+                        .filter(request(), ExchangeFunction { Mono.error(IOException("connection refused")) })
+                        .doOnError { ticker.addAndGet(42_000_000) }
+                        .block()
+                }
+
+            // Then
+            assertThat(thrown).hasCauseInstanceOf(IOException::class.java)
+            assertThat(keyValues(log.events.single())).containsEntry("adapter_outcome", "failure").containsEntry("adapter_duration_ms", 42L)
+        }
+
+        @Test
         fun `should replace a correlation header outside the acceptance rule with a generated id`() {
             // What is tested: the CorrelationHeader rule at the filter - a forged value counts as absent.
             // Success criteria: the connector receives the generated id INSTEAD of the foreign value; the
