@@ -60,15 +60,3 @@ internal class CallerMdcSnapshot private constructor(
         }
     }
 }
-
-/**
- * How the emitter restores a snapshot - a seam for the tests, which swap in a throwing one to drive
- * the fail-open path.
- */
-internal fun interface CallerMdcRestorer {
-    fun restore(snapshot: CallerMdcSnapshot): AutoCloseable
-
-    companion object {
-        val DEFAULT: CallerMdcRestorer = CallerMdcRestorer { it.restore() }
-    }
-}

@@ -687,7 +687,8 @@ missing. Silence at TRACE therefore always means "TRACE is off", never "nothing 
 The TRACE report carries the same information the actuator's `env` endpoint shows per property
 source (`/actuator/env/adapter-logging.logger-name`); the lines put it into the startup log of a host
 without the actuator. The origin rendering lives once in `legatium-common`
-([§9.1](#91-the-shared-classes)).
+([§9.1](#91-the-shared-classes)). The report's reason, the admission rule for a line and its bounds are
+[ADR-0014](adr/ADR-0014-startup-wiring-report-is-a-bounded-diagnostic.md).
 
 ### 6.7 Validation at startup
 
@@ -1077,7 +1078,12 @@ can ever fail, delay or alter the call. Which operation degrades how, and under 
 the tags is the same:
 
 - **`wiring`** — the entry point degrades to a plain pass-through for this call, or a piece of
-  bookkeeping (a sample, a counter, the gauge) is lost while the event still follows;
+  bookkeeping (a sample, a counter, the gauge) is lost while the event still follows. Every `wiring`
+  breadcrumb has one shape (`reportWiringFailure` in `legatium-common`), and its level follows what
+  the failure cost: **ERROR with the stack trace** when the call lost a feature (no logging at all, or
+  no identity on the calling thread), **WARN with the stack trace** when a scope's teardown may have
+  left stale keys on the thread, **WARN with the exception's `toString` only** when the event merely
+  follows degraded (no status, no sample, no caller keys, an incomplete body);
 - **`arrival`** — the arrival line is dropped;
 - **`emission`** — the exchange event is **lost**; the call completes normally.
 
@@ -1119,8 +1125,10 @@ the reactor root or with `-am`).
 
 Everything whose twin copies genuinely differ stays deliberately duplicated: the emitters and exchanges,
 interceptor vs. filter, and `BoundedBodyCapture` (two different concurrency designs). ADR-0003 names the
-threshold: a twin-paired file that reaches 90 % line similarity after neutralising the stack names is
-byte-identical enough to move, parameterised where it must differ. For the remainder the accepted cost
+threshold: a twin-paired production file that reaches 90 % line similarity after neutralising the stack
+names is byte-identical enough to move, parameterised where it must differ; test helpers both twins use
+(`PeerServer`, `Tarpit`, `MdcAdapterSwap`) stay copies, since `legatium-common` publishes no test-jar.
+For the remainder the accepted cost
 is unchanged: a change is a conscious port in both directions, and the lockstep tests catch *named*
 contract drift (keys, field names, meter names, message text), not behavioural drift inside
 near-identical code.

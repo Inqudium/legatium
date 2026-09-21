@@ -31,7 +31,7 @@ each exchange line carries, and finally the cluster you are touching.
 
 | ADR | Title | Status |
 |-----|-------|--------|
-| [0003](ADR-0003-legatium-common-inlined-by-shade.md) | Byte-identical twin code lives in legatium-common, inlined by Shade | Accepted; last updated 2026-09-20 |
+| [0003](ADR-0003-legatium-common-inlined-by-shade.md) | Byte-identical twin code lives in legatium-common, inlined by Shade | Accepted; last updated 2026-09-21 |
 
 ### Configuration & logged content
 
@@ -47,6 +47,7 @@ each exchange line carries, and finally the cluster you are touching.
 | [0007](ADR-0007-adapter-is-the-operator-vocabulary.md) | The operator-facing vocabulary is `adapter`, the counterpart of `endpoint` | Accepted; last updated 2026-09-05 |
 | [0008](ADR-0008-six-meters-consumed-not-exported.md) | Six meter families, consumed from the host's registry, never exported | Accepted; last updated 2026-09-20 |
 | [0012](ADR-0012-a-4xx-answer-is-rejected.md) | A 4xx answer is `rejected`; the level is INFO, WARN for 401, 403, 408 and 429 | Accepted |
+| [0014](ADR-0014-startup-wiring-report-is-a-bounded-diagnostic.md) | The startup wiring report is a bounded diagnostic: DEBUG says what is in effect, TRACE where it came from | Accepted |
 
 ### Conventions & project process
 

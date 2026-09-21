@@ -21,7 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   source also holds, marked as shadowed; the masking key is redacted, unset keys are not listed
   (`ClientLoggingPropertyOrigins` in `legatium-common`, one rendering for both twins). Nothing is
   logged with `adapter-logging.enabled=false`. The auto-configuration tests pin the lines and the
-  silence, the common module's test the rendering.
+  silence, the common module's test the rendering. The decision, the admission rule for a report line
+  and its bounds are [ADR-0014](docs/adr/ADR-0014-startup-wiring-report-is-a-bounded-diagnostic.md).
 - WebClient twin: the wiring report also states whether the caller's thread-locals (its MDC) are
   restored around every exchange line - the outcome of the classpath detection of ADR-0010, which has
   no property and was so far readable nowhere: one line when `io.micrometer:context-propagation` is
@@ -37,6 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Boot's real observation and Brave auto-configurations.
 
 ### Changed
+
+- Both twins: the fail-open breadcrumbs of stage `wiring` follow one rule for their level and stack
+  trace, written once in `legatium-common` (`reportWiringFailure`, `WiringCost`) instead of at each
+  of the thirteen guards: ERROR with the stack trace when the call lost a feature (no logging, no
+  identity on the calling thread), WARN with the stack trace when a scope's teardown may have left
+  stale keys on the thread, WARN with the exception's `toString` alone when the event merely follows
+  degraded. The levels and traces the guards emitted before are the ones the rule yields, so no
+  breadcrumb changed; the guards' sentences are unchanged (architecture review of 2026-09-21,
+  finding 1).
 
 - Both twins: a 4xx answer is **`adapter_outcome=rejected`**, a new value of the outcome vocabulary,
   in place of `success` — the outcome names who is responsible for the disposition (nobody, the

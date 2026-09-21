@@ -13,8 +13,10 @@ import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.MdcScope
 import eu.inqudium.legatium.common.NanoTimeSource
 import eu.inqudium.legatium.common.RequestTarget
+import eu.inqudium.legatium.common.WiringCost
 import eu.inqudium.legatium.common.declaredCharsetOrUtf8
 import eu.inqudium.legatium.common.reportQuietly
+import eu.inqudium.legatium.common.reportWiringFailure
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpHeaders
@@ -108,7 +110,7 @@ class ClientRequestLoggingInterceptor
         private val metrics = ClientLoggingMetrics.forRegistry(meterRegistry, ClientStack.RESTCLIENT)
 
         /** Exposed for the tests, which swap the emitter's caller-MDC restorer to drive its fail-open path. */
-        internal val emitter = ExchangeLogEmitter(properties, nanoTime, metrics, masker)
+        private val emitter = ExchangeLogEmitter(properties, nanoTime, metrics, masker)
 
         // Activation is the shared implementation (ADR-0003): identical semantics on both stacks by construction.
         private val activation = ClientActivation(properties)
@@ -177,16 +179,15 @@ class ClientRequestLoggingInterceptor
             try {
                 wireExchange(request, body)
             } catch (e: Exception) {
-                reportQuietly {
-                    metrics.wiringFailure()
-                    internalLog.error(
-                        "Client logging could not be wired for {} {} - continuing without logging: {}",
-                        request.method,
-                        request.uri,
-                        e.toString(),
-                        e,
-                    )
-                }
+                reportWiringFailure(
+                    metrics,
+                    internalLog,
+                    WiringCost.LOST_FEATURE,
+                    e,
+                    "Client logging could not be wired for {} {} - continuing without logging",
+                    request.method,
+                    request.uri,
+                )
                 null
             }
 
@@ -199,16 +200,15 @@ class ClientRequestLoggingInterceptor
             try {
                 MdcScope(exchange.requestId, exchange.method, exchange.target)
             } catch (e: Exception) {
-                reportQuietly {
-                    metrics.wiringFailure()
-                    internalLog.error(
-                        "MDC scope could not be opened for {} {} - continuing without call MDC: {}",
-                        exchange.method,
-                        exchange.target,
-                        e.toString(),
-                        e,
-                    )
-                }
+                reportWiringFailure(
+                    metrics,
+                    internalLog,
+                    WiringCost.LOST_FEATURE,
+                    e,
+                    "MDC scope could not be opened for {} {} - continuing without call MDC",
+                    exchange.method,
+                    exchange.target,
+                )
                 null
             }
 
@@ -224,16 +224,15 @@ class ClientRequestLoggingInterceptor
             try {
                 scope?.close()
             } catch (e: Exception) {
-                reportQuietly {
-                    metrics.wiringFailure()
-                    internalLog.warn(
-                        "MDC restoration failed for {} {} - the calling thread may carry stale client keys: {}",
-                        exchange.method,
-                        exchange.target,
-                        e.toString(),
-                        e,
-                    )
-                }
+                reportWiringFailure(
+                    metrics,
+                    internalLog,
+                    WiringCost.DIRTY_TEARDOWN,
+                    e,
+                    "MDC restoration failed for {} {} - the calling thread may carry stale client keys",
+                    exchange.method,
+                    exchange.target,
+                )
             }
         }
 
@@ -260,15 +259,15 @@ class ClientRequestLoggingInterceptor
                 exchange.responseHeaders = headers
                 exchange.responseCapture?.expectBytes(declaredBodyLength(exchange.method, status, headers))
             } catch (e: Exception) {
-                reportQuietly {
-                    metrics.wiringFailure()
-                    internalLog.warn(
-                        "Response status and headers could not be read for {} {} - the event will show no status: {}",
-                        exchange.method,
-                        exchange.target,
-                        e.toString(),
-                    )
-                }
+                reportWiringFailure(
+                    metrics,
+                    internalLog,
+                    WiringCost.DEGRADED_EVENT,
+                    e,
+                    "Response status and headers could not be read for {} {} - the event will show no status",
+                    exchange.method,
+                    exchange.target,
+                )
             }
         }
 
@@ -401,15 +400,15 @@ class ClientRequestLoggingInterceptor
             try {
                 CallerMdcSnapshot.capture()
             } catch (e: Exception) {
-                reportQuietly {
-                    metrics.wiringFailure()
-                    internalLog.warn(
-                        "The caller's MDC could not be captured for {} {} - a close on another thread logs without it: {}",
-                        request.method,
-                        request.uri,
-                        e.toString(),
-                    )
-                }
+                reportWiringFailure(
+                    metrics,
+                    internalLog,
+                    WiringCost.DEGRADED_EVENT,
+                    e,
+                    "The caller's MDC could not be captured for {} {} - a close on another thread logs without it",
+                    request.method,
+                    request.uri,
+                )
                 CallerMdcSnapshot.NONE
             }
 

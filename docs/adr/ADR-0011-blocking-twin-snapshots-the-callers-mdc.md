@@ -92,8 +92,12 @@ copy of a handful of entries is not worth a knob.
 
 A throwing MDC adapter at capture costs the snapshot, counted as
 `stage=wiring`; the call is wired and logged with the module's own
-identity. A restorer that throws at emission costs the caller's keys,
-counted the same way, never the event.
+identity. An adapter that throws while the snapshot is installed at
+emission costs the caller's keys, counted the same way, never the
+event; one that throws while the snapshot's scope closes afterwards
+is counted the same way and the line is already out. Both paths are
+driven in the tests through a failing adapter swapped in at the
+SLF4J boundary, not through a seam of their own.
 
 ## Consequences
 

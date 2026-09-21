@@ -3,7 +3,7 @@ package eu.inqudium.legatium.common
 import org.slf4j.MDC
 import org.slf4j.spi.MDCAdapter
 
-// Deliberately DUPLICATED test helper (ADR-0003 amendment): test classes are not shared across
+// Deliberately DUPLICATED test helper (ADR-0003, the criterion: used test helpers stay copies): test classes are not shared across
 // modules (no test-jar dependency), so each module that swaps the MDC adapter carries its own copy.
 
 /**

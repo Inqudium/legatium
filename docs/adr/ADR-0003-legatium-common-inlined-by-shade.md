@@ -2,7 +2,7 @@
 
 **Status:** Accepted  
 **Date:** 2026-09-03  
-**Last updated:** 2026-09-20  
+**Last updated:** 2026-09-21  
 **Deciders:** Dirk Haase (maintainer)  
 **Related:** ADR-0002 (the `Traceparent` parser and `MdcScope` it
 relies on are shared by this ADR's criterion), ADR-0004
@@ -42,6 +42,14 @@ byte-identical enough to move, parameterised where it must differ.
 Below that, a copy stays a copy and the both-directions port is the
 accepted cost. Each review that finds a file above the line moves it;
 every move is recorded in [History](#history).
+
+The rule measures PRODUCTION files. A test helper both twins use -
+`PeerServer`, `Tarpit`, `MdcAdapterSwap` - stays a copy however
+similar the copies are, byte-identical included: `legatium-common`
+publishes no test-jar, and one would be a further reactor dependency
+plus a friend-path question for test classes, for helpers nobody
+ships. Copies are cheaper than a test-jar; each module carries the
+helpers it actually uses (History, 2026-09-03 second, and 2026-09-21).
 
 ### What lives in `legatium-common`
 
@@ -283,3 +291,10 @@ of both jars.
   in both entry points (comment audit of 2026-09-16, finding 28). The
   twins pass their capture constructor, so each keeps its own capture
   type and concurrency model; the rule has one unit test in common.
+- **2026-09-21:** finding 4 of
+  `docs/assessment/ARCHITECTURE_REVIEW-2026-09-21T08-44-36.md` found
+  the test-helper exception (`Tarpit` byte-identical in both twins,
+  `PeerServer` at about 91 %) stated only in the entry of 2026-09-03
+  (second) above, while the criterion read as if it measured every
+  twin-paired file. The criterion now says that it measures production
+  files and that used test helpers stay copies; no code moved.

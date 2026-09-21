@@ -12,11 +12,13 @@ import eu.inqudium.legatium.common.NanoTimeSource
 import eu.inqudium.legatium.common.NoOpScope
 import eu.inqudium.legatium.common.Timeouts
 import eu.inqudium.legatium.common.TraceMdcKeys
+import eu.inqudium.legatium.common.WiringCost
 import eu.inqudium.legatium.common.addKeyValue
 import eu.inqudium.legatium.common.addKeyValueIfPresent
 import eu.inqudium.legatium.common.declaredCharsetOrUtf8
 import eu.inqudium.legatium.common.failOpen
 import eu.inqudium.legatium.common.reportQuietly
+import eu.inqudium.legatium.common.reportWiringFailure
 import eu.inqudium.legatium.common.setCauseIfPresent
 import org.slf4j.LoggerFactory
 import org.slf4j.event.Level
@@ -52,11 +54,12 @@ internal class ExchangeLogEmitter(
     /**
      * Restores the caller's thread-locals from the exchange's Reactor Context around each emission
      * (ADR-0010). Detected against this module's class loader by default (manual wiring); mutable for
-     * the auto-configuration, which re-detects against the context's class loader, and for the tests,
-     * which swap in a throwing restorer to drive the fail-open path. A post-construction seam rather
-     * than a constructor parameter of the filter, in both twins - the RestClient emitter's
-     * `callerMdcRestorer` is the counterpart (ADR-0011) - so the entry points keep one constructor
-     * signature and the tests swap the restorer.
+     * the auto-configuration, which re-detects against the context's class loader - the production
+     * second user this seam exists for - and for the tests, which swap in a throwing restorer to drive
+     * the fail-open path. A post-construction seam rather than a constructor parameter of the filter,
+     * so the entry point keeps one constructor signature. The RestClient twin has no counterpart seam:
+     * its `CallerMdcSnapshot` (ADR-0011) has one restore and no second implementation, and its tests
+     * drive the fail-open path through a failing MDC adapter instead.
      */
     internal var ambientRestorer: AmbientContextRestorer = AmbientContextRestorer.detect(),
 ) {
@@ -198,16 +201,15 @@ internal class ExchangeLogEmitter(
         try {
             scope.close()
         } catch (e: Exception) {
-            reportQuietly {
-                metrics.wiringFailure()
-                internalLog.warn(
-                    "Context restoration failed after emitting {} {} - the emitting thread may carry stale keys: {}",
-                    exchange.method,
-                    exchange.target,
-                    e.toString(),
-                    e,
-                )
-            }
+            reportWiringFailure(
+                metrics,
+                internalLog,
+                WiringCost.DIRTY_TEARDOWN,
+                e,
+                "Context restoration failed after emitting {} {} - the emitting thread may carry stale keys",
+                exchange.method,
+                exchange.target,
+            )
         }
     }
 
@@ -220,15 +222,15 @@ internal class ExchangeLogEmitter(
         try {
             ambientRestorer.restore(exchange.ambient)
         } catch (e: Exception) {
-            reportQuietly {
-                metrics.wiringFailure()
-                internalLog.warn(
-                    "The caller's context could not be restored for {} {} - the event follows without it: {}",
-                    exchange.method,
-                    exchange.target,
-                    e.toString(),
-                )
-            }
+            reportWiringFailure(
+                metrics,
+                internalLog,
+                WiringCost.DEGRADED_EVENT,
+                e,
+                "The caller's context could not be restored for {} {} - the event follows without it",
+                exchange.method,
+                exchange.target,
+            )
             NoOpScope
         }
 
@@ -339,15 +341,15 @@ internal class ExchangeLogEmitter(
         try {
             recordBodySizes(exchange)
         } catch (e: Exception) {
-            reportQuietly {
-                metrics.wiringFailure()
-                internalLog.warn(
-                    "Body size could not be recorded for {} {} - the event follows without it: {}",
-                    exchange.method,
-                    exchange.target,
-                    e.toString(),
-                )
-            }
+            reportWiringFailure(
+                metrics,
+                internalLog,
+                WiringCost.DEGRADED_EVENT,
+                e,
+                "Body size could not be recorded for {} {} - the event follows without it",
+                exchange.method,
+                exchange.target,
+            )
         }
     }
 
