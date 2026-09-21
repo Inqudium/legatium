@@ -26,7 +26,7 @@
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <jmh.version>1.37</jmh.version>
-        <legatium.version>1.1.1-SNAPSHOT</legatium.version>
+        <legatium.version>1.2.0</legatium.version>
         <!-- The spring-core the twins resolve through spring-boot 4.1.1 - FastByteArrayOutputStream's home. -->
         <spring-core.version>7.0.9</spring-core.version>
         <uberjar.name>benchmarks</uberjar.name>
