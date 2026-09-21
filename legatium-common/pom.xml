@@ -104,6 +104,23 @@
             </testResource>
         </testResources>
         <plugins>
+            <!-- The shared TEST helpers (PeerServer, Tarpit, AttachedLogger/CapturedLogger with
+                 keyValues, MeterRegistry.count, installMdcAdapter) ship to the twins as a test-jar -
+                 unpublished like everything of this module (maven.deploy.skip and skipPublishing
+                 cover every artifact of the module), consumed at test scope only, never shaded.
+                 Replaces the per-twin copies the test-helper exception of ADR-0003 allowed until
+                 2026-09-21, the way the sibling project limesium did on 2026-09-05. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.jetbrains.kotlin</groupId>
                 <artifactId>kotlin-maven-plugin</artifactId>

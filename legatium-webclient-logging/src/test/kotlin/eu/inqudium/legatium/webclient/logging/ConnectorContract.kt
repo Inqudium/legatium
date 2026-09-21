@@ -2,6 +2,8 @@ package eu.inqudium.legatium.webclient.logging
 
 import ch.qos.logback.classic.Level
 import eu.inqudium.legatium.common.MdcKeys
+import eu.inqudium.legatium.common.Tarpit
+import eu.inqudium.legatium.common.keyValues
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.AfterEach

@@ -3,12 +3,15 @@ package eu.inqudium.legatium.restclient.logging
 import ch.qos.logback.classic.Level
 import eu.inqudium.legatium.common.BodyLogMode
 import eu.inqudium.legatium.common.BodyReadState
+import eu.inqudium.legatium.common.CapturedLogger
 import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.HeaderLogProperties
 import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.NanoTimeSource
+import eu.inqudium.legatium.common.count
+import eu.inqudium.legatium.common.keyValues
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowable

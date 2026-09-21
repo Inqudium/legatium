@@ -414,9 +414,13 @@
                                         <include>eu.inqudium:legatium-common</include>
                                     </includes>
                                 </artifactSet>
-                                <!-- The published POM must not mention the unpublished
-                                     legatium-common at all: false REMOVES the shaded
-                                     dependency instead of demoting it to provided. -->
+                                <!-- The published POM must not depend on the unpublished
+                                     legatium-common: false REMOVES the shaded dependency
+                                     instead of demoting it to provided. The twins' TEST-scoped
+                                     dependency on its test-jar is neither shaded nor removed
+                                     and stays in the POM; a consumer never resolves a
+                                     test-scoped dependency of a dependency (ADR-0003, "Not
+                                     published"). -->
                                 <keepDependenciesWithProvidedScope>false</keepDependenciesWithProvidedScope>
                                 <dependencyReducedPomLocation>${project.build.directory}/dependency-reduced-pom.xml</dependencyReducedPomLocation>
                                 <!-- The jar carries its own Maven metadata only, not the

@@ -145,7 +145,7 @@ Keine Befunde. Die drei mittleren Befunde der Review vom 2026-09-05 wurden am ak
   - Cost: Gering - zwei Dateien mit rund 170 Zeilen, die in beide Richtungen zu porten sind (bei `Tarpit` bisher gelungen, bei `PeerServer` bereits 19 abweichende Zeilen); der eigentliche Kostenfaktor ist die Reviewfrage "warum verletzt das die Regel?", die jede Review neu stellt.
   - Simpler alternative: Die Test-Helfer-Ausnahme als Satz in den Abschnitt "The criterion" von ADR-0003 heben (Produktionsdateien messen, Test-Helfer kopieren) - keine Codeänderung.
   - Reversibility: Reine Dokumentation.
-  - **Fixed (2026-09-21):** ADR-0003, Abschnitt "The criterion", sagt jetzt, dass die Regel Produktionsdateien misst und genutzte Test-Helfer (`PeerServer`, `Tarpit`, `MdcAdapterSwap`) Kopien bleiben; History-Eintrag 2026-09-21, Common-Guide §9 und die Kommentare der beiden `MdcAdapterSwap`-Kopien folgen.
+  - **Fixed (2026-09-21):** ADR-0003, Abschnitt "The criterion", sagt jetzt, dass die Regel Produktionsdateien misst und genutzte Test-Helfer (`PeerServer`, `Tarpit`, `MdcAdapterSwap`) Kopien bleiben; History-Eintrag 2026-09-21, Common-Guide §9 und die Kommentare der beiden `MdcAdapterSwap`-Kopien folgen. **Ergänzt am selben Tag (zweiter Fix):** nach dem Vergleich mit limesium (Ausnahme dort seit 2026-09-05 widerrufen, Helfer als test-jar) sind die Kopien durch das unveröffentlichte test-jar von `legatium-common` ersetzt - `PeerServer`, `Tarpit`, `AttachedLogger`/`CapturedLogger` mit `keyValues`, `MeterRegistry.count`, `installMdcAdapter` liegen einmal in common, die Twin-Testkompilierung friendet test-classes und tests-jar; ADR-0003 Kriterium, Residententabelle und History (2026-09-21, second) entsprechend.
 
 ## 6. Systemic Patterns
 

@@ -1,20 +1,22 @@
-package eu.inqudium.legatium.restclient.logging
+package eu.inqudium.legatium.common
 
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import java.io.ByteArrayOutputStream
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
+import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.zip.GZIPOutputStream
 
 /**
- * The foreign party the integration tests send their envoy to: the JDK's own HTTP server on an
- * ephemeral port - no container, no extra dependency - with a handful of routes and a record of every
- * request it received (method, path, headers, body), so a test can assert what actually went over the
- * wire.
+ * The foreign party the integration tests of BOTH twins send their envoy to: the JDK's own HTTP server
+ * on an ephemeral port - no container, no extra dependency - with a handful of routes and a record of
+ * every request it received (method, path, headers, body), so a test can assert what actually went over
+ * the wire. One peer for both stacks (ADR-0003, the test-jar): the routes are the same requests on the
+ * wire whichever client sends them; a route only one twin's suites use (`/gzip`) costs the other nothing.
  */
 internal class PeerServer : AutoCloseable {
     data class Received(
@@ -65,7 +67,7 @@ internal class PeerServer : AutoCloseable {
             }
 
             path == "/slow" -> {
-                Thread.sleep(1_500)
+                Thread.sleep(SLOW_ROUTE_DELAY)
                 respond(exchange, 200, "text/plain", "late")
             }
 
@@ -108,6 +110,9 @@ internal class PeerServer : AutoCloseable {
     }
 
     companion object {
+        /** How long `/slow` holds its answer - the peer the timeout tests set a much shorter timeout against. */
+        val SLOW_ROUTE_DELAY: Duration = Duration.ofMillis(1_500)
+
         /** The plaintext behind the `/gzip` route - long enough that its gzip form contains no plaintext substring. */
         const val GZIP_PLAINTEXT = "compressed hello from the peer, repeated so the deflate stream has something to compress, compressed hello"
     }

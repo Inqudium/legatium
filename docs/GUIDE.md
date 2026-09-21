@@ -1127,8 +1127,8 @@ Everything whose twin copies genuinely differ stays deliberately duplicated: the
 interceptor vs. filter, and `BoundedBodyCapture` (two different concurrency designs). ADR-0003 names the
 threshold: a twin-paired production file that reaches 90 % line similarity after neutralising the stack
 names is byte-identical enough to move, parameterised where it must differ; test helpers both twins use
-(`PeerServer`, `Tarpit`, `MdcAdapterSwap`) stay copies, since `legatium-common` publishes no test-jar.
-For the remainder the accepted cost
+(`PeerServer`, `Tarpit`, the Logback fixtures, the MDC adapter swap) reach the twins as
+`legatium-common`'s unpublished test-jar. For the remainder the accepted cost
 is unchanged: a change is a conscious port in both directions, and the lockstep tests catch *named*
 contract drift (keys, field names, meter names, message text), not behavioural drift inside
 near-identical code.

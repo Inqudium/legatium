@@ -1,5 +1,6 @@
 package eu.inqudium.legatium.restclient.logging
 
+import eu.inqudium.legatium.common.CapturedLogger
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.ClientStack
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry

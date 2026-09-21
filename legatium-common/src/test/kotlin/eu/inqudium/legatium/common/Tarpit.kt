@@ -1,4 +1,4 @@
-package eu.inqudium.legatium.webclient.logging
+package eu.inqudium.legatium.common
 
 import java.net.InetAddress
 import java.net.InetSocketAddress

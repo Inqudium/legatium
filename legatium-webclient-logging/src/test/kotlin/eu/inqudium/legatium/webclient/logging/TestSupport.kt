@@ -5,6 +5,7 @@ import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.Appender
 import ch.qos.logback.core.read.ListAppender
+import eu.inqudium.legatium.common.AttachedLogger
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.NanoTimeSource
@@ -39,15 +40,6 @@ import java.util.concurrent.atomic.AtomicLong
  * slow one.
  */
 internal val AWAIT: Duration = Duration.ofSeconds(5)
-
-/** The count of the counter [name] carries under [tags] - the one registry read every meter assertion makes. */
-internal fun MeterRegistry.count(
-    name: String,
-    vararg tags: String,
-): Double = get(name).tags(*tags).counter().count()
-
-/** The key-value pairs of an event as a map, for assertions on the `adapter_*` family. */
-internal fun keyValues(event: ILoggingEvent): Map<String, Any?> = event.keyValuePairs?.associate { it.key to it.value } ?: emptyMap()
 
 /** An immutable outgoing request, as WebClient builds it. */
 internal fun request(
@@ -183,42 +175,6 @@ internal class ObservingExchange<T : Any>(
 
 /** A heap buffer holding [text] in UTF-8, as a connector would hand it to the tee. */
 internal fun buffer(text: String): DataBuffer = DefaultDataBufferFactory.sharedInstance.wrap(text.toByteArray())
-
-/**
- * An [appender] attached to [loggerName] at INFO for one test, detached - and the previous level
- * restored - by [detach]. The level the logger had before is null when it inherited one; restoring it
- * means a test that raises or silences a logger (Level.OFF in the metrics tests) leaves the JVM-global
- * logger tree as it found it and the suite stays order-independent.
- */
-internal abstract class AttachedLogger<A : Appender<ILoggingEvent>>(
-    loggerName: String,
-    val appender: A,
-    /** The level the logger is raised to while captured - INFO for the exchange lines, DEBUG for the wiring report. */
-    level: Level = Level.INFO,
-) {
-    val logger: Logger = LoggerFactory.getLogger(loggerName) as Logger
-    private val previousLevel: Level? = logger.level
-
-    init {
-        logger.addAppender(appender)
-        logger.level = level
-    }
-
-    fun detach() {
-        logger.detachAppender(appender)
-        appender.stop()
-        logger.level = previousLevel
-    }
-}
-
-/** A list appender on [loggerName] for the synchronous tests: the events are read once the call returned. */
-internal class CapturedLogger(
-    loggerName: String,
-    level: Level = Level.INFO,
-) : AttachedLogger<ListAppender<ILoggingEvent>>(loggerName, ListAppender<ILoggingEvent>().apply { start() }, level) {
-    val events: List<ILoggingEvent>
-        get() = appender.list.toList()
-}
 
 /** An [AwaitingAppender] on [loggerName] for the tests whose events arrive from connector threads - by default the production logger. */
 internal class AwaitingLogger(

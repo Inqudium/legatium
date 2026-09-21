@@ -43,13 +43,22 @@ Below that, a copy stays a copy and the both-directions port is the
 accepted cost. Each review that finds a file above the line moves it;
 every move is recorded in [History](#history).
 
-The rule measures PRODUCTION files. A test helper both twins use -
-`PeerServer`, `Tarpit`, `MdcAdapterSwap` - stays a copy however
-similar the copies are, byte-identical included: `legatium-common`
-publishes no test-jar, and one would be a further reactor dependency
-plus a friend-path question for test classes, for helpers nobody
-ships. Copies are cheaper than a test-jar; each module carries the
-helpers it actually uses (History, 2026-09-03 second, and 2026-09-21).
+The rule measures production files; TEST helpers both twins use
+follow it by a different route. They ship to the twins as
+`legatium-common`'s `test-jar` - unpublished like the module
+(`maven.deploy.skip` and `skipPublishing` cover every artifact of
+it), consumed at test scope only, never shaded - and the twins'
+test compilation adds the test-classes directory and the tests jar
+to the same `-Xfriend-paths` list the main compilation uses, so the
+helpers stay `internal`. The test-helper exception of 2026-09-03
+(second) - "copies are cheaper than a test-jar" - is revoked since
+2026-09-21, the way the sibling project limesium revoked its own on
+2026-09-05: the copies had grown to `PeerServer`, `Tarpit`, two
+Logback fixtures, two assertion helpers and the MDC adapter swap,
+and every port of the peer's routes was a both-directions port of
+test code. What stays in a twin is what only that stack has: its
+request and response fakes, its Spring fixture and integration app,
+its JUnit extension that injects the peer into that fixture.
 
 ### What lives in `legatium-common`
 
@@ -68,6 +77,7 @@ helpers it actually uses (History, 2026-09-03 second, and 2026-09-21).
 | `SharedContractTest` (the shared literals, pinned once)                                                        | 2026-09-05 | `ARCHITECTURE_REVIEW-2026-09-05T00-24-58.md`, finding 3                 |
 | `BoundedByteBuffer` (the byte-bounded buffer beneath both `BoundedBodyCapture`s, with unit test and fuzz target) | 2026-09-17 | extraction with the mark/reset and buffer-sizing work                   |
 | `BodyCaptures` (which direction gets a buffering, a count-only or no capture; each twin passes its own capture type) | 2026-09-20 | `COMMENT_AUDIT-2026-09-05T01-57-47.R2.md`, finding 28; round 3, pass 4 |
+| test-jar: `PeerServer` (with the `/gzip` route and the named `/slow` delay of both twins), `Tarpit`, `AttachedLogger`/`CapturedLogger` with `keyValues`, `MeterRegistry.count`, `installMdcAdapter` | 2026-09-21 | test-helper exception revoked; `ARCHITECTURE_REVIEW-2026-09-21T08-44-36.md`, finding 4 (second fix) |
 
 Later residents that arrive with ordinary changes follow the same
 criterion; the module's source tree is the authoritative list.
@@ -115,8 +125,15 @@ friend path, and fails with "internal in file".
 ### Not published
 
 `maven.deploy.skip=true` plus `skipPublishing=true` for the Central
-Portal bundle. The published twin POMs mention no `legatium-common`.
-`legatium-common` depends on `spring-boot` for the
+Portal bundle; both cover the test-jar as well. The published twin
+POMs carry no compile dependency on `legatium-common` (Shade removes
+the inlined one); what remains, since 2026-09-21, is the TEST-scoped
+dependency on its test-jar, which Shade neither inlines nor removes.
+A test-scoped dependency of a dependency is never resolved by Maven
+or Gradle, so a consumer's build does not look for the unpublished
+artifact - the consumer-smoke job proves that with the module deleted
+from the local repository - and limesium has published the same
+shape since 3.0.1. `legatium-common` depends on `spring-boot` for the
 `@ConfigurationProperties` annotation (no autoconfigure, no starter)
 and on `micrometer-core` for the metrics owner; both twins declared
 those already.
@@ -132,8 +149,10 @@ up through the jars' own imports files, and one call per client must
 end in one exchange line against a real local peer. The CI job
 `consumer-smoke` installs the reactor, DELETES `legatium-common` from
 the local repository and only then builds the consumer: a
-dependency-reduced POM that still named the unpublished module fails
-there, not at the first consumer.
+dependency-reduced POM that still named the unpublished module at
+compile or runtime scope fails there, not at the first consumer (the
+test-scoped test-jar dependency it does name is never resolved for a
+consumer, which the same job proves).
 
 ### Documentation
 
@@ -296,5 +315,19 @@ of both jars.
   the test-helper exception (`Tarpit` byte-identical in both twins,
   `PeerServer` at about 91 %) stated only in the entry of 2026-09-03
   (second) above, while the criterion read as if it measured every
-  twin-paired file. The criterion now says that it measures production
-  files and that used test helpers stay copies; no code moved.
+  twin-paired file. The criterion was first amended to say that it
+  measures production files and that used test helpers stay copies.
+- **2026-09-21 (second):** the doc-only fix above was superseded the
+  same day after comparing with limesium, which had revoked the same
+  exception on 2026-09-05 and ships its helpers as a test-jar with the
+  same friend-path build. `Tarpit` was byte-identical in both twins,
+  `PeerServer` differed only in one route and one named constant, and
+  `CapturedLogger`, `keyValues` and `MeterRegistry.count` existed
+  three times (the common module had its own copy). They now live
+  once in `legatium-common`'s test sources and reach the twins as its
+  unpublished `test-jar`; the test compilation of the twins friends
+  the test-classes directory and the tests jar. The restclient copy of
+  `MdcAdapterSwap` is deleted in favour of the common one. The
+  twin-specific fixtures, fakes, integration apps and the two
+  `PeerExtension`s (each injects the peer into its own fixture type)
+  stay in the twins.
