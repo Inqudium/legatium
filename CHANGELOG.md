@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-21
+
 ### Added
 
 - Both twins: a **wiring report** at DEBUG on the auto-configuration's own logger
@@ -439,6 +441,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Dokka API references; CI with SBOM/OSV scan, CodeQL, OpenSSF Scorecard,
   nightly Jazzer fuzzing, SLSA-attested releases - the Inqudium project setup.
 
-[Unreleased]: https://github.com/Inqudium/legatium/compare/1.1.0...HEAD
+[Unreleased]: https://github.com/Inqudium/legatium/compare/1.2.0...HEAD
+[1.2.0]: https://github.com/Inqudium/legatium/releases/tag/1.2.0
 [1.1.0]: https://github.com/Inqudium/legatium/releases/tag/1.1.0
 [1.0.0]: https://github.com/Inqudium/legatium/releases/tag/1.0.0

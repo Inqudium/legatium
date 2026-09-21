@@ -138,6 +138,7 @@ artifacts run on - the build itself needs JDK 24+.
 
 | Legatium | Spring Boot | Kotlin | Java |
 |---|---|---|---|
+| 1.2.0 | 4.1.x | 2.4.x | 21 |
 | 1.1.0 | 4.1.x | 2.4.x | 21 |
 | 1.0.0 | 4.1.x | 2.4.x | 21 |
 
