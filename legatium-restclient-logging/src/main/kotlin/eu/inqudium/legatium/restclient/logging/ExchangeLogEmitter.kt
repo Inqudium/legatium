@@ -12,11 +12,13 @@ import eu.inqudium.legatium.common.NanoTimeSource
 import eu.inqudium.legatium.common.NoOpScope
 import eu.inqudium.legatium.common.Timeouts
 import eu.inqudium.legatium.common.TraceMdcKeys
+import eu.inqudium.legatium.common.WiringCost
 import eu.inqudium.legatium.common.addKeyValue
 import eu.inqudium.legatium.common.addKeyValueIfPresent
 import eu.inqudium.legatium.common.declaredCharsetOrUtf8
 import eu.inqudium.legatium.common.failOpen
 import eu.inqudium.legatium.common.reportQuietly
+import eu.inqudium.legatium.common.reportWiringFailure
 import eu.inqudium.legatium.common.setCauseIfPresent
 import org.slf4j.LoggerFactory
 import org.slf4j.event.Level
@@ -50,11 +52,6 @@ internal class ExchangeLogEmitter(
     private val nanoTime: NanoTimeSource,
     private val metrics: ClientLoggingMetrics,
     private val masker: HeaderValueMasker,
-    /**
-     * Restores the caller's MDC snapshot around an emission on another thread (ADR-0011). Mutable for the
-     * tests only, which swap in a throwing restorer to drive the fail-open path.
-     */
-    internal var callerMdcRestorer: CallerMdcRestorer = CallerMdcRestorer.DEFAULT,
 ) {
     private val exchangeLog = LoggerFactory.getLogger(properties.loggerName)
 
@@ -203,37 +200,38 @@ internal class ExchangeLogEmitter(
         try {
             scope.close()
         } catch (e: Exception) {
-            reportQuietly {
-                metrics.wiringFailure()
-                internalLog.warn(
-                    "MDC restoration failed after emitting {} {} - the emitting thread may carry stale client keys: {}",
-                    exchange.method,
-                    exchange.target,
-                    e.toString(),
-                    e,
-                )
-            }
+            reportWiringFailure(
+                metrics,
+                internalLog,
+                WiringCost.DIRTY_TEARDOWN,
+                e,
+                "MDC restoration failed after emitting {} {} - the emitting thread may carry stale client keys",
+                exchange.method,
+                exchange.target,
+            )
         }
     }
 
     /**
-     * The caller's MDC restored for a close on another thread, or nothing: a restorer that throws costs
-     * the caller's keys, counted as stage=wiring, never the event - which then carries the module's own
-     * identity alone, exactly as before ADR-0011.
+     * The caller's MDC restored for a close on another thread, or nothing: an MDC adapter that throws
+     * at the install costs the caller's keys, counted as stage=wiring, never the event - which then
+     * carries the module's own identity alone, exactly as before ADR-0011. (The tests drive this path
+     * with a failing adapter swapped in through `MdcAdapterSwap`, at the boundary the failure comes
+     * from in production; there is no restorer seam.)
      */
     private fun restoreCallerMdcQuietly(exchange: Exchange): AutoCloseable =
         try {
-            callerMdcRestorer.restore(exchange.callerMdc)
+            exchange.callerMdc.restore()
         } catch (e: Exception) {
-            reportQuietly {
-                metrics.wiringFailure()
-                internalLog.warn(
-                    "The caller's MDC could not be restored for {} {} - the event follows without it: {}",
-                    exchange.method,
-                    exchange.target,
-                    e.toString(),
-                )
-            }
+            reportWiringFailure(
+                metrics,
+                internalLog,
+                WiringCost.DEGRADED_EVENT,
+                e,
+                "The caller's MDC could not be restored for {} {} - the event follows without it",
+                exchange.method,
+                exchange.target,
+            )
             NoOpScope
         }
 
@@ -343,15 +341,15 @@ internal class ExchangeLogEmitter(
         try {
             recordBodySizes(exchange)
         } catch (e: Exception) {
-            reportQuietly {
-                metrics.wiringFailure()
-                internalLog.warn(
-                    "Body size could not be recorded for {} {} - the event follows without it: {}",
-                    exchange.method,
-                    exchange.target,
-                    e.toString(),
-                )
-            }
+            reportWiringFailure(
+                metrics,
+                internalLog,
+                WiringCost.DEGRADED_EVENT,
+                e,
+                "Body size could not be recorded for {} {} - the event follows without it",
+                exchange.method,
+                exchange.target,
+            )
         }
     }
 

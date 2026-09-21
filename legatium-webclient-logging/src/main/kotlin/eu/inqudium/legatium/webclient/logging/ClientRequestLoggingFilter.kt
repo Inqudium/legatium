@@ -12,8 +12,10 @@ import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.NanoTimeSource
 import eu.inqudium.legatium.common.RequestTarget
+import eu.inqudium.legatium.common.WiringCost
 import eu.inqudium.legatium.common.declaredCharsetOrUtf8
 import eu.inqudium.legatium.common.reportQuietly
+import eu.inqudium.legatium.common.reportWiringFailure
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.web.reactive.function.client.ClientRequest
@@ -209,10 +211,13 @@ class ClientRequestLoggingFilter
 
         /** A tee that threw cost the capture of one buffer - counted as wiring, the call untouched. */
         private fun teeFailure(e: Exception) {
-            reportQuietly {
-                metrics.wiringFailure()
-                internalLog.warn("Response body tee failed - the logged body may be incomplete: {}", e.toString())
-            }
+            reportWiringFailure(
+                metrics,
+                internalLog,
+                WiringCost.DEGRADED_EVENT,
+                e,
+                "Response body tee failed - the logged body may be incomplete",
+            )
         }
 
         /**
@@ -250,16 +255,15 @@ class ClientRequestLoggingFilter
             try {
                 wireExchange(request, ambient)
             } catch (e: Exception) {
-                reportQuietly {
-                    metrics.wiringFailure()
-                    internalLog.error(
-                        "Client logging could not be wired for {} {} - continuing without logging: {}",
-                        request.method(),
-                        request.url(),
-                        e.toString(),
-                        e,
-                    )
-                }
+                reportWiringFailure(
+                    metrics,
+                    internalLog,
+                    WiringCost.LOST_FEATURE,
+                    e,
+                    "Client logging could not be wired for {} {} - continuing without logging",
+                    request.method(),
+                    request.url(),
+                )
                 null
             }
 

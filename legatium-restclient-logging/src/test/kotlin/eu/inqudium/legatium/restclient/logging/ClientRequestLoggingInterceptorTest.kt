@@ -321,58 +321,6 @@ class ClientRequestLoggingInterceptorTest {
             // Then
             assertThat(pinned.events.single().mdcPropertyMap).containsEntry(key, "v2")
         }
-
-        @Test
-        fun `should log the module's own identity alone when the restorer throws`() {
-            // What is tested: restoreCallerMdcQuietly - the fail-open path around the snapshot.
-            // Success criteria: the event is still logged with outcome and identity, without the
-            //   caller's key, and the fail-open meter counts one stage=wiring occurrence.
-            // Why it matters: the restoration is an extra; a failing extra must cost the caller's keys,
-            //   never the event.
-            // Given
-            MDC.put(key, "inbound-7")
-            val response = interceptor.intercept(request(), ByteArray(0), answering())
-            interceptor.emitter.callerMdcRestorer = CallerMdcRestorer { error("adapter refused") }
-
-            // When
-            try {
-                onAnotherThread { response.consumeAndClose() }
-            } finally {
-                interceptor.emitter.callerMdcRestorer = CallerMdcRestorer.DEFAULT
-            }
-
-            // Then
-            val event = pinned.events.single()
-            assertThat(keyValues(event)).containsEntry("adapter_outcome", "success")
-            assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42").doesNotContainKey(key)
-            assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
-        }
-
-        @Test
-        fun `should keep the event and count the teardown as wiring when the restored scope fails to close`() {
-            // What is tested: restoreQuietly - the teardown half of the fail-open rule: the line counts
-            //   as emitted, a scope whose close throws is bookkeeping.
-            // Success criteria: the event exists with its outcome; the fail-open meter shows stage=wiring
-            //   at 1 and stage=emission at 0.
-            // Why it matters: the scope's close runs in the emission's finally; a close that threw INTO
-            //   the emission guard would count a lost line where the line was written.
-            // Given: a restorer whose scope refuses to close
-            MDC.put(key, "inbound-7")
-            val response = interceptor.intercept(request(), ByteArray(0), answering())
-            interceptor.emitter.callerMdcRestorer = CallerMdcRestorer { AutoCloseable { error("scope refused") } }
-
-            // When
-            try {
-                onAnotherThread { response.consumeAndClose() }
-            } finally {
-                interceptor.emitter.callerMdcRestorer = CallerMdcRestorer.DEFAULT
-            }
-
-            // Then
-            assertThat(keyValues(pinned.events.single())).containsEntry("adapter_outcome", "success")
-            assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
-            assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "emission")).isZero()
-        }
     }
 
     @Nested

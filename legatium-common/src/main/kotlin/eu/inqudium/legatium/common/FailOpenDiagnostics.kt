@@ -1,5 +1,8 @@
 package eu.inqudium.legatium.common
 
+import org.slf4j.Logger
+import org.slf4j.event.Level
+
 /**
  * Runs the diagnostics of a fail-open catch handler - the fail-open counter increment and the internal
  * log line - so that a failure of the DIAGNOSTICS channel itself can never escape into the call.
@@ -63,4 +66,60 @@ internal inline fun failOpen(
     } catch (e: Exception) {
         reportQuietly { onFailure(e) }
     }
+}
+
+/**
+ * What a failure of stage `wiring` COST the exchange - the one choice a wiring guard makes when it
+ * reports. The level of its breadcrumb and whether the stack trace goes along follow from the cost, so
+ * the guards of both twins share one form and cannot drift apart in it (they had - some warned, some
+ * errored, some carried the trace and some did not, with no rule behind the difference: architecture
+ * review of 2026-09-21, finding 1). The sentence stays the guard's own.
+ */
+internal enum class WiringCost(
+    /** The breadcrumb's level. */
+    val level: Level,
+    /** Whether the breadcrumb carries the stack trace beside the exception's `toString`. */
+    val withStackTrace: Boolean,
+) {
+    /**
+     * The call runs without a feature the guard was wiring - the logging altogether, or the identity on
+     * the calling thread: ERROR, with the stack trace, because the operator has to find the cause to get
+     * the feature back and nothing else will show it.
+     */
+    LOST_FEATURE(Level.ERROR, true),
+
+    /**
+     * The line is out, but a scope's teardown failed and the thread may keep keys that are not its own:
+     * WARN - the exchange IS logged - with the stack trace, because the stale keys outlive the exchange
+     * and join the thread's next lines to the wrong request.
+     */
+    DIRTY_TEARDOWN(Level.WARN, true),
+
+    /**
+     * The event follows, degraded - without its status, a sample, a buffer, or the caller's keys: WARN
+     * with the exception's `toString` only; the event itself shows what is missing.
+     */
+    DEGRADED_EVENT(Level.WARN, false),
+}
+
+/**
+ * The report of a `stage=wiring` guard, in ONE shape for every such guard of both twins: the fail-open
+ * counter, then the breadcrumb on [log] - [message] with its [args] as SLF4J placeholders, the
+ * exception's `toString` appended as the last placeholder, level and stack trace per [cost] - the whole
+ * under [reportQuietly], so a broken diagnostics channel cannot escape either. The metrics owner's own
+ * once-per-meter warning keeps its shape: it throttles, which no other wiring guard does.
+ */
+internal fun reportWiringFailure(
+    metrics: ClientLoggingMetrics,
+    log: Logger,
+    cost: WiringCost,
+    e: Exception,
+    message: String,
+    vararg args: Any?,
+) = reportQuietly {
+    metrics.wiringFailure()
+    log
+        .atLevel(cost.level)
+        .setCauseIfPresent(e.takeIf { cost.withStackTrace })
+        .log("$message: {}", *args, e.toString())
 }

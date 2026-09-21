@@ -14,6 +14,7 @@ import org.slf4j.MDC
 import org.slf4j.spi.MDCAdapter
 import org.springframework.http.HttpStatus
 import org.springframework.http.client.ClientHttpRequestExecution
+import org.springframework.http.client.ClientHttpResponse
 import org.springframework.mock.http.client.MockClientHttpResponse
 import java.io.IOException
 import java.util.Deque
@@ -22,7 +23,8 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * The fail-open guards of [ClientRequestLoggingInterceptor] around the host's MDC adapter, driven with
  * a FAILING adapter swapped in through [installMdcAdapter] and restored after every test: the call-wide
- * scope's open and close, the caller's snapshot (ADR-0011) and the snapshot's own rollback. The adapter
+ * scope's open and close, the caller's snapshot (ADR-0011) - its capture, its install and its teardown
+ * around the emission on another thread - and the snapshot's own rollback. The adapter
  * delegates everything else to the original, so MDC state stays real, and it fails only while ARMED -
  * from the point of the call the test targets to the point after it - so the emission at close runs
  * against a working adapter and the guard under test is the only one that fires. Each guard costs its
@@ -37,6 +39,7 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
     private val interceptor = interceptorWith(properties, ticker, meterRegistry)
     private val log = CapturedLogger(properties.loggerName)
     private val moduleLog = CapturedLogger(ClientRequestLoggingInterceptor::class.java.name, Level.WARN)
+    private val emitterLog = CapturedLogger(ExchangeLogEmitter::class.java.name, Level.WARN)
     private val pinned = PinnedMdcAppender().apply { start() }
     private val adapter = ArmedFailingAdapter(original)
 
@@ -100,9 +103,24 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
         pinned.stop()
         log.detach()
         moduleLog.detach()
+        emitterLog.detach()
     }
 
     private fun breadcrumbs(): List<Pair<Level, String>> = moduleLog.events.map { it.level to it.formattedMessage }
+
+    private fun emitterBreadcrumbs(): List<Pair<Level, String>> = emitterLog.events.map { it.level to it.formattedMessage }
+
+    /** Closes [response] on another thread with the adapter armed for exactly that close. */
+    private fun closeOnAnotherThreadArmed(response: ClientHttpResponse) {
+        onAnotherThread {
+            adapter.armed = true
+            try {
+                response.consumeAndClose()
+            } finally {
+                adapter.armed = false
+            }
+        }
+    }
 
     @Test
     fun `should run the call without the call scope and count stage wiring when the adapter refuses the scope's put`() {
@@ -246,6 +264,64 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
         assertThat(breadcrumbs()).anySatisfy { (level, message) ->
             assertThat(level).isEqualTo(Level.WARN)
             assertThat(message).contains("could not be captured")
+        }
+    }
+
+    @Test
+    fun `should log the module's own identity alone when the adapter refuses the caller's snapshot on the closing thread`() {
+        // What is tested: the emitter's restoreCallerMdcQuietly - the guard around the snapshot's
+        //   install (ADR-0011) on the thread that closes the response.
+        // Success criteria: the event is still logged on the other thread with its outcome and the
+        //   module's identity, without the caller's key; stage=wiring at 1 with the WARN breadcrumb on
+        //   the emitter's logger, stage=emission at 0.
+        // Why it matters: the restoration is an extra; a failing extra must cost the caller's keys,
+        //   never the event.
+        // Given: a caller key captured on this thread, its put refused on the closing thread
+        MDC.put("endpoint_request_id", "inbound-7")
+        val response = interceptor.intercept(request(), ByteArray(0), answering(body = "ok"))
+        adapter.failPut = setOf("endpoint_request_id")
+
+        // When
+        closeOnAnotherThreadArmed(response)
+
+        // Then
+        val event = pinned.events.single()
+        assertThat(keyValues(event)).containsEntry("adapter_outcome", "success")
+        assertThat(event.mdcPropertyMap).containsEntry(MdcKeys.REQUEST_ID, "generated-42").doesNotContainKey("endpoint_request_id")
+        assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
+        assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "emission")).isZero()
+        assertThat(emitterBreadcrumbs()).anySatisfy { (level, message) ->
+            assertThat(level).isEqualTo(Level.WARN)
+            assertThat(message).contains("The caller's MDC could not be restored")
+        }
+    }
+
+    @Test
+    fun `should keep the event and count the teardown as wiring when the adapter refuses the snapshot's removal on the closing thread`() {
+        // What is tested: the emitter's restoreQuietly around the caller scope - the teardown half of
+        //   the fail-open rule: the line counts as emitted, a scope whose close throws is bookkeeping.
+        // Success criteria: the event exists on the other thread WITH the caller's key (the install
+        //   worked) and its outcome; stage=wiring at 1 with the WARN breadcrumb on the emitter's logger,
+        //   stage=emission at 0.
+        // Why it matters: the scope's close runs in the emission's finally; a close that threw INTO
+        //   the emission guard would count a lost line where the line was written.
+        // Given: a caller key captured on this thread, its removal refused on the closing thread
+        MDC.put("endpoint_request_id", "inbound-7")
+        val response = interceptor.intercept(request(), ByteArray(0), answering(body = "ok"))
+        adapter.failRemove = setOf("endpoint_request_id")
+
+        // When
+        closeOnAnotherThreadArmed(response)
+
+        // Then
+        val event = pinned.events.single()
+        assertThat(keyValues(event)).containsEntry("adapter_outcome", "success")
+        assertThat(event.mdcPropertyMap).containsEntry("endpoint_request_id", "inbound-7")
+        assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
+        assertThat(meterRegistry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "emission")).isZero()
+        assertThat(emitterBreadcrumbs()).anySatisfy { (level, message) ->
+            assertThat(level).isEqualTo(Level.WARN)
+            assertThat(message).contains("MDC restoration failed after emitting")
         }
     }
 
