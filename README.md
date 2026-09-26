@@ -20,31 +20,47 @@ interceptor and a WebClient filter. No starter, no forced transitives.
 
 ## What sets it apart
 
-- **One line, when the exchange is truly over.** The event is emitted at response close on the blocking
+### One line per exchange
+
+- **Emitted when the exchange is truly over.** The event is emitted at response close on the blocking
   stack and at the body's terminal signal on the reactive one, so status, headers, bodies and the
   duration are final: `adapter_duration_ms` is response occupancy including the body read, not a bare
   round trip. A call without a response still yields exactly one line, with `-> -`.
-- **Two paradigm twins, one contract.** The `RestClient`/`RestTemplate` interceptor and the `WebClient`
-  filter emit the same fields under the same names with the same shapes, bound by the same
+- **An outcome that names who is responsible.** `success`, `rejected` (a 4xx), `failure`, `timeout`
+  and `cancelled` say which side the disposition belongs to; the level carries severity separately,
+  so the meaning of a line never depends on how loud it was logged.
+
+### Two stacks, one contract
+
+- **Two paradigm twins, identical fields.** The `RestClient`/`RestTemplate` interceptor and the
+  `WebClient` filter emit the same fields under the same names with the same shapes, bound by the same
   `adapter-logging.*` keys, and lockstep tests pin every literal: a field, a message format or a meter
   that drifts between the twins fails the build.
-- **Fail-open, and the loss reports itself.** A logging failure never reaches the caller and never
-  changes the call. It is swallowed, counted in `adapter.logging.failopen` by stage, and the events
-  counter is the ground truth to reconcile against the log index, so a lost line is visible through a
-  channel that does not depend on the line.
+
+### Correlation
+
 - **Identity that joins the lines.** The trace id is the request id; on a traceless call the module sends
   an `X-Correlation-Id` instead, so the peer can quote it. A client line emitted while a request is
   served inherits the server line's identity from the MDC, and the reactive twin restores the caller's
   context around its emission, the blocking twin the caller's MDC for a response closed on another
   thread: the outbound line always carries the identity of the request that caused it.
-- **Header values masked by default, bodies teed as they flow.** A logged header value is a stable keyed
-  fingerprint unless it is on an explicit plaintext allowlist; the same `masking-key` on both sides of
-  the family makes a masked token read identically on the inbound and the outbound line. Bodies are
-  never pre-read or replayed: they are teed as the application reads them, bounded by `max-body-bytes`,
-  and `on-failure` logs them only for the exchanges that went wrong.
-- **An outcome that names who is responsible, meters that are consumed, not exported.** `success`,
-  `rejected` (a 4xx), `failure`, `timeout` and `cancelled` say which side the disposition belongs to;
-  the level carries severity separately. Six meter families are fed into the host's own registry,
+
+### Headers and bodies
+
+- **Header values masked by default.** A logged header value is a stable keyed fingerprint unless it
+  is on an explicit plaintext allowlist; the same `masking-key` on both sides of the family makes a
+  masked token read identically on the inbound and the outbound line.
+- **Bodies teed as they flow.** Bodies are never pre-read or replayed: they are teed as the
+  application reads them, bounded by `max-body-bytes`, and `on-failure` logs them only for the
+  exchanges that went wrong.
+
+### Operating it
+
+- **Fail-open, and the loss reports itself.** A logging failure never reaches the caller and never
+  changes the call. It is swallowed, counted in `adapter.logging.failopen` by stage, and the events
+  counter is the ground truth to reconcile against the log index, so a lost line is visible through a
+  channel that does not depend on the line.
+- **Meters that are consumed, not exported.** Six meter families are fed into the host's own registry,
   pre-registered at zero so a `rate()` alert sees the baseline before the first occurrence; rates,
   latencies and status distributions are left to `http.client.requests` on purpose.
 - **The logger level is the volume control, at runtime.** Because the level carries severity only, the
@@ -56,6 +72,76 @@ interceptor and a WebClient filter. No starter, no forced transitives.
   (Boot's loggers endpoint included) and down again, no restart, no redeploy; the module's own logger
   under `eu.inqudium.legatium` reports at `DEBUG` how it is wired and at `TRACE` where every property
   value came from.
+
+## Quickstart
+
+1. **Add the twin for the client the host calls out with.** There is no BOM; the version is declared on
+   the dependency (the current release is in the compatibility table below and on the Maven Central
+   badge). No web application is required: a batch job or a message consumer that calls out is a
+   client too.
+
+   `RestClient` / `RestTemplate` (blocking; needs Boot's `spring-boot-restclient`, which
+   `spring-boot-starter-restclient` brings):
+
+   ```xml
+   <dependency>
+       <groupId>eu.inqudium</groupId>
+       <artifactId>legatium-restclient-logging</artifactId>
+       <version>1.2.0</version>
+   </dependency>
+   ```
+
+   `WebClient` (reactive, also from coroutines; needs Boot's `spring-boot-webclient`, which
+   `spring-boot-starter-webclient` and `spring-boot-starter-webflux` bring):
+
+   ```xml
+   <dependency>
+       <groupId>eu.inqudium</groupId>
+       <artifactId>legatium-webclient-logging</artifactId>
+       <version>1.2.0</version>
+   </dependency>
+   ```
+
+2. **Build the client from Boot's injected builder.** The auto-configuration attaches the interceptor
+   or filter to every builder Boot hands out; a client from `RestClient.create(...)`, the static
+   `RestClient.builder()`, a bare `RestTemplate()` or `WebClient.create(...)` bypasses Boot's
+   customizers and logs nothing.
+
+   ```kotlin
+   @Service
+   class ThingsAdapter(builder: RestClient.Builder) {       // or WebClient.Builder, RestTemplateBuilder
+       private val client = builder.baseUrl("https://api.example.com").build()
+   }
+   ```
+
+   Every call is then one `INFO` event on the `adapter-http-exchange` logger:
+
+   ```
+   Adapter http exchange POST https://api.example.com/things/42 -> 200 [adapter_request_id=4bf92f3577b34da6a3ce929d0e0e4736 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7]
+   ```
+
+   A call made while a request is served inherits the server line's identity from the MDC. With Boot's
+   structured logging (`logging.structured.format.console=ecs`) the same event is one JSON document
+   with the `adapter_*` fields as flat, typed top-level fields.
+
+3. **Tune it, if the defaults are not yours.** Every key lives under `adapter-logging.*` and is the
+   same for both twins; the [configuration reference](docs/adapter-logging-reference.yml) lists them
+   all with their defaults. The usual first adjustments:
+
+   ```yaml
+   adapter-logging:
+     exclude-hosts: [pushgateway.monitoring.svc] # skip the peers that are infrastructure, not partners
+     log-request-body: on-failure                # bodies only for calls that went wrong
+     log-response-body: on-failure
+     masking-key: ${ADAPTER_MASKING_KEY}         # key the header fingerprint; a secret, share it with Limesium
+   logging:
+     level:
+       adapter-http-exchange: WARN               # or INFO for every call; change it at runtime
+   ```
+
+The module READMEs carry the details: prerequisites, the automatic wiring and when to wire by hand,
+and what one exchange looks like as text and as JSON:
+[RestClient](legatium-restclient-logging/README.md#usage), [WebClient](legatium-webclient-logging/README.md#usage).
 
 ## About the name
 
@@ -130,7 +216,7 @@ guides, Elasticsearch mapping, generated [test evidence](https://inqudium.github
   both sides keeps it so), a masked token reads identically on the inbound and the outbound line.
 
 
-### Quick start
+### Compatibility
 
 Each Legatium release is built and tested against one Spring Boot line, one Kotlin line and one Java
 target; the table is the history of those lines, newest first. The Java column is the bytecode target the
