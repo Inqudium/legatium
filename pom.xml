@@ -91,7 +91,7 @@
         <java.version>21</java.version>
 
         <!-- Kotlin Version (Override Spring Boot default) -->
-        <kotlin.version>2.4.20</kotlin.version>
+        <kotlin.version>2.4.21</kotlin.version>
 
         <!--
             Reproducible builds (https://maven.apache.org/guides/mini/guide-reproducible-builds.html):
@@ -124,7 +124,7 @@
         <maven-gpg-plugin.version>3.2.8</maven-gpg-plugin.version>
         <central-publishing-maven-plugin.version>0.11.0</central-publishing-maven-plugin.version>
         <maven-dependency-plugin.version>3.11.0</maven-dependency-plugin.version>
-        <versions-maven-plugin.version>2.22.0</versions-maven-plugin.version>
+        <versions-maven-plugin.version>2.23.0</versions-maven-plugin.version>
 
         <!--
             Default for the late-bound @{argLine} reference in the Surefire
