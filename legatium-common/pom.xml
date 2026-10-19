@@ -64,6 +64,12 @@
             <artifactId>netty-handler</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Test-scoped, same reason: Apache HttpComponents' pool lease timeout type, matched by name. -->
+        <dependency>
+            <groupId>org.apache.httpcomponents.core5</groupId>
+            <artifactId>httpcore5</artifactId>
+            <scope>test</scope>
+        </dependency>
 
         <!-- JUnit + AssertJ + a real MDC-capable backend (Logback) for the
              MdcScope tests, BOM-managed like in the twins. -->

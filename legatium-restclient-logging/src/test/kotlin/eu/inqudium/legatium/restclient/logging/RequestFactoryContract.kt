@@ -59,8 +59,9 @@ abstract class RequestFactoryContract : PeerIntegrationSuite() {
      */
     protected abstract val decompressesTransparently: Boolean
 
+    /** Boot's prototype builder - a fresh one per test instance; an engine suite's own scenario builds its client on it too. */
     @Autowired
-    private lateinit var restClientBuilder: RestClient.Builder
+    protected lateinit var restClientBuilder: RestClient.Builder
 
     @Autowired
     private lateinit var registry: MeterRegistry

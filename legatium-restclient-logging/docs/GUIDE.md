@@ -754,7 +754,12 @@ walks the exception's **cause chain** and, per link, the class hierarchy by name
 `java.util.concurrent.TimeoutException` are matched as types; Netty's `io.netty.handler.timeout.
 TimeoutException` family and its connect timeout `io.netty.channel.ConnectTimeoutException` (a
 `ConnectException`, which no JDK timeout type covers) by their fully qualified names, so the WebClient
-twin recognises Reactor Netty's read and connect timeouts without a Netty dependency here. Engines wrap their timeouts (`IOException` over
+twin recognises Reactor Netty's read and connect timeouts without a Netty dependency here. Apache
+HttpComponents 5 has a third timeout next to connect and read: the **pool lease** timeout
+(`org.apache.hc.core5.http.ConnectionRequestTimeoutException`, raised when no pooled connection became
+free within the connection request timeout), an `InterruptedIOException` — a type that also carries a
+thread interrupt during I/O, so the module matches the Apache class by name, not its supertype, and a
+plain interrupt stays a `failure`. Engines wrap their timeouts (`IOException` over
 `SocketTimeoutException`; `RestClient` wraps once more into `ResourceAccessException` *after* the
 interceptor saw the original) — hence the chain walk. Anything else is a plain `failure`.
 

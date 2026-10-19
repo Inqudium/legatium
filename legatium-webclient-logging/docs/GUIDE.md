@@ -978,7 +978,14 @@ Two things are both called "timeout" and reach this filter as different signals:
   | Jetty | `java.util.concurrent.TimeoutException` (idle timeout) | `SocketTimeoutException` |
   | Apache HttpComponents 5 | `SocketTimeoutException` | `ConnectTimeoutException` (a `SocketTimeoutException`) |
 
-  A refused connection stays a `failure` on every connector — the suites keep it as the control.
+  A pool that hands out no connection in time is a timeout too: Reactor Netty's acquire timeout is a
+  `java.util.concurrent.TimeoutException`; Apache's async client fails the lease with the pool's own
+  `TimeoutException` subtype (`DeadlineTimeoutException`, enforced at the pool's next event — a
+  release, another lease — not on a timer), and Apache's classic client (the RestClient twin's engine)
+  raises `org.apache.hc.core5.http.ConnectionRequestTimeoutException`, an `InterruptedIOException` the
+  classification matches by name — pinned by the HttpComponents suite of each twin against a pool of
+  one held connection. A refused connection stays a `failure` on every connector — the suites keep it
+  as the control.
 - A timeout the **caller** applies with the `timeout()` operator **cancels** the upstream subscription;
   this filter sees a CANCEL, never the `TimeoutException` the operator raises downstream, and the event is
   `adapter_outcome=cancelled`. That is truthful — from the exchange's point of view the caller walked away
