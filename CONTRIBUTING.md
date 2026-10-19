@@ -217,7 +217,8 @@ makes it a major one.
      to the release date at midnight UTC (`YYYY-MM-DDT00:00:00Z`) - the
      timestamp is what makes the jars reproducible, see the README;
    - `consumer-smoke/pom.xml` and `benchmarks/pom.xml`: `<legatium.version>` to the version;
-   - `README.md`: a new first row in the compatibility table;
+   - `README.md`: a new first row in the compatibility table, and the version in the
+     two Quickstart dependency snippets (one per twin);
    - `CHANGELOG.md`: a `## [1.1.0] - YYYY-MM-DD` heading directly under the
      (then empty) `## [Unreleased]` heading, the `[Unreleased]:` link changed
      to `compare/1.1.0...HEAD`, and a `[1.1.0]:` link to the release tag.
