@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Both twins: Apache HttpComponents 5's **pool lease timeout** - the classic client's
+  `org.apache.hc.core5.http.ConnectionRequestTimeoutException`, raised when no pooled connection
+  became free within the connection request timeout - is now classified as `adapter_outcome=timeout`
+  at WARN like its connect and read timeouts, instead of `failure` at ERROR. The type is an
+  `InterruptedIOException`, which no JDK timeout type covers and which cannot be matched as a whole
+  (a thread interrupt during I/O is one too), so `Timeouts` matches the Apache class by its fully
+  qualified name, the way it matches Netty's; neither twin gains a dependency. Pinned by the common
+  module's test against the real class (httpcore5 test-scoped there, like Netty), by a plain
+  `InterruptedIOException` staying a `failure`, and by a pool-lease scenario in the HttpComponents
+  suite of each twin: a pool of one connection whose only slot is held.
+
 ## [1.2.0] - 2026-09-21
 
 ### Added

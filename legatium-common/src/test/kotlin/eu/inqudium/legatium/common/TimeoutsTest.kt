@@ -2,9 +2,11 @@ package eu.inqudium.legatium.common
 
 import io.netty.channel.ConnectTimeoutException
 import io.netty.handler.timeout.ReadTimeoutException
+import org.apache.hc.core5.http.ConnectionRequestTimeoutException
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import java.io.IOException
+import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
 import java.net.http.HttpConnectTimeoutException
 import java.util.concurrent.TimeoutException
@@ -51,15 +53,34 @@ class TimeoutsTest {
     }
 
     @Test
+    fun `should recognise Apache HttpComponents' pool lease timeout by its class name`() {
+        // What is tested: the by-name match for org.apache.hc.core5.http.ConnectionRequestTimeoutException
+        //   - what Apache raises when no pooled connection became free within the connection request
+        //   timeout - against the REAL class, httpcore5 being a test-scoped dependency here while
+        //   neither twin depends on it. It is an InterruptedIOException, which no JDK timeout type covers.
+        // Success criteria: wrapped the way the twins meet it, it classifies as a timeout.
+        // Why it matters: an exhausted pool is a timeout to an operator like a connect or read timeout -
+        //   the peer, or the pool in front of it, is slow, not broken - and both twins reported it as a
+        //   plain failure before.
+        // Given
+        val lease = RuntimeException("wrapped", ConnectionRequestTimeoutException("Timeout deadline: 200 MILLISECONDS"))
+
+        // When/Then
+        assertThat(Timeouts.isTimeout(lease)).isTrue()
+    }
+
+    @Test
     fun `should not classify ordinary failures or a missing throwable as a timeout`() {
         // What is tested: the negative side of the classification - a plain I/O error, a state error
-        //   wrapping one, and null.
-        // Success criteria: false for all three.
+        //   wrapping one, an interrupted I/O operation (the supertype of Apache's pool lease timeout:
+        //   a thread interrupt, not a deadline), and null.
+        // Success criteria: false for all four.
         // Why it matters: a walk that matched a superclass too eagerly would report every connection reset
-        //   as a timeout and make the `timeout` outcome meaningless on the dashboards.
-        // Given/When/Then: I/O errors, state errors and null are plain failures
+        //   or every interrupt as a timeout and make the `timeout` outcome meaningless on the dashboards.
+        // Given/When/Then: I/O errors, state errors, interrupts and null are plain failures
         assertThat(Timeouts.isTimeout(IOException("connection reset"))).isFalse()
         assertThat(Timeouts.isTimeout(IllegalStateException("boom", IOException("reset")))).isFalse()
+        assertThat(Timeouts.isTimeout(InterruptedIOException("interrupted"))).isFalse()
         assertThat(Timeouts.isTimeout(null)).isFalse()
     }
 

@@ -12,10 +12,15 @@ package eu.inqudium.legatium.common
  * `io.netty.handler.timeout.TimeoutException` family and its CONNECT timeout
  * (`io.netty.channel.ConnectTimeoutException`, a `java.net.ConnectException` that no JDK timeout type
  * covers) by their fully qualified names, so neither twin needs a Netty dependency to recognise a Netty
- * timeout. The other connectors Spring ships need no name of their own: the JDK client's connect timeout
- * is an `HttpTimeoutException`, Jetty raises `SocketTimeoutException` / `TimeoutException`, and Apache
- * HttpComponents 5's `ConnectTimeoutException` IS a `SocketTimeoutException` - pinned per connector by the
- * WebClient twin's connector suites. Anything else is a plain failure.
+ * timeout. Apache HttpComponents 5 needs one name: its POOL LEASE timeout
+ * (`org.apache.hc.core5.http.ConnectionRequestTimeoutException`, raised when no pooled connection became
+ * free within the connection request timeout) is an `InterruptedIOException`, a type that also carries a
+ * thread interrupt during I/O and so cannot be matched as a whole. The other connectors Spring ships need
+ * no name of their own: the JDK client's connect timeout is an `HttpTimeoutException`, Jetty raises
+ * `SocketTimeoutException` / `TimeoutException`, Apache's `ConnectTimeoutException` IS a
+ * `SocketTimeoutException`, and Reactor Netty's pool acquire timeout is a
+ * `java.util.concurrent.TimeoutException` - pinned per engine by the twins' connector suites. Anything
+ * else is a plain failure.
  */
 internal object Timeouts {
     private val TIMEOUT_CLASS_NAMES =
@@ -25,6 +30,7 @@ internal object Timeouts {
             "java.net.http.HttpTimeoutException",
             "io.netty.handler.timeout.TimeoutException",
             "io.netty.channel.ConnectTimeoutException",
+            "org.apache.hc.core5.http.ConnectionRequestTimeoutException",
         )
 
     /**
