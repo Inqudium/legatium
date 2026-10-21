@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the operating consequences - a `TimeLimiter` on platform threads does not free a worker blocked
   in `HttpURLConnection` or Apache's socket read. Linked from the Common guide §7.3 and the RestClient
   guide §4.8. Its §5 ranks the engines by cancellation behaviour, with the versions the ranking was
-  tested against.
+  tested against; §6 shows which engine Spring Boot 4.1 picks by default (Apache first, when it is
+  on the classpath), how `spring.http.clients.imperative.factory` overrides it, and that the
+  property does not apply in a reactive web application.
 
 ### Changed
 

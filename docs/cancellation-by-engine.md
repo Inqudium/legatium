@@ -141,7 +141,61 @@ The versions are those of the connector-suite run behind this page. A dependency
 an engine's behaviour; the suites then fail or show a changed breadcrumb, and this table is updated
 with them.
 
-## 6. How this is pinned
+## 6. Which engine you get by default
+
+The ranking of §5 matters only if you know which engine a client actually runs on. Spring picks it
+from the classpath, and the detection order is close to the reverse of the ranking. Checked against
+the sources of Spring Boot 4.1.1 (`spring-boot-http-client`, `spring-boot-restclient`) and Spring
+Framework 7.0.9.
+
+### 6.1 The detection order
+
+`ClientHttpRequestFactoryBuilder.detect()` takes the first engine whose class is on the classpath:
+
+| Order | Engine | Detected by | Cancellation rank (§5) |
+|---|---|---|---|
+| 1 | Apache HttpClient 5 | `org.apache.hc.client5.http.impl.classic.HttpClients` | 5 |
+| 2 | Jetty | `org.eclipse.jetty.client.HttpClient` | 2 |
+| 3 | Reactor Netty | `reactor.netty.http.client.HttpClient` | 3 |
+| 4 | JDK `HttpClient` | `java.net.http.HttpClient`, so practically always | 1 |
+| 5 | `HttpURLConnection` | the fallback | 4 |
+
+**An Apache jar on the classpath wins**, even when it arrived only transitively through some other
+library. Without a decision of its own, an application then runs on the engine that handles
+cancellation worst. Check with `mvn dependency:tree -Dincludes=org.apache.httpcomponents.client5`
+whether httpclient5 is on your runtime classpath.
+
+### 6.2 Choosing the engine explicitly
+
+In a servlet or non-web application, one property sets the engine for Boot's `RestClient.Builder`
+and `RestTemplateBuilder`:
+
+```yaml
+spring:
+  http:
+    clients:
+      imperative:
+        factory: jdk   # http-components | jetty | reactor | jdk | simple
+```
+
+The Boot 3 name `spring.http.client.factory` has been deprecated since 4.0.0, with this property as
+its replacement. Use the new name.
+
+### 6.3 Where the property does not apply
+
+| Setup | What decides the engine |
+|---|---|
+| Boot's `RestClient.Builder` in a servlet or non-web application | `spring.http.clients.imperative.factory`, otherwise the detection of §6.1 (`ImperativeHttpClientAutoConfiguration`) |
+| Boot's `RestClient.Builder` in a **reactive (WebFlux) application** | the **detection of §6.1 only**: `ImperativeHttpClientAutoConfiguration` is switched off there (`NotReactiveWebApplicationCondition`), so the property is ignored and `RestClientAutoConfiguration` calls `detect()` itself. Provide your own `ClientHttpRequestFactoryBuilder` bean, or set `requestFactory(...)` on the builder |
+| Boot's `RestTemplateBuilder` | the property in a servlet or non-web application; `RestTemplateAutoConfiguration` is not active in a reactive one. `detectRequestFactory(false)` keeps `RestTemplate`'s own default |
+| `RestClient.builder()` without Boot | Spring Framework's own detection in `DefaultRestClientBuilder`, in the same order as §6.1 |
+| `new RestTemplate()` without Boot | always `SimpleClientHttpRequestFactory` (`HttpAccessor`), i.e. `HttpURLConnection` |
+| `requestFactory(...)` set on any builder | exactly that factory |
+
+A client the host builds with an explicit `requestFactory(...)` is independent of all of this, and so
+is every engine suite of this repository: each sets its factory explicitly.
+
+## 7. How this is pinned
 
 | Behaviour | Test |
 |---|---|
