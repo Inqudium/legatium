@@ -123,9 +123,7 @@
         <flatten-maven-plugin.version>1.8.0</flatten-maven-plugin.version>
         <ktlint-maven-plugin.version>3.7.1</ktlint-maven-plugin.version>
         <dokka-maven-plugin.version>2.2.0</dokka-maven-plugin.version>
-        <maven-shade-plugin.version>3.6.2</maven-shade-plugin.version>
         <jacoco-maven-plugin.version>0.8.15</jacoco-maven-plugin.version>
-        <cyclonedx-maven-plugin.version>2.9.3</cyclonedx-maven-plugin.version>
         <maven-gpg-plugin.version>3.2.8</maven-gpg-plugin.version>
         <central-publishing-maven-plugin.version>0.12.0</central-publishing-maven-plugin.version>
         <maven-dependency-plugin.version>3.11.0</maven-dependency-plugin.version>
@@ -402,7 +400,6 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-shade-plugin</artifactId>
-                    <version>${maven-shade-plugin.version}</version>
                     <executions>
                         <!-- spring-boot-starter-parent pre-configures an UNNAMED shade
                              execution (uber-jar transformers, no artifactSet) that would
@@ -566,7 +563,6 @@
             <plugin>
                 <groupId>org.cyclonedx</groupId>
                 <artifactId>cyclonedx-maven-plugin</artifactId>
-                <version>${cyclonedx-maven-plugin.version}</version>
                 <configuration>
                     <outputFormat>json</outputFormat>
                     <schemaVersion>1.6</schemaVersion>
