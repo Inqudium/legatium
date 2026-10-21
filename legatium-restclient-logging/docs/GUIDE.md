@@ -820,7 +820,7 @@ connector suites:
 | Apache HttpClient 4 behind a host's own adapter (Spring ships none since 6.0) | like Apache HttpComponents 5, the caller getting a `ResourceAccessException` | like Apache HttpComponents 5 |
 
 What each engine throws, what reaches the caller, and what this means for a `TimeLimiter` in front of a
-blocking client is the page [Cancellation by engine](../../docs/cancellation-by-engine.md).
+blocking client is the page [Cancellation by engine (RestClient / RestTemplate)](../../docs/cancellation-by-engine.md).
 
 Tracing making every call traced, the one-metrics-owner-per-registry rule and the masking fingerprint are
 one behaviour for both twins — [Common guide §7.6](../../docs/GUIDE.md#76-trace-correlation),

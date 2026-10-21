@@ -899,6 +899,11 @@ Everything not listed here behaves exactly as in `legatium-restclient-logging`.
 
 ### 4.2 Cancellation and the missing status
 
+A `WebClient` call blocks no thread, so the engine-dependent interrupt behaviour of the blocking twin
+([Cancellation by engine (RestClient / RestTemplate)](../../docs/cancellation-by-engine.md)) does not
+apply here: every connector reports the caller's departure the same way, as a CANCEL of the
+subscription.
+
 Two very different things reach the body publisher as a CANCEL signal, and the filter's own body operator
 (`ObservedBody`) tells them apart by where the cancel comes from:
 
