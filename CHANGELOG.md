@@ -15,7 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CancellationException` after its internal retry on a virtual thread), the line legatium writes,
   and the operating consequences - a `TimeLimiter` on platform threads does not free a worker blocked
   in `HttpURLConnection` or Apache's socket read. Linked from the Common guide §7.3 and the RestClient
-  guide §4.8.
+  guide §4.8. Its §5 ranks the engines by cancellation behaviour, with the versions the ranking was
+  tested against.
 
 ### Changed
 

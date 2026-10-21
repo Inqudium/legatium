@@ -118,7 +118,30 @@ engine threw, which is where the differences of §2.2 remain visible.
   `InterruptedException` without restoring the flag pushes legatium onto the cause-chain fallback; one
   that also swallows the exception makes the call look like whatever it returns instead.
 
-## 5. How this is pinned
+## 5. Recommendation by cancellation behaviour
+
+Ranked by how well each engine honours an abandoned call, and by nothing else. Tested with Spring
+Boot 4.1.1 (Spring Framework 7.0.9) on JDK 26.0.1:
+
+| Rank | Engine (Spring request factory) | Tested version | Platform thread | Virtual thread | Thrown to the caller | Why |
+|---|---|---|---|---|---|---|
+| 1 | JDK `HttpClient` (`JdkClientHttpRequestFactory`) | JDK 26.0.1 | `cancelled` at once | `cancelled` at once | `ResourceAccessException` | honours the interrupt on both thread kinds, a clean exception, the flag restored, no extra dependency |
+| 2 | Jetty (`JettyClientHttpRequestFactory`) | jetty-client 12.1.12 | `cancelled` at once | `cancelled` at once | `ResourceAccessException` | the same behaviour as rank 1, at the cost of the Jetty dependency |
+| 3 | Reactor Netty (`ReactorClientHttpRequestFactory`) | reactor-netty-http 1.3.7 | `cancelled` at once | `cancelled` at once | `ResourceAccessException` | cancels cleanly, but brings Netty and its event loop for a single `block()` |
+| 4 | `HttpURLConnection` (`SimpleClientHttpRequestFactory`) | JDK 26.0.1 | ignored: waits for the answer, logs `success` | `cancelled` at once | nothing on a platform thread; `ResourceAccessException` on a virtual one | usable only on virtual threads or with a short read timeout |
+| 5 | Apache HttpClient 5 (`HttpComponentsClientHttpRequestFactory`) | httpclient5 5.6.4 | ignored: waits for the answer, logs `success` | `cancelled` after an internal retry | a raw `CancellationException` on a virtual thread, not wrapped | does not free a platform thread, and its exception bypasses the usual error handling; only the wait for a pooled connection cancels cleanly on both thread kinds (`ResourceAccessException`) |
+
+The ranking covers cancellation only. Connection-pool control, HTTP/2 or proxy support can rank the
+engines differently, and Apache often comes out on top there. A team that keeps Apache sets the read
+timeout no longer than the `TimeLimiter` budget and catches `CancellationException` (§4). On virtual
+threads, ranks 1 to 4 are equivalent. No engine stops the peer's work: for a non-idempotent call the
+choice of engine changes nothing about whether it was executed.
+
+The versions are those of the connector-suite run behind this page. A dependency upgrade can change
+an engine's behaviour; the suites then fail or show a changed breadcrumb, and this table is updated
+with them.
+
+## 6. How this is pinned
 
 | Behaviour | Test |
 |---|---|
