@@ -70,6 +70,13 @@
             <artifactId>httpcore5</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Test-scoped, same reason: Apache HttpClient 4's ConnectTimeoutException family (its pool
+             lease timeout included), matched by name; version managed by the parent. -->
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpclient</artifactId>
+            <scope>test</scope>
+        </dependency>
 
         <!-- JUnit + AssertJ + a real MDC-capable backend (Logback) for the
              MdcScope tests, BOM-managed like in the twins. -->

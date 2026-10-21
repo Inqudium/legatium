@@ -27,7 +27,8 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * The engine-agnosticism contract of the blocking twin, run once per request factory Spring ships (the
- * JDK `HttpClient`, Apache HttpComponents 5, Jetty, Reactor Netty, `HttpURLConnection`): the
+ * JDK `HttpClient`, Apache HttpComponents 5, Jetty, Reactor Netty, `HttpURLConnection`), and once for
+ * Apache HttpClient 4 through the test-scoped adapter a host still on it writes itself: the
  * interceptor touches an engine only through `ClientHttpRequestInterceptor` and the response tee on the
  * engine's own stream, so what this contract pins is that those seams hold against each real engine -
  * the body tee and its read state, the wire correlation header, the exception types each engine raises

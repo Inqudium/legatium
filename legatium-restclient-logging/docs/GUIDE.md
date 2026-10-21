@@ -761,7 +761,10 @@ HttpComponents 5 has a third timeout next to connect and read: the **pool lease*
 (`org.apache.hc.core5.http.ConnectionRequestTimeoutException`, raised when no pooled connection became
 free within the connection request timeout), an `InterruptedIOException` — a type that also carries a
 thread interrupt during I/O, so the module matches the Apache class by name, not its supertype, and a
-plain interrupt stays a `failure`. Engines wrap their timeouts (`IOException` over
+plain interrupt stays a `failure`. Apache HttpClient 4 - which Spring no longer ships a factory for, but a
+host may bridge with an adapter of its own - is covered the same way: its
+`org.apache.http.conn.ConnectTimeoutException` family, its pool lease timeout
+`ConnectionPoolTimeoutException` included, is matched by name. Engines wrap their timeouts (`IOException` over
 `SocketTimeoutException`; `RestClient` wraps once more into `ResourceAccessException` *after* the
 interceptor saw the original) — hence the chain walk. Anything else is a plain `failure`.
 
@@ -814,6 +817,7 @@ connector suites:
 | JDK `HttpClient`, Jetty, Reactor Netty (wait on a future) | `cancelled` at once | `cancelled` at once |
 | `HttpURLConnection`, Apache HttpComponents 5 (block in a socket read) | `cancelled` at once — the JDK closes the socket | no effect until the answer arrives; the call then logs by its **status** (an answer that arrived is no cancellation), the flag still set |
 | Apache HttpComponents 5, waiting for a pooled connection | `cancelled` | `cancelled` |
+| Apache HttpClient 4 behind a host's own adapter (Spring ships none since 6.0) | like Apache HttpComponents 5, the caller getting a `ResourceAccessException` | like Apache HttpComponents 5 |
 
 What each engine throws, what reaches the caller, and what this means for a `TimeLimiter` in front of a
 blocking client is the page [Cancellation by engine](../../docs/cancellation-by-engine.md).
@@ -862,7 +866,7 @@ lists every test with its rationale):
 | `ClientLoggingAutoConfigurationTest` | the shipped activation: beans, customizers attaching the interceptor to Boot's builders, back-off, the optional-dependency boundary |
 | `ClientRequestLoggingInterceptorIntegrationTest` | end to end through Boot's `RestClient.Builder` / `RestTemplateBuilder` and the JDK engine against a real HTTP peer: templates, bodies, the wire correlation header, refused connection, read timeout |
 | `ClientRequestLoggingTracingIntegrationTest` | ADR-0002 beside a real Brave bridge: the injected `traceparent`, the log-to-trace join, no correlation header on traced calls, every call traced |
-| Engine suites (`RequestFactoryContract` run as `JdkClientRequestFactoryIntegrationTest`, `HttpComponentsRequestFactoryIntegrationTest`, `JettyRequestFactoryIntegrationTest`, `ReactorNettyRequestFactoryIntegrationTest`, `SimpleRequestFactoryIntegrationTest`) | the engine-agnosticism contract against every request factory Spring ships: the body tee and its complete read state on the engine's own stream, the wire correlation header, the engine's real read and connect timeout types as `timeout` through `RestClient`'s wrapper (the connect timeout provoked by a loopback tarpit, `Tarpit`), a refused connection as the `failure` control, and per engine whether a gzip answer reaches application and log decoded (JDK client via Spring's compression support, Apache HC5, Jetty) or as sent (Reactor Netty, `HttpURLConnection`) |
+| Engine suites (`RequestFactoryContract` run as `JdkClientRequestFactoryIntegrationTest`, `HttpComponentsRequestFactoryIntegrationTest`, `JettyRequestFactoryIntegrationTest`, `ReactorNettyRequestFactoryIntegrationTest`, `SimpleRequestFactoryIntegrationTest`, and `HttpClient4RequestFactoryIntegrationTest` through the test-scoped `HttpClient4RequestFactory`) | the engine-agnosticism contract against every request factory Spring ships, and against Apache HttpClient 4 behind a host's own adapter: the body tee and its complete read state on the engine's own stream, the wire correlation header, the engine's real read and connect timeout types as `timeout` through `RestClient`'s wrapper (the connect timeout provoked by a loopback tarpit, `Tarpit`), a refused connection as the `failure` control, and per engine whether a gzip answer reaches application and log decoded (JDK client via Spring's compression support, Apache HC5, Jetty) or as sent (Reactor Netty, `HttpURLConnection`) |
 | Lockstep/contract tests (`TwinContractTest`, `UriTemplateAttributeTest`) | pin the message text, the line of an abandoned exchange, the pre-registered outcomes and the mirrored `RestClient` attribute; the shared literals (`SharedContractTest`), the field/template and configuration/reference lockstep (`ClientLogFieldTest`, `ClientLoggingReferenceConfigTest`, `ClientLoggingPropertiesTest`) and the metrics owner's registration behaviour (`ClientLoggingMetricsTest`) live once in legatium-common; the shaded jar itself is exercised by the standalone `consumer-smoke/` build |
 
 Fuzzing of the shared `Traceparent` parser and header masking lives in legatium-common; the bounded
