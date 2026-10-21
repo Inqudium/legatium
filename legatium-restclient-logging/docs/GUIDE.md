@@ -815,6 +815,9 @@ connector suites:
 | `HttpURLConnection`, Apache HttpComponents 5 (block in a socket read) | `cancelled` at once — the JDK closes the socket | no effect until the answer arrives; the call then logs by its **status** (an answer that arrived is no cancellation), the flag still set |
 | Apache HttpComponents 5, waiting for a pooled connection | `cancelled` | `cancelled` |
 
+What each engine throws, what reaches the caller, and what this means for a `TimeLimiter` in front of a
+blocking client is the page [Cancellation by engine](../../docs/cancellation-by-engine.md).
+
 Tracing making every call traced, the one-metrics-owner-per-registry rule and the masking fingerprint are
 one behaviour for both twins — [Common guide §7.6](../../docs/GUIDE.md#76-trace-correlation),
 [§7.4](../../docs/GUIDE.md#74-meters) and [§6.2](../../docs/GUIDE.md#62-header-sections); the shared

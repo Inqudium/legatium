@@ -826,7 +826,7 @@ Resolved in this order in each twin's `ExchangeLogEmitter`:
 
 | Condition | Level | `adapter_outcome` |
 |---|---|---|
-| blocking stack: the call threw while its thread was interrupted, or with an interrupt in its cause chain — the caller abandoned it (a `TimeLimiter` cancelling its worker with `Future.cancel(true)`, an interrupted caller); wins over a timeout reported in the same moment, no cause on the event ([ADR-0015](adr/ADR-0015-an-abandoned-blocking-call-is-cancelled.md)) | `WARN` | `cancelled` |
+| blocking stack: the call threw while its thread was interrupted, or with an interrupt in its cause chain — the caller abandoned it (a `TimeLimiter` cancelling its worker with `Future.cancel(true)`, an interrupted caller); wins over a timeout reported in the same moment, no cause on the event ([ADR-0015](adr/ADR-0015-an-abandoned-blocking-call-is-cancelled.md); per engine: [Cancellation by engine](cancellation-by-engine.md)) | `WARN` | `cancelled` |
 | the call threw or errored and a timeout is in the cause chain (or among the suppressed exceptions) | `WARN` | `timeout` |
 | the call threw or errored (no response), or the body read threw or errored | `ERROR` | `failure` |
 | reactive stack: the subscription was abandoned by the caller (a timeout operator, a disposed caller, a disconnect; a consumer that stops reading the body because it has read enough is `success`) | `WARN` | `cancelled` |

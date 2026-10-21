@@ -1,0 +1,133 @@
+# Cancellation by engine
+
+How each HTTP client implementation reacts when the caller of a call stops waiting, and what
+legatium logs for it. Read this before you put a `TimeLimiter`, a deadline or a cancellable future in
+front of a blocking client: the engine decides whether the cancellation takes effect, what the caller
+gets thrown, and whether a thread stays tied up.
+
+The classification rule itself is
+[ADR-0015](adr/ADR-0015-an-abandoned-blocking-call-is-cancelled.md). The short version is in the
+[RestClient guide §4.8](https://github.com/Inqudium/legatium/blob/main/legatium-restclient-logging/docs/GUIDE.md#48-a-call-its-caller-abandoned-is-cancelled).
+Everything on this page about the blocking engines is pinned by the connector suites
+(`RequestFactoryContract` and its five subclasses, `HttpComponentsRequestFactoryIntegrationTest`). It
+was observed on JDK 26 with Spring Boot 4.1.1 (Spring Framework 7.0.9), Apache HttpClient 5.6.4,
+Jetty 12.1.12 and Reactor Netty 1.3.7.
+
+---
+
+## 1. How a caller abandons a blocking call
+
+A blocking call has only one cancellation mechanism: **the interrupt of the thread that runs it**.
+Every higher-level construct comes down to it:
+
+| What the application does | What reaches the thread running the call |
+|---|---|
+| Resilience4j `TimeLimiter` whose budget expires (`cancelRunningFuture = true`, the default) | `Future.cancel(true)` on the worker, so the worker is interrupted |
+| `Future.cancel(true)` / `ExecutorService.shutdownNow()` | interrupt of the worker |
+| `CompletableFuture.cancel(...)` | **nothing**: a `CompletableFuture` does not interrupt the thread that computes it, and the call runs to its end |
+| a structured-concurrency scope that is shut down, a deadline that interrupts the caller | interrupt of the thread in the scope |
+| `Thread.interrupt()` directly | interrupt |
+
+A `CompletableFuture` cancelled on its own therefore leaves the call running: the line it logs is the
+call's real outcome, usually `success`. Only an interrupt reaches the engine.
+
+## 2. What each engine does with the interrupt
+
+The column that matters is the **thread kind**. Since JDK 21, socket I/O is interruptible on a
+**virtual** thread: the JDK closes the socket and the blocked read fails with
+`SocketException: Closed by interrupt`. On a **platform** thread a blocked socket read ignores the
+interrupt; only a wait on a future or a lock wakes up.
+
+### 2.1 Overview
+
+| Engine (Spring request factory) | Waits on | Virtual thread | Platform thread |
+|---|---|---|---|
+| JDK `HttpClient` (`JdkClientHttpRequestFactory`) | a future | `cancelled` at once | `cancelled` at once |
+| Jetty (`JettyClientHttpRequestFactory`) | a future | `cancelled` at once | `cancelled` at once |
+| Reactor Netty (`ReactorClientHttpRequestFactory`) | a `block()` | `cancelled` at once | `cancelled` at once |
+| `HttpURLConnection` (`SimpleClientHttpRequestFactory`) | the socket read | `cancelled` at once | **ignored**: the call waits for the answer and logs by its status |
+| Apache HttpClient 5 (`HttpComponentsClientHttpRequestFactory`), during the exchange | the socket read | `cancelled` at once, after an internal retry attempt | **ignored**: the call waits for the answer and logs by its status |
+| Apache HttpClient 5, waiting for a pooled connection | the pool's lease future | `cancelled` at once | `cancelled` at once |
+
+In every case the thread's **interrupt flag is still set** after the call returns or throws: the
+engines restore it, and legatium only reads it. The caller's own interrupt handling still sees it.
+
+### 2.2 Per engine
+
+What the interceptor receives, what the caller gets thrown, and the line legatium writes:
+
+| Engine | Exception at the interceptor | Thrown to the `RestClient` caller | Line |
+|---|---|---|---|
+| JDK `HttpClient` | `IOException("Request was interrupted: …")` over the `InterruptedException`; Spring restores the flag | `ResourceAccessException` | WARN `cancelled`, `-> -` |
+| Jetty | `IOException("Request was interrupted: …")` over the `InterruptedException`; Spring restores the flag | `ResourceAccessException` | WARN `cancelled`, `-> -` |
+| Reactor Netty | `IOException` over the `InterruptedException` from `block()` | `ResourceAccessException` | WARN `cancelled`, `-> -` |
+| `HttpURLConnection`, virtual thread | `SocketException: Closed by interrupt` | `ResourceAccessException` | WARN `cancelled`, `-> -` |
+| `HttpURLConnection`, platform thread | none: the answer arrives | none: the caller gets the body | INFO `success` with the status (or what the status says) |
+| Apache 5, virtual thread | `java.util.concurrent.CancellationException` (see below) | the **raw** `CancellationException`, not wrapped by `RestClient` | WARN `cancelled`, `-> -` |
+| Apache 5, platform thread | none: the answer arrives | none: the caller gets the body | INFO `success` with the status |
+| Apache 5, pool lease | `RequestFailedException("Request aborted")` over the `InterruptedException`; Apache restores the flag | `ResourceAccessException` | WARN `cancelled`, `-> -` |
+
+**Apache on a virtual thread.** The interrupt closes the socket. Apache's `HttpRequestRetryExec` sees
+a `SocketException` it considers recoverable and retries the request (it logs
+`recoverable I/O exception … will be automatically re-executed` at INFO). The retry's lease of a
+connection from the pool then fails on the still-interrupted thread with a raw
+`CancellationException`. It is a `RuntimeException`, so `RestClient` passes it through unwrapped: a
+caller that catches only `ResourceAccessException` misses it. legatium still logs `cancelled`, because
+the interrupt flag is set. A client built with `disableAutomaticRetries()` skips the retry step;
+which exception it then throws is not covered by the suites.
+
+**The reactive twin.** A `WebClient` call is cancelled by cancelling its subscription, the same way on
+every connector. The engine differences above do not apply there; the reactive rules (a cancel from
+within the consumer's own delivery is `success`, from anywhere else `cancelled`) are in the
+[WebClient guide §4.2](https://github.com/Inqudium/legatium/blob/main/legatium-webclient-logging/docs/GUIDE.md#42-cancellation-and-the-missing-status).
+
+## 3. What legatium logs
+
+The blocking twin logs **`adapter_outcome=cancelled` at WARN, without a cause** when the call threw
+and:
+
+1. the thread was interrupted at the moment the exception reached the interceptor, or
+2. the exception's cause chain contains an `InterruptedException` or a `ClosedByInterruptException`,
+   or the JDK's `SocketException("Closed by interrupt")` or Apache's
+   `RequestFailedException("Request aborted")`: the fallback for a flag something already consumed.
+
+The cancellation wins over a timeout the transport reported in the same moment. A call that got its
+answer despite the interrupt is classified by its status: the platform-thread rows above log
+`success` (or `rejected` / `failure` by status) because the answer arrived before anybody stopped
+waiting for it. The WARN breadcrumb on
+`eu.inqudium.legatium.restclient.logging.ClientRequestLoggingInterceptor` still names the exception the
+engine threw, which is where the differences of §2.2 remain visible.
+
+## 4. Consequences for operating it
+
+- **A `TimeLimiter` on platform threads does not free the worker with `HttpURLConnection` or
+  Apache.** The caller is released when the budget expires, but the worker stays blocked in the socket
+  read until the answer or the engine's **read timeout**. Under load those threads pile up. Configure
+  a read timeout at most as long as the budget, or run the calls on virtual threads, or use an engine
+  that waits on a future (JDK `HttpClient`, Jetty, Reactor Netty).
+- **The `cancelled` count depends on the engine.** The same TimeLimiter setup produces `cancelled`
+  lines with the JDK client and `success` lines (late ones, with a long `adapter_duration_ms`) with
+  `HttpURLConnection` on platform threads. Compare `events{outcome="cancelled"}` across services only
+  when they use the same engine and thread model.
+- **The peer never learns.** An interrupt ends the wait on our side. The peer keeps processing the
+  request, and its work and side effects happen anyway. A cancelled non-idempotent call may have been
+  executed.
+- **Catch `CancellationException` too** when an Apache client runs on virtual threads: otherwise the
+  abandoned call escapes the application's `ResourceAccessException` handling.
+- **Leave the interrupt flag alone in your own interceptors.** A host interceptor that catches the
+  `InterruptedException` without restoring the flag pushes legatium onto the cause-chain fallback; one
+  that also swallows the exception makes the call look like whatever it returns instead.
+
+## 5. How this is pinned
+
+| Behaviour | Test |
+|---|---|
+| virtual thread, interrupted mid-call, every engine | `RequestFactoryContract`: `should log a caller interrupted on a virtual thread as WARN cancelled …` |
+| platform thread, interrupted mid-call, every engine (`interruptibleOnPlatformThreads` per engine) | `RequestFactoryContract`: `should log a caller interrupted on a platform thread the way this request factory honours it` |
+| `Future.cancel(true)` on a virtual worker, every engine | `RequestFactoryContract`: `should log a worker cancelled through its future as WARN cancelled …` |
+| Apache's interrupted pool lease | `HttpComponentsRequestFactoryIntegrationTest`: `should log a caller interrupted while waiting for a pooled connection as WARN cancelled` |
+| classification order, flag never cleared, close on another thread | `ClientRequestLoggingInterceptorCancellationTest`, `CancellationsTest` |
+
+The exception types in §2.2 are what the engines threw in these runs. They are engine-internal and
+not part of legatium's contract; the suites pin the classification only, so a new engine version that
+throws something else shows up as a changed breadcrumb, not as a different line.
