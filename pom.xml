@@ -90,7 +90,9 @@
         <!-- Java Version (Managed by Spring Boot Parent) -->
         <java.version>21</java.version>
 
-        <!-- Kotlin Version (Override Spring Boot default) -->
+        <!-- Kotlin Version (Override Spring Boot default): the project has been on Kotlin 2.4
+             since it started (Boot 4.1.1 manages 2.3.21), kept current by Dependabot; lowering it
+             would be a compiler downgrade. Remove once Spring Boot manages >= this version. -->
         <kotlin.version>2.4.21</kotlin.version>
 
         <!--
@@ -126,6 +128,10 @@
         <jacoco-maven-plugin.version>0.8.15</jacoco-maven-plugin.version>
         <maven-gpg-plugin.version>3.2.8</maven-gpg-plugin.version>
         <central-publishing-maven-plugin.version>0.12.0</central-publishing-maven-plugin.version>
+        <!-- maven-dependency-plugin and versions-maven-plugin override the Spring Boot BOM's
+             properties of the same name (Boot 4.1.1 manages 3.10.0 and 2.21.0): pinned so the
+             dependency and update reports run at a version Dependabot keeps current, newer than
+             Boot's. Remove each once Spring Boot manages >= that version. -->
         <maven-dependency-plugin.version>3.11.0</maven-dependency-plugin.version>
         <versions-maven-plugin.version>2.23.0</versions-maven-plugin.version>
 
@@ -148,6 +154,11 @@
 
     <dependencyManagement>
         <dependencies>
+            <!-- JUnit's own BOM, newer than the 6.0.3 Spring Boot 4.1.1 manages: it moves the whole
+                 JUnit family together. Imported rather than overriding Boot's junit-jupiter.version
+                 property because Dependabot updates this declaration, while a property only the
+                 parent BOM reads is likely not tracked. Remove once Spring Boot manages >= this
+                 version. -->
             <dependency>
                 <groupId>org.junit</groupId>
                 <artifactId>junit-bom</artifactId>
@@ -338,6 +349,8 @@
                 <plugin>
                     <groupId>org.codehaus.mojo</groupId>
                     <artifactId>build-helper-maven-plugin</artifactId>
+                    <!-- Newer than the 3.6.1 Spring Boot 4.1.1 manages; remove once Spring Boot
+                         manages >= this version. -->
                     <version>3.6.2</version>
                     <executions>
                         <execution>
