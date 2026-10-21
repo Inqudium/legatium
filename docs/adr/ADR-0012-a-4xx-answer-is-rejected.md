@@ -2,6 +2,7 @@
 
 **Status:** Accepted  
 **Date:** 2026-09-19  
+**Last updated:** 2026-10-21  
 **Deciders:** Dirk Haase (maintainer)  
 **Related:** ADR-0006 (the body gate, whose 4xx special case this
 ADR removes), ADR-0008 (the `outcome` tag of the events counter gains
@@ -75,7 +76,7 @@ stay decoupled.
 | `rejected`        | the peer answered 4xx: the request was refused           | the caller, this application   |
 | `failure`         | the peer answered 5xx, or the call threw                 | the peer, or the call itself   |
 | `timeout`         | our wait ended without an answer                         | the clock                      |
-| `cancelled`       | the caller abandoned the subscription (reactive stack)   | the caller, deliberately       |
+| `cancelled`       | the caller abandoned the exchange (both stacks, ADR-0015) | the caller, deliberately      |
 
 `rejected` is one value for the whole 4xx class, as `failure` is one
 value for the whole 5xx class: the status is on the line as a
@@ -89,6 +90,7 @@ function for both twins (ADR-0003):
 
 | Condition                                                   | Level          | `adapter_outcome` |
 |-------------------------------------------------------------|----------------|-------------------|
+| the call threw while the caller abandoned it (blocking stack, ADR-0015) | `WARN` | `cancelled` |
 | the call threw and a timeout is in the cause chain          | `WARN`         | `timeout`         |
 | the call threw                                              | `ERROR`        | `failure`         |
 | the subscription was cancelled (reactive stack)             | `WARN`         | `cancelled`       |
@@ -194,3 +196,6 @@ both stacks.
   vocabulary gained `rejected` for the 4xx class, with WARN for the
   four statuses that are about the application's standing with the
   peer, which resolves the same reasons without a blanket WARN.
+- **2026-10-21:** `cancelled` extended to the blocking stack
+  (ADR-0015): a call that threw while its caller had abandoned it,
+  ahead of the timeout row.

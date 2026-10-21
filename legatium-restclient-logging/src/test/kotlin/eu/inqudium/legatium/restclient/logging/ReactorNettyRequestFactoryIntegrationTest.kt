@@ -15,6 +15,8 @@ import java.time.Duration
 class ReactorNettyRequestFactoryIntegrationTest : RequestFactoryContract() {
     override val decompressesTransparently: Boolean = false
 
+    override val interruptibleOnPlatformThreads: Boolean = true
+
     override fun requestFactory(
         connectTimeout: Duration,
         readTimeout: Duration,

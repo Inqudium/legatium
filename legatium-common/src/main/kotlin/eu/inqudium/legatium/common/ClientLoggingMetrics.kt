@@ -19,8 +19,9 @@ import java.util.concurrent.atomic.AtomicLong
  * counter. A closed set, like every wire-bound vocabulary of the family: the tag value is the contract,
  * the constant is the code's name for it. The value names WHO is responsible for the disposition
  * (ADR-0012): nobody for a [SUCCESS], the caller - this application - for a [REJECTED] 4xx, the peer or
- * the call itself for a [FAILURE], the clock for a [TIMEOUT]. [CANCELLED] exists on the reactive stack
- * only. The level carries the severity separately ([Classification]).
+ * the call itself for a [FAILURE], the clock for a [TIMEOUT], the caller - who stopped waiting - for a
+ * [CANCELLED] (ADR-0015). Both stacks use the whole set. The level carries the severity separately
+ * ([Classification]).
  */
 internal enum class ClientOutcome(
     val tagValue: String,
@@ -57,27 +58,23 @@ internal enum class RequestIdSource(
 
 /**
  * The client stack a twin serves - the ONLY facts of the shared metrics owner that differ per twin: the
- * `client` tag of the open-exchanges gauge, the outcome vocabulary of the events counter, and the
- * wording of the gauge's description. Everything else about the meters is one cross-stack contract
- * (ADR-0003).
+ * `client` tag of the open-exchanges gauge and the wording of the gauge's description. Everything else
+ * about the meters is one cross-stack contract (ADR-0003), the outcome vocabulary of the events counter
+ * included since the blocking twin logs `cancelled` too (ADR-0015).
  */
 internal enum class ClientStack(
     /** The `client` tag value of the open-exchanges gauge. */
     val tagValue: String,
-    /** The closed outcome vocabulary of this stack, pre-registered on the events counter. */
-    val outcomes: List<ClientOutcome>,
     /** The stack's own wording of what an open exchange is. */
     val openExchangesDescription: String,
 ) {
     RESTCLIENT(
         "restclient",
-        listOf(ClientOutcome.SUCCESS, ClientOutcome.REJECTED, ClientOutcome.FAILURE, ClientOutcome.TIMEOUT),
         "Exchanges between interceptor entry and response close; a growing baseline means " +
             "responses are not being closed and exchange events are silently lost",
     ),
     WEBCLIENT(
         "webclient",
-        ClientOutcome.entries,
         "Exchanges between filter entry and the response body's terminal signal; a growing " +
             "baseline means response bodies are never consumed or released and exchange events " +
             "are silently lost",
@@ -205,9 +202,9 @@ internal class ClientLoggingMetrics private constructor(
             }
         }
 
-    /** [EVENTS_METER], pre-registered per outcome of this stack's vocabulary. */
+    /** [EVENTS_METER], pre-registered per outcome of the shared vocabulary. */
     private val eventCounters =
-        stack.outcomes.associateWith { outcome ->
+        ClientOutcome.entries.associateWith { outcome ->
             registerOrFallback(EVENTS_METER) { registry ->
                 Counter
                     .builder(EVENTS_METER)
@@ -285,15 +282,11 @@ internal class ClientLoggingMetrics private constructor(
     fun wiringFailure() = failOpenCounters.getValue(FailOpenStage.WIRING).increment()
 
     /**
-     * Counts one EMITTED exchange event under [outcome], which must be one of this stack's pre-registered
-     * [ClientStack.outcomes] - checked, so a vocabulary violation is reported by name instead of as a bare
-     * lookup failure. Guarded: the event is already on the logger when this runs, so a failing host
-     * counter must neither be reported as a lost emission nor disturb the caller.
+     * Counts one EMITTED exchange event under [outcome]. Guarded: the event is already on the logger when
+     * this runs, so a failing host counter must neither be reported as a lost emission nor disturb the
+     * caller.
      */
-    fun eventEmitted(outcome: ClientOutcome) =
-        updateQuietly(EVENTS_METER) {
-            checkNotNull(eventCounters[outcome]) { "outcome ${outcome.tagValue} is not in the ${stack.tagValue} vocabulary" }.increment()
-        }
+    fun eventEmitted(outcome: ClientOutcome) = updateQuietly(EVENTS_METER) { eventCounters.getValue(outcome).increment() }
 
     fun exchangeOpened() {
         openExchanges.incrementAndGet()

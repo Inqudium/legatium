@@ -42,6 +42,7 @@ meters, the fail-open promise and the shared code — is written once, in the
    5. [Timeouts and how they are recognised](#45-timeouts-and-how-they-are-recognised)
    6. [RestTemplate has no URI template](#46-resttemplate-has-no-uri-template)
    7. [Retries yield one line per attempt](#47-retries-yield-one-line-per-attempt)
+   8. [A call its caller abandoned is cancelled](#48-a-call-its-caller-abandoned-is-cancelled)
 5. [Appendix](#5-appendix)
    1. [File map](#51-file-map)
    2. [Related documents](#52-related-documents)
@@ -88,7 +89,7 @@ replaying body cache, no hand-built clients) is
 ### 1.2 The WebClient twin
 
 The module is the **reference implementation** for the WebClient twin: it owns the message text and the
-blocking stack's outcome vocabulary, and the cross-stack contract files — configuration reference, field
+blocking meaning of `cancelled`, and the cross-stack contract files — configuration reference, field
 family and index mapping — live in the repository-shared `/docs`, bound by both builds. The contract and
 the lockstep tests that pin it are
 [Common guide §9.2](../../docs/GUIDE.md#92-the-twin-contract-and-its-lockstep-tests). A host that uses
@@ -137,7 +138,7 @@ five layers:
 | `CapturingClientHttpResponse` | The response the client gets back: delegates, tees the body the application reads, reports a failure of **any** delegate operation (status, headers, body open/read/close, response close), and turns `close()` into the emission point. |
 | `Exchange` | Per-exchange state from entry to emission; the exactly-once guards; the caller's MDC snapshot. |
 | `CallerMdcSnapshot` | The caller's MDC at wiring, own and trace keys excluded, restored around the emission only on another thread than the calling one (ADR-0011). |
-| `ExchangeLogEmitter` | Builds and emits the arrival line and the completion event; resolves level, outcome and cause (timeouts via the shared `Timeouts`); records body sizes; restores the caller's MDC snapshot for a close on another thread, then opens the emission `MdcScope` with trace ownership. |
+| `ExchangeLogEmitter` | Builds and emits the arrival line and the completion event; resolves level, outcome and cause (an abandoned call via the interrupt flag and `Cancellations`, timeouts via the shared `Timeouts`); records body sizes; restores the caller's MDC snapshot for a close on another thread, then opens the emission `MdcScope` with trace ownership. |
 | `BoundedBodyCapture` | The bounded capture target; count-only mode with limit `0`; the response-side read state (`BodyReadState`); single-writer/late-reader visibility via a volatile total. |
 | Shared layer (`legatium-common`, inlined) | `ClientLoggingProperties` / `HeaderLogProperties`, `ClientLogField`, `ClientLoggingMetrics`, `ClientActivation`, `MdcScope`, `Traceparent`, `Timeouts`, the injectable collaborators and the fail-open guards — one implementation for both twins, class by class in [Common guide §9.1](../../docs/GUIDE.md#91-the-shared-classes). |
 
@@ -274,9 +275,10 @@ So the logged status, response headers and captures are final. Two consequences:
    assumption measurable ([§4.3](#43-a-response-that-is-never-closed)); the exactly-once CAS on
    `Exchange.completed` makes a double close harmless.
 
-A call that produces **no response** — connection refused, DNS failure, a timeout before the status line
-— emits right away from the interceptor's catch block: `-> -` in the message, no status field,
-`adapter_outcome=failure` (or `timeout`, [§4.5](#45-timeouts-and-how-they-are-recognised)), the exception
+A call that produces **no response** — connection refused, DNS failure, a timeout before the status line,
+a caller that stopped waiting — emits right away from the interceptor's catch block: `-> -` in the
+message, no status field, `adapter_outcome=failure` (or `timeout`, [§4.5](#45-timeouts-and-how-they-are-recognised),
+or `cancelled` without a cause, [§4.8](#48-a-call-its-caller-abandoned-is-cancelled)), the exception
 attached as the cause. A short **WARN breadcrumb** with the exception's `toString` is logged first on the
 module's own logger (`eu.inqudium.legatium.restclient.logging.ClientRequestLoggingInterceptor`) — not on
 the exchange logger (one event per call is that stream's contract) — and the exception is rethrown
@@ -701,7 +703,7 @@ Everything not listed here behaves exactly as in `legatium-webclient-logging`.
 
 | Concern | This module | WebClient twin |
 |---|---|---|
-| Disposition vocabulary | `success` / `rejected` / `failure` / `timeout` | plus **`cancelled`** — a cancelled subscription (a downstream `timeout()` operator, a `take`, a disposed caller) is the reactive reality a blocking call cannot have |
+| What `cancelled` means | a call that threw while its caller had abandoned it — the thread interrupted (`Future.cancel(true)`, an interrupted caller) or an interrupt in the cause chain ([§4.2](#48-a-call-its-caller-abandoned-is-cancelled), ADR-0015) | a subscription the caller abandoned (a downstream `timeout()` operator, a disposed caller) |
 | Emission point | response **close** | the response **body's terminal signal** |
 | Never-completing exchange | a response the application never closes | a response body nobody subscribes to or releases |
 | Request body | the byte array the client hands the interceptor — complete, captured at wiring **before** the wire call (the field shows what was about to be sent; the size meter records only once a response proves it went out) | teed at the connector's `writeWith` as the inserter writes it |
@@ -733,7 +735,7 @@ meter before it becomes a pool exhaustion.
 
 The status line arrived, then the connection died mid-body (a reset, a read timeout while streaming). The
 tee reports the `IOException` to the exchange and rethrows it unchanged; at close the event is
-`adapter_outcome=failure` (or `timeout`) **with the status that was received** — "200 but failed" is exactly
+`adapter_outcome=failure` (or `timeout`, or `cancelled` when the read failed on an interrupted thread) **with the status that was received** — "200 but failed" is exactly
 what happened, and hiding either half would mislead. The captured prefix of the body is logged as far as
 it flowed.
 
@@ -785,6 +787,34 @@ first attempt's correlation header only if the retrying layer reuses the mutated
 request gets a new id). Dashboards counting calls per peer count attempts; `http.client.requests` does
 the same.
 
+### 4.8 A call its caller abandoned is cancelled
+
+A blocking call is abandoned when its caller stops waiting: a Resilience4j `TimeLimiter` whose budget
+expired cancels the worker running the call with `Future.cancel(true)`, a caller whose own deadline
+expired is interrupted, a `CompletableFuture` cancels through to its worker. The exchange then says
+nothing about the peer, so it is `adapter_outcome=cancelled` at **WARN**, without a cause on the event —
+the disposition the WebClient twin writes for an abandoned subscription
+([ADR-0015](../../docs/adr/ADR-0015-an-abandoned-blocking-call-is-cancelled.md)). The module's WARN
+breadcrumb still names the exception the call threw.
+
+The signal is the thread's **interrupt flag** where the failure reaches the interceptor (the wire call, or
+the body read on the response — a close on another thread keeps it). It is read, never cleared: the
+interrupt belongs to the caller. As a fallback for a flag that was already consumed, the cause chain
+counts an `InterruptedException`, a `ClosedByInterruptException`, the JDK's
+`SocketException("Closed by interrupt")` and Apache's `RequestFailedException("Request aborted")`
+(`Cancellations`). A plain `InterruptedIOException` is not one — read timeouts and Apache's pool lease
+timeout are `InterruptedIOException`s too. When the flag is set, the cancellation wins over a timeout the
+transport reported in the same moment.
+
+How fast an interrupt takes effect depends on the engine and the thread, pinned per engine by the
+connector suites:
+
+| Engine | Virtual thread | Platform thread |
+|---|---|---|
+| JDK `HttpClient`, Jetty, Reactor Netty (wait on a future) | `cancelled` at once | `cancelled` at once |
+| `HttpURLConnection`, Apache HttpComponents 5 (block in a socket read) | `cancelled` at once — the JDK closes the socket | no effect until the answer arrives; the call then logs by its **status** (an answer that arrived is no cancellation), the flag still set |
+| Apache HttpComponents 5, waiting for a pooled connection | `cancelled` | `cancelled` |
+
 Tracing making every call traced, the one-metrics-owner-per-registry rule and the masking fingerprint are
 one behaviour for both twins — [Common guide §7.6](../../docs/GUIDE.md#76-trace-correlation),
 [§7.4](../../docs/GUIDE.md#74-meters) and [§6.2](../../docs/GUIDE.md#62-header-sections); the shared
@@ -806,6 +836,7 @@ legatium-restclient-logging/
 └── src/
     ├── main/kotlin/eu/inqudium/legatium/restclient/logging/
     │   ├── ClientLoggingAutoConfiguration.kt      beans, the two late customizers
+    │   ├── Cancellations.kt                       the cause-chain fallback of the cancelled classification
     │   ├── ClientRequestLoggingInterceptor.kt     the interceptor: activation, wiring, call scope, no-response path
     │   ├── CapturingClientHttpResponse.kt         response wrapper: body tee, failure report for every delegate call, close = emission
     │   ├── Exchange.kt                            per-exchange state and the exactly-once guards
@@ -829,7 +860,7 @@ lists every test with its rationale):
 | `ClientRequestLoggingInterceptorIntegrationTest` | end to end through Boot's `RestClient.Builder` / `RestTemplateBuilder` and the JDK engine against a real HTTP peer: templates, bodies, the wire correlation header, refused connection, read timeout |
 | `ClientRequestLoggingTracingIntegrationTest` | ADR-0002 beside a real Brave bridge: the injected `traceparent`, the log-to-trace join, no correlation header on traced calls, every call traced |
 | Engine suites (`RequestFactoryContract` run as `JdkClientRequestFactoryIntegrationTest`, `HttpComponentsRequestFactoryIntegrationTest`, `JettyRequestFactoryIntegrationTest`, `ReactorNettyRequestFactoryIntegrationTest`, `SimpleRequestFactoryIntegrationTest`) | the engine-agnosticism contract against every request factory Spring ships: the body tee and its complete read state on the engine's own stream, the wire correlation header, the engine's real read and connect timeout types as `timeout` through `RestClient`'s wrapper (the connect timeout provoked by a loopback tarpit, `Tarpit`), a refused connection as the `failure` control, and per engine whether a gzip answer reaches application and log decoded (JDK client via Spring's compression support, Apache HC5, Jetty) or as sent (Reactor Netty, `HttpURLConnection`) |
-| Lockstep/contract tests (`TwinContractTest`, `UriTemplateAttributeTest`) | pin the message text, this stack's outcome vocabulary and the mirrored `RestClient` attribute; the shared literals (`SharedContractTest`), the field/template and configuration/reference lockstep (`ClientLogFieldTest`, `ClientLoggingReferenceConfigTest`, `ClientLoggingPropertiesTest`) and the metrics owner's registration behaviour (`ClientLoggingMetricsTest`) live once in legatium-common; the shaded jar itself is exercised by the standalone `consumer-smoke/` build |
+| Lockstep/contract tests (`TwinContractTest`, `UriTemplateAttributeTest`) | pin the message text, the line of an abandoned exchange, the pre-registered outcomes and the mirrored `RestClient` attribute; the shared literals (`SharedContractTest`), the field/template and configuration/reference lockstep (`ClientLogFieldTest`, `ClientLoggingReferenceConfigTest`, `ClientLoggingPropertiesTest`) and the metrics owner's registration behaviour (`ClientLoggingMetricsTest`) live once in legatium-common; the shaded jar itself is exercised by the standalone `consumer-smoke/` build |
 
 Fuzzing of the shared `Traceparent` parser and header masking lives in legatium-common; the bounded
 capture's fuzz target lives here.

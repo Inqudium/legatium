@@ -18,6 +18,12 @@ import org.springframework.web.client.HttpServerErrorException
 import org.springframework.web.client.ResourceAccessException
 import org.springframework.web.client.RestClient
 import java.time.Duration
+import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * The engine-agnosticism contract of the blocking twin, run once per request factory Spring ships (the
@@ -58,6 +64,14 @@ abstract class RequestFactoryContract : PeerIntegrationSuite() {
      * - the one observable difference between the engines this contract pins instead of hiding.
      */
     protected abstract val decompressesTransparently: Boolean
+
+    /**
+     * Whether an interrupt reaches this engine's blocking wait on a PLATFORM thread. An engine that
+     * waits on a future (the JDK client, Jetty, Reactor Netty) wakes up on it; one that blocks in a
+     * socket read (`HttpURLConnection`, Apache's classic client) does not - the JDK makes socket I/O
+     * interruptible on virtual threads only - and finishes the exchange with the peer's answer.
+     */
+    protected abstract val interruptibleOnPlatformThreads: Boolean
 
     /** Boot's prototype builder - a fresh one per test instance; an engine suite's own scenario builds its client on it too. */
     @Autowired
@@ -280,6 +294,143 @@ abstract class RequestFactoryContract : PeerIntegrationSuite() {
         // The cause type is engine-internal detail the contract does not promise (CONTRIBUTING.md,
         // test rules): the classification is what is pinned, the engine's exception only that one exists.
         assertThat(event.throwableProxy).isNotNull()
+    }
+
+    /** What a call on its own thread ended with: the exception it threw, and its interrupt flag right after. */
+    private class AbandonedCall(
+        val thrown: Throwable?,
+        val interruptedAfter: Boolean,
+    )
+
+    /** Blocks until the peer has the request - the call is then in flight, waiting for `/slow`'s answer. */
+    private fun awaitRequestAtPeer() {
+        val deadline = System.nanoTime() + GENEROUS.toNanos()
+        while (peer.received.isEmpty()) {
+            check(System.nanoTime() < deadline) { "the request never reached the peer" }
+            Thread.sleep(5)
+        }
+    }
+
+    /** A `/slow` call on a thread of [threads], interrupted once the request reached the peer. */
+    private fun interruptedMidCall(threads: Thread.Builder): AbandonedCall {
+        val client = client(peer.baseUrl)
+        val thrown = AtomicReference<Throwable?>()
+        val interruptedAfter = AtomicBoolean()
+        val worker =
+            threads.start {
+                thrown.set(
+                    catchThrowable {
+                        client
+                            .get()
+                            .uri("/slow")
+                            .retrieve()
+                            .body(String::class.java)
+                    },
+                )
+                interruptedAfter.set(Thread.currentThread().isInterrupted)
+            }
+        awaitRequestAtPeer()
+        worker.interrupt()
+        assertThat(worker.join(GENEROUS)).describedAs("the call returned").isTrue()
+        return AbandonedCall(thrown.get(), interruptedAfter.get())
+    }
+
+    private fun assertCancelled(call: AbandonedCall) {
+        // Only THAT the call failed: what an engine throws on an interrupt is engine-internal (CONTRIBUTING.md,
+        // test rules) - Apache's classic client even retries the socket the interrupt closed, and the
+        // retry's pool lease throws a raw CancellationException past RestClient's wrapper.
+        assertThat(call.thrown).describedAs("the call failed").isNotNull()
+        assertThat(call.interruptedAfter).describedAs("interrupt flag after the emission").isTrue()
+        val event = log.events.single()
+        assertThat(event.level).describedAs("event for %s", call.thrown).isEqualTo(Level.WARN)
+        assertThat(event.formattedMessage).startsWith("Adapter http exchange GET ${peer.baseUrl}/slow -> - [")
+        assertThat(keyValues(event)).containsEntry("adapter_outcome", "cancelled").doesNotContainKey("adapter_response_status_code")
+        assertThat(event.throwableProxy).isNull()
+    }
+
+    @Test
+    fun `should log a caller interrupted on a virtual thread as WARN cancelled through this request factory`() {
+        // What is tested: the classification against what this engine really does when the caller's
+        //   virtual thread is interrupted mid-call - the JDK closes the socket ("Closed by interrupt"),
+        //   or the engine stops waiting on its future and rethrows the interrupt wrapped.
+        // Success criteria: the call fails; exactly one event, WARN, cancelled, `-> -`, no status, no
+        //   throwable; the thread's interrupt flag is still set after the emission.
+        // Why it matters: a caller that stopped waiting is no failure of the peer (ADR-0015), and the
+        //   interrupt is the caller's - the interceptor must leave it for the caller's own handling.
+        // Given/When
+        val call = interruptedMidCall(Thread.ofVirtual())
+
+        // Then
+        assertCancelled(call)
+    }
+
+    @Test
+    fun `should log a caller interrupted on a platform thread the way this request factory honours it`() {
+        // What is tested: the same interrupt on a PLATFORM thread, where only an engine that waits on a
+        //   future wakes up ([interruptibleOnPlatformThreads]).
+        // Success criteria: an interruptible engine logs exactly what the virtual-thread case logs; one
+        //   that blocks in a socket read finishes with the peer's answer - INFO success with status 200 -
+        //   and the interrupt flag is still set either way.
+        // Why it matters: the outcome must report what happened to the exchange - an answer that arrived
+        //   is a success, however impatient the caller became meanwhile.
+        // Given/When
+        val call = interruptedMidCall(Thread.ofPlatform())
+
+        // Then
+        if (interruptibleOnPlatformThreads) {
+            assertCancelled(call)
+        } else {
+            assertThat(call.thrown).isNull()
+            assertThat(call.interruptedAfter).describedAs("interrupt flag after the emission").isTrue()
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.INFO)
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "success").containsEntry("adapter_response_status_code", 200)
+        }
+    }
+
+    @Test
+    fun `should log a worker cancelled through its future as WARN cancelled through this request factory`() {
+        // What is tested: the TimeLimiter shape - the call runs on a worker while the caller waits on a
+        //   Future; the caller's budget expires and it cancels the future with cancel(true), which
+        //   interrupts the worker (a virtual one, so every engine is interruptible).
+        // Success criteria: exactly one event, WARN, cancelled, `-> -`, no status, no throwable; the
+        //   worker's interrupt flag is still set after the emission.
+        // Why it matters: under load this is the most frequent abandoned exchange, and it read as an
+        //   ERROR failure before - filling the level alerting fires on with "the caller left".
+        // Given
+        val client = client(peer.baseUrl)
+        val thrown = AtomicReference<Throwable?>()
+        val interruptedAfter = AtomicBoolean()
+        val done = CountDownLatch(1)
+        Executors.newVirtualThreadPerTaskExecutor().use { workers ->
+            val future =
+                workers.submit(
+                    Callable {
+                        try {
+                            thrown.set(
+                                catchThrowable {
+                                    client
+                                        .get()
+                                        .uri("/slow")
+                                        .retrieve()
+                                        .body(String::class.java)
+                                },
+                            )
+                            interruptedAfter.set(Thread.currentThread().isInterrupted)
+                        } finally {
+                            done.countDown()
+                        }
+                    },
+                )
+            awaitRequestAtPeer()
+
+            // When: the caller's budget expires
+            future.cancel(true)
+            assertThat(done.await(GENEROUS.toMillis(), TimeUnit.MILLISECONDS)).describedAs("the worker returned").isTrue()
+        }
+
+        // Then
+        assertCancelled(AbandonedCall(thrown.get(), interruptedAfter.get()))
     }
 
     companion object {

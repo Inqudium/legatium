@@ -8,7 +8,7 @@ import ch.qos.logback.core.spi.FilterReply
 import eu.inqudium.legatium.common.CapturedLogger
 import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
-import eu.inqudium.legatium.common.ClientStack
+import eu.inqudium.legatium.common.ClientOutcome
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.NanoTimeSource
 import eu.inqudium.legatium.common.count
@@ -54,8 +54,8 @@ class ClientRequestLoggingMetricsTest {
     private val filter = filterWith(properties, ticker, registry)
     private val log = CapturedLogger(properties.loggerName)
 
-    /** The tag values of this stack's outcome vocabulary, pinned by `TwinContractTest`. */
-    private val outcomes = ClientStack.WEBCLIENT.outcomes.map { it.tagValue }
+    /** The tag values of the outcome vocabulary, pinned by `TwinContractTest`. */
+    private val outcomes = ClientOutcome.entries.map { it.tagValue }
 
     @AfterEach
     fun tearDown() {

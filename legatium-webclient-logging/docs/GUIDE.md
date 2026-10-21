@@ -90,8 +90,7 @@ the emission scope and the message rather than a call-wide MDC is
 ### 1.2 Relation to the RestClient twin
 
 The module is the **WebClient twin** of `legatium-restclient-logging`: the RestClient module is the
-reference implementation, this module owns the message text and the reactive stack's outcome vocabulary
-(`cancelled` on top), and the cross-stack contract files — configuration reference, field family and
+reference implementation, this module owns the message text and the reactive meaning of `cancelled`, and the cross-stack contract files — configuration reference, field family and
 index mapping — live in the repository-shared `/docs`, bound by both builds. The contract and the
 lockstep tests that pin it are
 [Common guide §9.2](../../docs/GUIDE.md#92-the-twin-contract-and-its-lockstep-tests); what this
@@ -887,7 +886,7 @@ Everything not listed here behaves exactly as in `legatium-restclient-logging`.
 
 | Concern | RestClient twin | This module |
 |---|---|---|
-| Disposition vocabulary | `success` / `rejected` / `failure` / `timeout` | plus **`cancelled`** |
+| What `cancelled` means | a call that threw while its caller had abandoned it (an interrupted thread, ADR-0015) | a subscription the caller abandoned |
 | Emission point | response `close()` | the response body's terminal signal; for a call without a response, the response `Mono`'s error/cancel signal |
 | Never-completing exchange | a response never closed | a body never subscribed nor released |
 | Request body | the byte array the client hands over | teed at the connector's `writeWith` through a wrapped inserter |
@@ -1096,7 +1095,7 @@ lists every test with its rationale):
 | `ClientRequestLoggingFilterIntegrationTest` | end to end through Boot's `WebClient.Builder` and Reactor Netty against a real HTTP peer: templates, bodies on pooled buffers, the wire correlation header, refused connection, the connector's response timeout, a downstream timeout operator |
 | Connector suites (`ConnectorContract` run as `ReactorNettyConnectorIntegrationTest`, `JdkHttpClientConnectorIntegrationTest`, `JettyConnectorIntegrationTest`, `HttpComponentsConnectorIntegrationTest`) | the connector-agnosticism contract against every connector Spring ships: the body tees on the engine's own buffers and the wire correlation header, the engine's real response and connect timeout types classified as `timeout` (the connect timeout provoked by a loopback tarpit, `Tarpit`), a refused connection as the `failure` control |
 | `ClientRequestLoggingTracingIntegrationTest` | ADR-0002 beside a real Brave bridge: the injected `traceparent`, the log-to-trace join, no correlation header on traced calls, every call traced |
-| Lockstep/contract tests (`TwinContractTest`, `UriTemplateAttributeTest`) | pin the message text, this stack's outcome vocabulary and the mirrored `WebClient` attribute; the shared literals (`SharedContractTest`), the field/template and configuration/reference lockstep (`ClientLogFieldTest`, `ClientLoggingReferenceConfigTest`, `ClientLoggingPropertiesTest`) and the metrics owner's registration behaviour (`ClientLoggingMetricsTest`) live once in legatium-common; the shaded jar itself is exercised by the standalone `consumer-smoke/` build |
+| Lockstep/contract tests (`TwinContractTest`, `UriTemplateAttributeTest`) | pin the message text, the line of an abandoned exchange, the pre-registered outcomes and the mirrored `WebClient` attribute; the shared literals (`SharedContractTest`), the field/template and configuration/reference lockstep (`ClientLogFieldTest`, `ClientLoggingReferenceConfigTest`, `ClientLoggingPropertiesTest`) and the metrics owner's registration behaviour (`ClientLoggingMetricsTest`) live once in legatium-common; the shaded jar itself is exercised by the standalone `consumer-smoke/` build |
 
 Fuzzing of the shared `Traceparent` parser and header masking lives in legatium-common; the bounded
 capture's fuzz target lives in the RestClient twin (the reactive capture adds a lock and a freeze around

@@ -51,13 +51,15 @@ import org.springframework.http.client.ClientHttpResponse
  *
  * The exchange event is emitted when the response is CLOSED (see [CapturingClientHttpResponse]) - after
  * the client read the body through its converters, which is when status, headers, body and duration are
- * final. A call that produces no response (connection refused, a timeout before the status line) emits
- * right away with `adapter_outcome=failure` or `timeout` and no status; the exception is rethrown
- * UNCHANGED - this interceptor adds visibility only, error semantics belong to the client.
+ * final. A call that produces no response (connection refused, a timeout before the status line, a
+ * caller that stopped waiting) emits right away with `adapter_outcome=failure`, `timeout` or
+ * `cancelled` (ADR-0015) and no status; the exception is rethrown UNCHANGED - this interceptor adds
+ * visibility only, error semantics belong to the client, and the thread's interrupt status is read,
+ * never cleared.
  *
  * When the call throws, a short WARN breadcrumb is additionally logged on the module's OWN logger, so
  * the failure is visible with its cause the moment it happens, while the exchange logger keeps its
- * one-event-per-exchange contract (the full ERROR event follows in the same breath). This is a
+ * one-event-per-exchange contract (the full event follows in the same breath). This is a
  * deliberate difference from the reactive twin, which reports a failed call through the exchange event
  * alone.
  *
@@ -146,13 +148,13 @@ class ClientRequestLoggingInterceptor
                 return CapturingClientHttpResponse(
                     delegate = response,
                     capture = exchange.responseCapture,
-                    onFailure = { e -> exchange.failure = e },
+                    onFailure = exchange::recordFailure,
                     onClose = { complete(exchange) },
                 )
             } catch (e: Exception) {
                 // No response: the exchange ends here. Breadcrumb first, then the event, then the
                 // unchanged rethrow - IOException for the client to map, or whatever else the engine threw.
-                exchange.failure = e
+                exchange.recordFailure(e)
                 breadcrumb(exchange, e)
                 complete(exchange)
                 throw e

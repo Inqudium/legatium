@@ -7,8 +7,7 @@ import kotlin.reflect.KClass
  * The structured log fields of an OUTBOUND HTTP exchange: their wire names, and the one rendering each
  * name is allowed to carry. ONE enum for both twins (ADR-0003): the family is a cross-stack contract -
  * the RestClient interceptor and the WebClient filter emit the same fields under the same names with
- * the same shapes; only the VALUE vocabulary of [OUTCOME] is wider on the reactive stack
- * (`cancelled`), which is a property of the value, not of the field.
+ * the same shapes, and the same VALUE vocabulary of [OUTCOME].
  *
  * These names are a CONTRACT with the log index, not local identifiers: renaming a constant below is free,
  * changing a [wireName] breaks every dashboard, saved search and alert rule keying on it. The mapping is
@@ -42,9 +41,9 @@ internal enum class ClientLogField(
     private val type: KClass<out Any>,
 ) {
     /**
-     * ELK: `keyword`, index true, doc_values ON - aggregate. The [ClientOutcome] values - `cancelled` on
-     * the reactive stack only (a cancelled subscription is the reactive reality a blocking call cannot
-     * have) - and the field a dashboard splits by - deliberately NOT the log level: a 5xx answer logs at
+     * ELK: `keyword`, index true, doc_values ON - aggregate. The [ClientOutcome] values - on both stacks,
+     * `cancelled` included (an abandoned subscription, an interrupted blocking caller; ADR-0015) - and
+     * the field a dashboard splits by - deliberately NOT the log level: a 5xx answer logs at
      * WARN while a call that threw logs at ERROR, yet both carry `failure`; a 404 and a 401 both carry
      * `rejected` at INFO resp. WARN. Panels key off this field, the level only carries severity.
      */

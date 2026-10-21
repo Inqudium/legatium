@@ -13,7 +13,7 @@ package eu.inqudium.legatium.common
  *
  * "Failed" is every outcome but `success`: `rejected` (a 4xx - the peer answered, the request was
  * wrong, and that is exactly the case a body explains; ADR-0012), `failure` (a 5xx or a thrown call),
- * `timeout`, on the WebClient twin `cancelled`. A slow but healthy call stays `success` and logs no
+ * `timeout`, `cancelled`. A slow but healthy call stays `success` and logs no
  * body.
  */
 enum class BodyLogMode {

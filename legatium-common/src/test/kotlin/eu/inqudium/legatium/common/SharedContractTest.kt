@@ -8,8 +8,8 @@ import org.junit.jupiter.api.Test
  * twins (ADR-0003): meter names and fallback tag values, the response-body read states, the MDC keys and
  * the outcome vocabulary. Dashboards, alerts and log joins key on these strings; a rename here would
  * split every one of them across both twins silently - the pin turns it into a build failure. Spelled
- * out as literals, not derived from the constants, on purpose. The per-stack facts - which outcomes a
- * stack pre-registers, its `client` tag, the message text - stay pinned in each twin's `TwinContractTest`;
+ * out as literals, not derived from the constants, on purpose. The per-stack facts - its `client` tag,
+ * the message text - stay pinned in each twin's `TwinContractTest`;
  * the masking fingerprint is pinned in `HeaderValueMaskerTest`.
  */
 class SharedContractTest {
@@ -81,8 +81,8 @@ class SharedContractTest {
 
     @Test
     fun `should pin the outcome vocabulary`() {
-        // What is tested: the tagValue literals of ClientOutcome - the four both stacks share and the
-        //   reactive cancelled - and the size of the enum.
+        // What is tested: the tagValue literals of ClientOutcome - the vocabulary both stacks log and
+        //   pre-register since the blocking twin logs cancelled too (ADR-0015) - and the size of the enum.
         // Success criteria: the five literals match the values dashboards filter on; no sixth value.
         // Why it matters: adapter_outcome and the outcome tag of adapter.logging.events are the closed
         //   vocabulary every alert keys on; a renamed value would silently zero an alert.

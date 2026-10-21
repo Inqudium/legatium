@@ -19,9 +19,8 @@ sibling project [Limesium](https://github.com/Inqudium/limesium) records the
 
 - **Exactly one line per call.** Emitted when the exchange is truly over — the
   response closed (RestClient) or its body terminated (WebClient) — so status,
-  headers, body and duration are final; the outcome (`success` / `failure` /
-  `timeout`, plus `cancelled` on the reactive stack) is decoupled from the log
-  level.
+  headers, body and duration are final; the outcome (`success` / `rejected` /
+  `failure` / `timeout` / `cancelled`) is decoupled from the log level.
 - **A stable field contract.** The `adapter_*` wire names are a contract with
   the log index: each field owns its JSON shape, a badly typed value drops that
   field with a warning but never the event, and the Elasticsearch component
