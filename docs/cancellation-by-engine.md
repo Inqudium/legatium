@@ -1,9 +1,17 @@
-# Cancellation by engine
+# Cancellation by engine (RestClient / RestTemplate)
 
-How each HTTP client implementation reacts when the caller of a call stops waiting, and what
-legatium logs for it. Read this before you put a `TimeLimiter`, a deadline or a cancellable future in
-front of a blocking client: the engine decides whether the cancellation takes effect, what the caller
-gets thrown, and whether a thread stays tied up.
+How each HTTP client implementation behind a `RestClient` or `RestTemplate` reacts when the caller of
+a call stops waiting, and what legatium logs for it. Read this before you put a `TimeLimiter`, a
+deadline or a cancellable future in front of a blocking client: the engine decides whether the
+cancellation takes effect, what the caller gets thrown, and whether a thread stays tied up.
+
+**Scope: the blocking twin only** (`legatium-restclient-logging`). Both blocking clients go through
+the same `ClientHttpRequestInterceptor` and the same `ClientHttpRequestFactory` engines, so everything
+here applies to `RestClient` and `RestTemplate` alike. The reactive twin (`legatium-webclient-logging`)
+is not affected: a `WebClient` call blocks no thread and is cancelled by cancelling its subscription,
+the same signal on every connector. How it logs that is in the
+[WebClient guide §4.2](https://github.com/Inqudium/legatium/blob/main/legatium-webclient-logging/docs/GUIDE.md#42-cancellation-and-the-missing-status);
+what each reactive connector does with its connection on a cancel is not covered by the suites.
 
 The classification rule itself is
 [ADR-0015](adr/ADR-0015-an-abandoned-blocking-call-is-cancelled.md). The short version is in the
@@ -12,7 +20,7 @@ Everything on this page about the blocking engines is pinned by the connector su
 (`RequestFactoryContract` and its six subclasses, `HttpComponentsRequestFactoryIntegrationTest`,
 `HttpClient4RequestFactoryIntegrationTest`). It
 was observed on JDK 26 with Spring Boot 4.1.1 (Spring Framework 7.0.9), Apache HttpClient 5.6.4,
-Jetty 12.1.12 and Reactor Netty 1.3.7.
+Apache HttpClient 4.5.14, Jetty 12.1.12 and Reactor Netty 1.3.7.
 
 ---
 
@@ -105,8 +113,9 @@ connect timeout `org.apache.http.conn.ConnectTimeoutException`, and the pool lea
 `Timeouts` matches the `ConnectTimeoutException` family by name, as it does HttpClient 5's
 `ConnectionRequestTimeoutException`.
 
-**The reactive twin.** A `WebClient` call is cancelled by cancelling its subscription, the same way on
-every connector. The engine differences above do not apply there; the reactive rules (a cancel from
+**The reactive twin.** Outside the scope of this page (see the introduction): a `WebClient` call is
+cancelled by cancelling its subscription, the same way on every connector. The engine differences above
+do not apply there; the reactive rules (a cancel from
 within the consumer's own delivery is `success`, from anywhere else `cancelled`) are in the
 [WebClient guide §4.2](https://github.com/Inqudium/legatium/blob/main/legatium-webclient-logging/docs/GUIDE.md#42-cancellation-and-the-missing-status).
 

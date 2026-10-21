@@ -17,9 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Future.cancel(true)` and on an interrupted pool lease. `docs/cancellation-by-engine.md` gains the
   engine (§2.3, rank 5 of §5). httpclient 4.5.14 is test-scoped in `legatium-restclient-logging` and
   `legatium-common`; neither jar depends on it.
-- Docs: a site page **Cancellation by engine** (`docs/cancellation-by-engine.md`) on how each
-  request factory Spring ships reacts when the caller abandons a blocking call: virtual against
-  platform threads, the exception each engine raises and the caller gets thrown (Apache's raw
+- Docs: a site page **Cancellation by engine (RestClient / RestTemplate)**
+  (`docs/cancellation-by-engine.md`) on how each request factory Spring ships reacts when the
+  caller abandons a blocking call - the blocking twin only, the reactive twin is not affected:
+  virtual against platform threads, the exception each engine raises and the caller gets thrown (Apache's raw
   `CancellationException` after its internal retry on a virtual thread), the line legatium writes,
   and the operating consequences - a `TimeLimiter` on platform threads does not free a worker blocked
   in `HttpURLConnection` or Apache's socket read. Linked from the Common guide §7.3 and the RestClient
