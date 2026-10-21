@@ -1,16 +1,22 @@
 package eu.inqudium.legatium.restclient.logging
 
+import ch.qos.logback.classic.Level
 import eu.inqudium.legatium.common.CapturedLogger
+import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.ClientStack
+import eu.inqudium.legatium.common.keyValues
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.Test
+import java.net.SocketException
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Literal pins of the twin contract this stack OWNS: the outcome vocabulary it pre-registers and the
- * message text of the arrival and exchange lines, which its own emitter renders. The contracts shared
+ * Literal pins of the twin contract this stack OWNS: its client tag, the disposition it writes for an
+ * exchange the caller abandoned, and the message text of the arrival and exchange lines, which its own
+ * emitter renders. The contracts shared
  * with the reactive twin - meter names, MDC keys, read states, the outcome literals, the masking
  * fingerprint - live once in legatium-common and are pinned there (`SharedContractTest`,
  * `HeaderValueMaskerTest`); the packaging of the shared classes into this jar is verified by the
@@ -19,15 +25,57 @@ import java.util.concurrent.atomic.AtomicLong
 class TwinContractTest {
     @Test
     fun `should pin this stack's client tag and outcome vocabulary`() {
-        // What is tested: the ClientStack.RESTCLIENT facts the shared metrics owner is parameterised
-        //   with - the client tag of the gauge and the outcomes pre-registered on the events counter.
-        // Success criteria: client=restclient, and exactly success, rejected, failure and timeout in
-        //   this order; cancelled belongs to the reactive twin alone.
+        // What is tested: the ClientStack.RESTCLIENT fact the shared metrics owner is parameterised with
+        //   - the client tag of the gauge - and the outcomes the owner pre-registers on the events counter.
+        // Success criteria: client=restclient, and exactly success, rejected, failure, timeout and
+        //   cancelled - the reactive twin's vocabulary, since this stack logs cancelled too (ADR-0015).
         // Why it matters: alerts on adapter.logging.events{outcome=...} for this stack must find every
-        //   value at zero from the start, and none the blocking stack can never produce.
-        // Given/When/Then
+        //   value at zero from the start, cancelled included.
+        // Given
+        val registry = SimpleMeterRegistry()
+
+        // When
+        ClientLoggingMetrics.forRegistry(registry, ClientStack.RESTCLIENT)
+
+        // Then
         assertThat(ClientStack.RESTCLIENT.tagValue).isEqualTo("restclient")
-        assertThat(ClientStack.RESTCLIENT.outcomes.map { it.tagValue }).containsExactly("success", "rejected", "failure", "timeout")
+        assertThat(registry.get(ClientLoggingMetrics.EVENTS_METER).counters().map { it.id.getTag("outcome") })
+            .containsExactlyInAnyOrder("success", "rejected", "failure", "timeout", "cancelled")
+    }
+
+    @Test
+    fun `should log an exchange the caller abandoned as WARN cancelled without a cause`() {
+        // What is tested: the disposition half of the twin contract for "the caller abandoned the
+        //   exchange" - here a caller interrupted while the wire call blocked, which the JDK answers
+        //   by closing the socket.
+        // Success criteria: exactly one event, WARN, adapter_outcome=cancelled, `-> -`, no status, no
+        //   throwable - literally what the reactive twin writes for a cancelled subscription.
+        // Why it matters: an alert keyed on adapter_outcome == "cancelled" must fire for both twins,
+        //   and neither may file the caller's departure under ERROR (ADR-0015).
+        // Given
+        val properties = ClientLoggingProperties(loggerName = "adapter-http-exchange-twin-cancel-test")
+        val interceptor = interceptorWith(properties, AtomicLong())
+        val log = CapturedLogger(properties.loggerName)
+        try {
+            // When: the wire call fails on an interrupted thread; the flag is this test's to clear
+            catchThrowable {
+                interceptor.intercept(request(uri = "https://api.example.com/things"), ByteArray(0)) { _, _ ->
+                    Thread.currentThread().interrupt()
+                    throw SocketException("Closed by interrupt")
+                }
+            }
+            Thread.interrupted()
+
+            // Then
+            val event = log.events.single()
+            assertThat(event.level).isEqualTo(Level.WARN)
+            assertThat(event.formattedMessage).isEqualTo("Adapter http exchange GET https://api.example.com/things -> - [adapter_request_id=generated-42]")
+            assertThat(keyValues(event)).containsEntry("adapter_outcome", "cancelled").doesNotContainKey("adapter_response_status_code")
+            assertThat(event.throwableProxy).isNull()
+        } finally {
+            Thread.interrupted()
+            log.detach()
+        }
     }
 
     @Test

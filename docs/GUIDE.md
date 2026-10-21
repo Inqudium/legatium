@@ -431,7 +431,7 @@ measured — independent of each other:
 
 **`on-failure` is the volume switch** ([ADR-0006](adr/ADR-0006-bodies-logged-by-outcome.md)).
 `always` means every body of every call; what is nearly always wanted is bodies for the calls that went
-wrong — `rejected`, `failure`, `timeout`, on the reactive stack `cancelled` — which cuts the volume by
+wrong — `rejected`, `failure`, `timeout`, `cancelled` — which cuts the volume by
 orders of magnitude and hits exactly the lines a body is wanted for. The response side decides at
 emission, when the outcome is final. The request body flows before the outcome is known, so `on-failure`
 captures it exactly like `always` does (bounded by `max-body-bytes`) and discards it for a success: the
@@ -770,7 +770,7 @@ component template; `ClientLogFieldTest` in `legatium-common` keeps the shared e
 
 | Field | Type | Index | doc_values | When present | Notes |
 |---|---|---|---|---|---|
-| `adapter_outcome` | keyword | yes | on | always | `success` / `rejected` / `failure` / `timeout`, plus `cancelled` on the reactive stack — the field dashboards split by, naming who is responsible ([§7.3](#73-levels-and-outcomes)); decoupled from the level |
+| `adapter_outcome` | keyword | yes | on | always | `success` / `rejected` / `failure` / `timeout` / `cancelled` — the field dashboards split by, naming who is responsible ([§7.3](#73-levels-and-outcomes)); decoupled from the level |
 | `adapter_duration_ms` | long | yes | on | always | from the injected monotonic source; until response close (RestClient — after the converter's read) resp. until the body's terminal signal was handed on to the consumer (WebClient — after the decoder's synchronous work in it) |
 | `adapter_request_method` | keyword | yes | on | always | |
 | `adapter_response_status_code` | short | yes | on | when a response arrived | absent for a refused connection, a timeout before the status line, or a cancellation before the response (`-> -`) |
@@ -826,9 +826,10 @@ Resolved in this order in each twin's `ExchangeLogEmitter`:
 
 | Condition | Level | `adapter_outcome` |
 |---|---|---|
+| blocking stack: the call threw while its thread was interrupted, or with an interrupt in its cause chain — the caller abandoned it (a `TimeLimiter` cancelling its worker with `Future.cancel(true)`, an interrupted caller); wins over a timeout reported in the same moment, no cause on the event ([ADR-0015](adr/ADR-0015-an-abandoned-blocking-call-is-cancelled.md)) | `WARN` | `cancelled` |
 | the call threw or errored and a timeout is in the cause chain (or among the suppressed exceptions) | `WARN` | `timeout` |
 | the call threw or errored (no response), or the body read threw or errored | `ERROR` | `failure` |
-| the subscription was abandoned by the caller — reactive stack only (a timeout operator, a disposed caller, a disconnect; a consumer that stops reading the body because it has read enough is `success`) | `WARN` | `cancelled` |
+| reactive stack: the subscription was abandoned by the caller (a timeout operator, a disposed caller, a disconnect; a consumer that stops reading the body because it has read enough is `success`) | `WARN` | `cancelled` |
 | status ≥ 500 without an exception (the peer answered; the application decides) | `WARN` | `failure` |
 | status 401, 403, 408 or 429 without an exception (the peer refuses *us*: identity, the connection, quota) | `WARN` | `rejected` |
 | any other 4xx without an exception (the request was refused; the application handles it) | `INFO` | `rejected` |
@@ -858,7 +859,7 @@ deliberately left to `http.client.requests` and the log fields.
 | Meter | Type | Tags | Meaning |
 |---|---|---|---|
 | `adapter.logging.failopen` | counter | `stage` = `emission` \| `arrival` \| `wiring` | Logging failures the fail-open path swallowed. `emission`: an exchange event was **lost**. `arrival`: a start line was lost. `wiring`: bookkeeping failed (pass-through degradation, a lost sample or counter) — the event usually still follows. A lost log line cannot report itself through the same pipeline; this counter is the independent channel. |
-| `adapter.logging.events` | counter | `outcome` = `success` \| `rejected` \| `failure` \| `timeout` (\| `cancelled` on the reactive stack) | Exchange events actually **emitted** on the exchange logger — after the level gate, arrival lines excluded. The reconciliation ground truth against the log index. |
+| `adapter.logging.events` | counter | `outcome` = `success` \| `rejected` \| `failure` \| `timeout` \| `cancelled` | Exchange events actually **emitted** on the exchange logger — after the level gate, arrival lines excluded. The reconciliation ground truth against the log index. |
 | `adapter.logging.exchanges.open` | gauge | `client` = `restclient` \| `webclient` | Exchanges between entry (wiring) and the exactly-once completion — response close, resp. the body's terminal signal. Hovers near the in-flight call count in health. Tagged per twin so that a host carrying both twins gets two gauges instead of Micrometer silently keeping the first one registered; sum over `client` for the total. |
 | `adapter.logging.correlation.id` | counter | `source` = `trace` \| `header` \| `generated` | Origin of each call's request id (ADR-0002). A re-entry by a retrying outer interceptor with the id generated on attempt 1 keeps counting `generated`. |
 | `adapter.response.body.read` | counter | `uri` = template with a placeholder, `UNKNOWN` otherwise; `host`; `name` = the client's name, `UNNAMED` otherwise ([§7.7](#77-naming-a-client)); `state` = `unread` \| `partial` \| `complete` | How far the application **consumed** the response body, opt-in via `measure-response-body-size`. Recorded once per call that received a response. `unread` = the response carried a body and the application never opened it — the discarded-payload share the counter exists to show (blocking stack: `toBodilessEntity()`, a `ResponseEntity<Void>`). `partial` = consumption started but the end of the body was never observed (a converter that stopped early, an exception mid-read, a consumer that stopped reading; on the reactive stack also Spring's body skip for `bodyToMono(Void.class)`). `complete` = the end was observed — or the answer carried no body at all (1xx, 204, 304, `Content-Length: 0`, the answer to a `HEAD`): nothing to consume, nothing discarded, counted `complete` on **both** stacks so a route of deletes does not read as discarded payload. On the blocking stack the end is observed either as the EOF or as the byte count reaching a trustworthy declared `Content-Length` (none with a `Content-Encoding`), because Spring's `ByteArrayHttpMessageConverter` reads exactly that many bytes and never asks for the EOF. The reactive stack's `toBodilessEntity()` **releases** the body — subscribes and drains it through the tee — and therefore counts `complete` with its bytes on the size sample; a body nobody subscribes to is never counted (the gauge shows it). The seam observes what flows, not why: read the `unread`/`partial` share per route, against how that route's client is written. Created lazily per tag set on first use. |
@@ -908,7 +909,7 @@ The meters are designed to cover each other's blind spots:
 | Are exchange events being lost **silently** (nothing threw; a response was never closed, a body never consumed)? | `exchanges.open` baseline grows monotonically instead of returning towards 0 |
 | Is the **log pipeline** (appender, broker, index) losing events? | `sum(adapter.logging.events)` over a window ≠ count of indexed `adapter-http-exchange` documents for the same window |
 | Did the application stop propagating identity onto its calls? | the `generated` share of `correlation.id` rises (in a host with tracing configured it is zero by construction — [§7.6](#76-trace-correlation)) |
-| Are callers abandoning their own calls (operator timeouts, disconnects)? — reactive stack | `events{outcome=cancelled}` rises while `timeout` does not |
+| Are callers abandoning their own calls (operator timeouts, `TimeLimiter` budgets, interrupted callers, disconnects)? | `events{outcome=cancelled}` rises while `timeout` does not |
 | Is a peer refusing our requests (credentials, quota, a payload contract that changed)? | the `rejected` share of `events` rises; the log index splits it by `adapter_response_status_code` and `adapter_url_host` |
 | Is a call site discarding the payload it paid for? | the `unread` or `partial` share of `response.body.read{uri=...,host=...}` rises |
 | Are payloads growing beyond what the log captures? | `body.size` percentiles vs. `max-body-bytes` |
@@ -923,7 +924,7 @@ increase(adapter_logging_failopen_total{stage="emission"}[5m]) > 0
 # silently stuck exchanges (liveness) - tune the bound to the service's outbound concurrency
 min_over_time(adapter_logging_exchanges_open[15m]) > 50
 
-# callers tearing down their own calls (reactive stack)
+# callers tearing down their own calls
 sum(rate(adapter_logging_events_total{outcome="cancelled"}[10m])) > 0
 
 # timeouts per peer (from the log index, not a meter): adapter_outcome=timeout by adapter_url_host

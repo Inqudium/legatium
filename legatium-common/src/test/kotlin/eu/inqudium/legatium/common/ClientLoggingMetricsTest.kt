@@ -125,7 +125,7 @@ class ClientLoggingMetricsTest {
         // What is tested: construction against a fresh registry - the fail-open, events and correlation
         //   counters exist for every tag value, and the gauge exists under the stack's client tag, all
         //   at zero, before anything was counted.
-        // Success criteria: three fail-open stages, the stack's outcomes (three or four), three sources,
+        // Success criteria: three fail-open stages, the five outcomes, three sources,
         //   one gauge tagged client=<stack>, every value 0.
         // Why it matters: a rate() alert must see the zero before the first occurrence, not a meter that
         //   springs into existence at the moment it should already fire.
@@ -138,7 +138,7 @@ class ClientLoggingMetricsTest {
         // Then
         assertThat(counters(registry, ClientLoggingMetrics.FAIL_OPEN_METER)).hasSize(3).allSatisfy { assertThat(it.count()).isZero() }
         assertThat(counters(registry, ClientLoggingMetrics.EVENTS_METER).map { it.id.getTag("outcome") })
-            .containsExactlyInAnyOrderElementsOf(stack.outcomes.map { it.tagValue })
+            .containsExactlyInAnyOrderElementsOf(ClientOutcome.entries.map { it.tagValue })
         assertThat(counters(registry, ClientLoggingMetrics.CORRELATION_METER)).hasSize(3).allSatisfy { assertThat(it.count()).isZero() }
         assertThat(
             registry
@@ -726,41 +726,6 @@ class ClientLoggingMetricsTest {
             assertThat(cached.id.getTag("name")).isEqualTo("things")
             assertThat(cached.id.getTag("application")).isEqualTo("shop")
         })
-    }
-
-    @Test
-    fun `should count and name an outcome outside the stack's vocabulary instead of failing the lookup`() {
-        // What is tested: the vocabulary check in eventEmitted - an outcome the stack did not
-        //   pre-register (CANCELLED on the blocking stack).
-        // Success criteria: no throw; failopen{stage=wiring} = 1; exactly one WARN on the module
-        //   logger naming the outcome and the stack.
-        // Why it matters: a vocabulary edit that desynchronises ClientStack.outcomes from an emitter
-        //   would otherwise lose event counts silently (a null-safe increment) or fail with a bare
-        //   lookup message; counted and named, the drift is visible on the first event.
-        // Given
-        val registry = SimpleMeterRegistry()
-        val moduleLog = CapturedLogger(ClientLoggingMetrics::class.java.name)
-        try {
-            val metrics = ClientLoggingMetrics.forRegistry(registry, ClientStack.RESTCLIENT)
-
-            // When
-            val thrown = catchThrowable { metrics.eventEmitted(ClientOutcome.CANCELLED) }
-
-            // Then
-            assertThat(thrown).isNull()
-            assertThat(
-                registry
-                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
-                    .tags("stage", "wiring")
-                    .counter()
-                    .count(),
-            ).isEqualTo(1.0)
-            val warning = moduleLog.events.single()
-            assertThat(warning.level).isEqualTo(Level.WARN)
-            assertThat(warning.formattedMessage).contains("outcome cancelled is not in the restclient vocabulary")
-        } finally {
-            moduleLog.detach()
-        }
     }
 
     @Test

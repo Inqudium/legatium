@@ -115,7 +115,7 @@ class ClientRequestLoggingMetricsTest {
         fun `should pre-register the outcome vocabulary and count emitted events per outcome`() {
             // What is tested: every fixed-tag meter exists at zero before the first call, and the events
             //   counter counts emitted events by outcome.
-            // Success criteria: success/rejected/failure/timeout exist at zero, the gauge under
+            // Success criteria: success/rejected/failure/timeout/cancelled exist at zero, the gauge under
             //   client=restclient; one call each moves its side.
             // Why it matters: a rate() alert must see the zero before the first occurrence; the client
             //   tag is what keeps this twin's gauge apart from the reactive twin's in one host.
@@ -124,6 +124,7 @@ class ClientRequestLoggingMetricsTest {
             assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "rejected")).isZero()
             assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "failure")).isZero()
             assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "timeout")).isZero()
+            assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "cancelled")).isZero()
             assertThat(registry.get(ClientLoggingMetrics.FAIL_OPEN_METER).counters()).hasSize(3)
             assertThat(registry.get(ClientLoggingMetrics.CORRELATION_METER).counters()).hasSize(3)
             assertThat(
@@ -134,17 +135,19 @@ class ClientRequestLoggingMetricsTest {
                     .value(),
             ).isZero()
 
-            // When: a success, a 4xx, a 5xx, a timeout
+            // When: a success, a 4xx, a 5xx, a timeout, a call its caller abandoned (ADR-0015)
             interceptor.intercept(request(), ByteArray(0), answering()).consumeAndClose()
             interceptor.intercept(request(), ByteArray(0), answering(status = HttpStatus.NOT_FOUND)).consumeAndClose()
             interceptor.intercept(request(), ByteArray(0), answering(status = HttpStatus.BAD_GATEWAY)).consumeAndClose()
             catchThrowable { interceptor.intercept(request(), ByteArray(0)) { _, _ -> throw SocketTimeoutException("read") } }
+            catchThrowable { interceptor.intercept(request(), ByteArray(0)) { _, _ -> throw IOException("interrupted", InterruptedException()) } }
 
             // Then
             assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "success")).isEqualTo(1.0)
             assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "rejected")).isEqualTo(1.0)
             assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "failure")).isEqualTo(1.0)
             assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "timeout")).isEqualTo(1.0)
+            assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "cancelled")).isEqualTo(1.0)
         }
 
         @Test
@@ -250,7 +253,7 @@ class ClientRequestLoggingMetricsTest {
             assertThat(registry.count(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, *tags, "state", BodyReadState.COMPLETE.tagValue)).isEqualTo(1.0)
             assertThat(log.events).isEmpty()
             // And: the events counter agrees with the appender - it counts after the level gate
-            listOf("success", "rejected", "failure", "timeout").forEach {
+            listOf("success", "rejected", "failure", "timeout", "cancelled").forEach {
                 assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", it)).describedAs(it).isZero()
             }
         }

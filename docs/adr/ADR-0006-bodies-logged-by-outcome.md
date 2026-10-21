@@ -2,7 +2,7 @@
 
 **Status:** Accepted  
 **Date:** 2026-09-03  
-**Last updated:** 2026-09-19  
+**Last updated:** 2026-10-21  
 **Deciders:** Dirk Haase (maintainer)  
 **Related:** ADR-0003 (`BodyLogMode` lives in `legatium-common` by
 its criterion), ADR-0005 (the companion configuration decision of the
@@ -41,7 +41,7 @@ not a switch.**
 
 **The gate.** `on-failure` writes the bodies when `adapter_outcome` is
 not `success`: `rejected` (a 4xx, since ADR-0012), `failure`,
-`timeout`, and on the WebClient twin `cancelled`. The response side
+`timeout`, and `cancelled` (on both twins since ADR-0015). The response side
 decides at emission, when the outcome is final; the request side
 captures ahead and discards. A 4xx logs its bodies because a client's
 error is exactly the case a body explains; between 2026-09-03 and
@@ -115,3 +115,5 @@ one, gate the same way.
   the accepted limit of the gate.
 - **2026-09-19:** the 4xx widening became the `rejected` outcome
   (ADR-0012); the gate reads `outcome != success` again.
+- **2026-10-21:** the blocking twin logs `cancelled` too (ADR-0015);
+  the gate covers it there unchanged.

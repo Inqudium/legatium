@@ -30,7 +30,7 @@ The RestClient module is the reference implementation; its documentation applies
 
 | Concern | RestClient twin | This module |
 |---|---|---|
-| Disposition vocabulary | `success` / `rejected` / `failure` / `timeout` | plus **`cancelled`** — a subscription the *caller* abandoned (a downstream `timeout()` operator, a disposed caller, a client disconnecting mid-stream) is the reactive reality a blocking call cannot have. A consumer that stops reading the body from within its own delivery because it has read enough — Spring's body skip for `bodyToMono(Void.class)`, a `take(n)` — is `success` with the body partially read, not `cancelled`. Note: a `Mono.timeout()` the *caller* applies logs `cancelled`; a timeout the *connector* raises (Reactor Netty's `responseTimeout`) logs `timeout` |
+| What `cancelled` means | a call that threw while its caller had abandoned it — an interrupted thread, a worker cancelled with `Future.cancel(true)` ([ADR-0015](../docs/adr/ADR-0015-an-abandoned-blocking-call-is-cancelled.md)) | a subscription the *caller* abandoned (a downstream `timeout()` operator, a disposed caller, a client disconnecting mid-stream). A consumer that stops reading the body from within its own delivery because it has read enough — Spring's body skip for `bodyToMono(Void.class)`, a `take(n)` — is `success` with the body partially read, not `cancelled`. Note: a `Mono.timeout()` the *caller* applies logs `cancelled`; a timeout the *connector* raises (Reactor Netty's `responseTimeout`) logs `timeout` |
 | Emission point | response **close** | the response **body's terminal signal** (complete, error or cancel) — the moment the exchange is truly over; a call without a response emits at the response `Mono`'s error/cancel signal with `-> -` |
 | Never-completing exchange | a response the application never closes stays open on the gauge | a response body nobody subscribes to or releases stays open on the gauge — every `retrieve`/`exchangeToMono`/`exchangeToFlux` path of `WebClient` subscribes or releases; a raw `exchange()` caller owns that duty |
 | Request body | the byte array the client hands the interceptor | teed at the connector's `writeWith` as the caller's `BodyInserter` writes it — the request is rebuilt with a wrapping inserter; a bodiless request stays untouched |
@@ -265,7 +265,7 @@ Boot's own `http.client.requests` and to the structured log fields.
 Every meter with its type, tags and meaning is the guide's [Common guide §7.4](../docs/GUIDE.md#74-meters); how to read
 them together, with a suggested alert set, is [Common guide §7.5](../docs/GUIDE.md#75-reading-the-meters-together). The
 names are one shared contract, pinned once by `SharedContractTest` in `legatium-common` ([ADR-0008](../docs/adr/ADR-0008-six-meters-consumed-not-exported.md)); the `outcome` tag of the events
-counter carries this stack's `cancelled` in addition.
+counter carries the same five outcomes on both stacks.
 
 ## Coroutines
 

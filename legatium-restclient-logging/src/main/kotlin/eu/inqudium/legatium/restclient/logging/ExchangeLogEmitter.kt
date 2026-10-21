@@ -154,7 +154,7 @@ internal class ExchangeLogEmitter(
         // Status and headers were read at handover (the interceptor counted and warned if the engine
         // refused): the emission runs after the client's close and never asks the response again.
         val status = exchange.responseStatus
-        val classification = classify(exchange.failure, status)
+        val classification = classify(exchange.failure, exchange.interrupted, status)
         // Slow escalates INFO -> WARN without changing the outcome.
         val level = if (slow && classification.level == Level.INFO) Level.WARN else classification.level
         if (!exchangeLog.isEnabledForLevel(level)) {
@@ -237,17 +237,23 @@ internal class ExchangeLogEmitter(
 
     /**
      * The SLF4J level carries the severity, adapter_outcome the semantic - decoupled on purpose
-     * ([ClientLogField.OUTCOME]): a timeout is WARN with its own outcome (the peer is slow, not broken),
-     * any other thrown call is ERROR with `failure`; an answered call classifies by its status alone
-     * ([Classification.ofStatus], shared with the WebClient twin): a 5xx is WARN `failure`, a 4xx is
-     * `rejected` at INFO - WARN for the [Classification.ESCALATED_REJECTIONS] (ADR-0012) - and INFO
-     * `success` otherwise.
+     * ([ClientLogField.OUTCOME]): a call the CALLER abandoned - it threw while its thread was
+     * interrupted, or with an interrupt in its cause chain ([Cancellations]) - is WARN with `cancelled`
+     * and no cause, the reactive twin's disposition for the same situation, and wins over a timeout type
+     * the transport reported in the same moment (ADR-0015); a timeout is WARN with its own outcome (the
+     * peer is slow, not broken), any other thrown call is ERROR with `failure`; an answered call
+     * classifies by its status alone ([Classification.ofStatus], shared with the WebClient twin): a 5xx
+     * is WARN `failure`, a 4xx is `rejected` at INFO - WARN for the [Classification.ESCALATED_REJECTIONS]
+     * (ADR-0012) - and INFO `success` otherwise. An interrupt WITHOUT a failure classifies by the status:
+     * the exchange completed before anybody stopped waiting for it.
      */
     private fun classify(
         failure: Throwable?,
+        interrupted: Boolean,
         status: Int?,
     ): Classification =
         when {
+            failure != null && (interrupted || Cancellations.isCancellation(failure)) -> Classification(Level.WARN, ClientOutcome.CANCELLED, null)
             failure != null && Timeouts.isTimeout(failure) -> Classification(Level.WARN, ClientOutcome.TIMEOUT, failure)
             failure != null -> Classification(Level.ERROR, ClientOutcome.FAILURE, failure)
             else -> Classification.ofStatus(status)

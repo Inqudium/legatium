@@ -82,6 +82,28 @@ internal class Exchange(
      */
     @Volatile
     var failure: Throwable? = null
+        private set
+
+    /**
+     * Whether a [failure] was recorded on an INTERRUPTED thread - the caller abandoned the exchange
+     * (ADR-0015). Sticky: a later failure on a thread that is no longer interrupted (a close on another
+     * thread) does not undo a cancellation already seen.
+     */
+    @Volatile
+    var interrupted: Boolean = false
+        private set
+
+    /**
+     * Records [e] as the [failure] together with the interrupt status of the CURRENT thread - read at
+     * the moment the exception reaches this module, on the thread it surfaced on, and never cleared:
+     * `isInterrupted`, not `Thread.interrupted()`, because the interrupt belongs to the caller.
+     */
+    fun recordFailure(e: Throwable) {
+        failure = e
+        if (Thread.currentThread().isInterrupted) {
+            interrupted = true
+        }
+    }
 
     /**
      * The REAL response the wire call produced. Null when the call produced no response. Status and

@@ -14,6 +14,8 @@ import java.time.Duration
 class JettyRequestFactoryIntegrationTest : RequestFactoryContract() {
     override val decompressesTransparently: Boolean = true
 
+    override val interruptibleOnPlatformThreads: Boolean = true
+
     override fun requestFactory(
         connectTimeout: Duration,
         readTimeout: Duration,
