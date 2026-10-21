@@ -3,6 +3,7 @@ package eu.inqudium.legatium.common
 import io.netty.channel.ConnectTimeoutException
 import io.netty.handler.timeout.ReadTimeoutException
 import org.apache.hc.core5.http.ConnectionRequestTimeoutException
+import org.apache.http.conn.ConnectionPoolTimeoutException
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import java.io.IOException
@@ -10,6 +11,7 @@ import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
 import java.net.http.HttpConnectTimeoutException
 import java.util.concurrent.TimeoutException
+import org.apache.http.conn.ConnectTimeoutException as HttpClient4ConnectTimeoutException
 
 /**
  * The timeout classification both twins share: which failures of an outbound call are reported as
@@ -67,6 +69,23 @@ class TimeoutsTest {
 
         // When/Then
         assertThat(Timeouts.isTimeout(lease)).isTrue()
+    }
+
+    @Test
+    fun `should recognise Apache HttpClient 4's connect and pool lease timeouts by their class name`() {
+        // What is tested: the by-name match for org.apache.http.conn.ConnectTimeoutException and its
+        //   subclass ConnectionPoolTimeoutException, against the REAL classes (httpclient 4 test-scoped
+        //   here) - both InterruptedIOExceptions; the pool lease timeout carries no cause at all.
+        // Success criteria: both classify as a timeout, also without a cause and wrapped.
+        // Why it matters: a host bridging HttpClient 4 with its own request factory saw its exhausted
+        //   pool logged as an ERROR failure, as HttpClient 5's was before 1.2.1.
+        // Given
+        val lease = RuntimeException("wrapped", ConnectionPoolTimeoutException("Timeout waiting for connection from pool"))
+        val connect = HttpClient4ConnectTimeoutException("Connect to 127.0.0.1:1 timed out")
+
+        // When/Then
+        assertThat(Timeouts.isTimeout(lease)).isTrue()
+        assertThat(Timeouts.isTimeout(connect)).isTrue()
     }
 
     @Test

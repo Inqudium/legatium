@@ -9,7 +9,8 @@ The classification rule itself is
 [ADR-0015](adr/ADR-0015-an-abandoned-blocking-call-is-cancelled.md). The short version is in the
 [RestClient guide §4.8](https://github.com/Inqudium/legatium/blob/main/legatium-restclient-logging/docs/GUIDE.md#48-a-call-its-caller-abandoned-is-cancelled).
 Everything on this page about the blocking engines is pinned by the connector suites
-(`RequestFactoryContract` and its five subclasses, `HttpComponentsRequestFactoryIntegrationTest`). It
+(`RequestFactoryContract` and its six subclasses, `HttpComponentsRequestFactoryIntegrationTest`,
+`HttpClient4RequestFactoryIntegrationTest`). It
 was observed on JDK 26 with Spring Boot 4.1.1 (Spring Framework 7.0.9), Apache HttpClient 5.6.4,
 Jetty 12.1.12 and Reactor Netty 1.3.7.
 
@@ -48,6 +49,8 @@ interrupt; only a wait on a future or a lock wakes up.
 | `HttpURLConnection` (`SimpleClientHttpRequestFactory`) | the socket read | `cancelled` at once | **ignored**: the call waits for the answer and logs by its status |
 | Apache HttpClient 5 (`HttpComponentsClientHttpRequestFactory`), during the exchange | the socket read | `cancelled` at once, after an internal retry attempt | **ignored**: the call waits for the answer and logs by its status |
 | Apache HttpClient 5, waiting for a pooled connection | the pool's lease future | `cancelled` at once | `cancelled` at once |
+| Apache HttpClient 4 (own adapter, §2.3), during the exchange | the socket read | `cancelled` at once, after three internal retries | **ignored**: the call waits for the answer and logs by its status |
+| Apache HttpClient 4, waiting for a pooled connection | the pool's lease future | `cancelled` at once | `cancelled` at once |
 
 In every case the thread's **interrupt flag is still set** after the call returns or throws: the
 engines restore it, and legatium only reads it. The caller's own interrupt handling still sees it.
@@ -66,6 +69,9 @@ What the interceptor receives, what the caller gets thrown, and the line legatiu
 | Apache 5, virtual thread | `java.util.concurrent.CancellationException` (see below) | the **raw** `CancellationException`, not wrapped by `RestClient` | WARN `cancelled`, `-> -` |
 | Apache 5, platform thread | none: the answer arrives | none: the caller gets the body | INFO `success` with the status |
 | Apache 5, pool lease | `RequestFailedException("Request aborted")` over the `InterruptedException`; Apache restores the flag | `ResourceAccessException` | WARN `cancelled`, `-> -` |
+| Apache 4, virtual thread | `SocketException: Closed by interrupt`, after three retries (see below) | `ResourceAccessException` | WARN `cancelled`, `-> -` |
+| Apache 4, platform thread | none: the answer arrives | none: the caller gets the body | INFO `success` with the status |
+| Apache 4, pool lease | `RequestAbortedException("Request aborted")` over the `InterruptedException` | `ResourceAccessException` | WARN `cancelled`, `-> -` |
 
 **Apache on a virtual thread.** The interrupt closes the socket. Apache's `HttpRequestRetryExec` sees
 a `SocketException` it considers recoverable and retries the request (it logs
@@ -75,6 +81,29 @@ connection from the pool then fails on the still-interrupted thread with a raw
 caller that catches only `ResourceAccessException` misses it. legatium still logs `cancelled`, because
 the interrupt flag is set. A client built with `disableAutomaticRetries()` skips the retry step;
 which exception it then throws is not covered by the suites.
+
+**Apache 4 on a virtual thread.** The same mechanism as Apache 5, with a different end: HttpClient
+4's `RetryExec` retries the `SocketException` three times (the default `DefaultHttpRequestRetryHandler`,
+logged at INFO as `I/O exception (java.net.SocketException) caught … Closed by interrupt` and
+`Retrying request`), each attempt fails at once on the still-interrupted thread, and the last
+`SocketException` reaches the caller wrapped in a `ResourceAccessException`, no raw runtime exception.
+
+### 2.3 Apache HttpClient 4
+
+Spring Framework 6 dropped its request factory for Apache HttpClient 4; Spring 7's
+`HttpComponentsClientHttpRequestFactory` targets HttpClient 5 only, and Boot's detection (§6.1) does not
+look for HttpClient 4 at all. A host that still runs it behind `RestClient` or `RestTemplate` bridges
+it with a `ClientHttpRequestFactory` of its own. The connector suite runs the contract through such an
+adapter, the test-scoped `HttpClient4RequestFactory` (modelled on the one Spring 5 shipped), against
+httpclient 4.5.14 / httpcore 4.4.16. The results above hold for an adapter of that shape; one that
+interrupts, retries or wraps differently changes them. HttpClient 4 is end-of-life, 4.5.x gets
+maintenance releases only.
+
+Its timeouts classify like HttpClient 5's: the read timeout is the JDK's `SocketTimeoutException`, the
+connect timeout `org.apache.http.conn.ConnectTimeoutException`, and the pool lease timeout its subclass
+`ConnectionPoolTimeoutException` - all `timeout` at WARN. The lease timeout carries no cause, so
+`Timeouts` matches the `ConnectTimeoutException` family by name, as it does HttpClient 5's
+`ConnectionRequestTimeoutException`.
 
 **The reactive twin.** A `WebClient` call is cancelled by cancelling its subscription, the same way on
 every connector. The engine differences above do not apply there; the reactive rules (a cancel from
@@ -129,12 +158,13 @@ Boot 4.1.1 (Spring Framework 7.0.9) on JDK 26.0.1:
 | 2 | Jetty (`JettyClientHttpRequestFactory`) | jetty-client 12.1.12 | `cancelled` at once | `cancelled` at once | `ResourceAccessException` | the same behaviour as rank 1, at the cost of the Jetty dependency |
 | 3 | Reactor Netty (`ReactorClientHttpRequestFactory`) | reactor-netty-http 1.3.7 | `cancelled` at once | `cancelled` at once | `ResourceAccessException` | cancels cleanly, but brings Netty and its event loop for a single `block()` |
 | 4 | `HttpURLConnection` (`SimpleClientHttpRequestFactory`) | JDK 26.0.1 | ignored: waits for the answer, logs `success` | `cancelled` at once | nothing on a platform thread; `ResourceAccessException` on a virtual one | usable only on virtual threads or with a short read timeout |
-| 5 | Apache HttpClient 5 (`HttpComponentsClientHttpRequestFactory`) | httpclient5 5.6.4 | ignored: waits for the answer, logs `success` | `cancelled` after an internal retry | a raw `CancellationException` on a virtual thread, not wrapped | does not free a platform thread, and its exception bypasses the usual error handling; only the wait for a pooled connection cancels cleanly on both thread kinds (`ResourceAccessException`) |
+| 5 | Apache HttpClient 4 (own adapter, §2.3) | httpclient 4.5.14 | ignored: waits for the answer, logs `success` | `cancelled` after three internal retries | `ResourceAccessException` | behaves like rank 4 with a clean exception, but needs an adapter of its own and is end-of-life; the wait for a pooled connection cancels cleanly on both thread kinds |
+| 6 | Apache HttpClient 5 (`HttpComponentsClientHttpRequestFactory`) | httpclient5 5.6.4 | ignored: waits for the answer, logs `success` | `cancelled` after an internal retry | a raw `CancellationException` on a virtual thread, not wrapped | does not free a platform thread, and its exception bypasses the usual error handling; only the wait for a pooled connection cancels cleanly on both thread kinds (`ResourceAccessException`) |
 
 The ranking covers cancellation only. Connection-pool control, HTTP/2 or proxy support can rank the
 engines differently, and Apache often comes out on top there. A team that keeps Apache sets the read
 timeout no longer than the `TimeLimiter` budget and catches `CancellationException` (§4). On virtual
-threads, ranks 1 to 4 are equivalent. No engine stops the peer's work: for a non-idempotent call the
+threads, ranks 1 to 5 are equivalent. No engine stops the peer's work: for a non-idempotent call the
 choice of engine changes nothing about whether it was executed.
 
 The versions are those of the connector-suite run behind this page. A dependency upgrade can change
@@ -154,11 +184,14 @@ Framework 7.0.9.
 
 | Order | Engine | Detected by | Cancellation rank (§5) |
 |---|---|---|---|
-| 1 | Apache HttpClient 5 | `org.apache.hc.client5.http.impl.classic.HttpClients` | 5 |
+| 1 | Apache HttpClient 5 | `org.apache.hc.client5.http.impl.classic.HttpClients` | 6 |
 | 2 | Jetty | `org.eclipse.jetty.client.HttpClient` | 2 |
 | 3 | Reactor Netty | `reactor.netty.http.client.HttpClient` | 3 |
 | 4 | JDK `HttpClient` | `java.net.http.HttpClient`, so practically always | 1 |
 | 5 | `HttpURLConnection` | the fallback | 4 |
+
+Apache HttpClient 4 (rank 5) is not detected: Spring has no factory for it, so it runs only where a
+host sets its own adapter with `requestFactory(...)`.
 
 **An Apache jar on the classpath wins**, even when it arrived only transitively through some other
 library. Without a decision of its own, an application then runs on the engine that handles
@@ -199,15 +232,17 @@ is every engine suite of this repository: each sets its factory explicitly.
 
 | Behaviour | Engines | Test |
 |---|---|---|
-| virtual thread, interrupted mid-call | all five: JDK `HttpClient`, Jetty, Reactor Netty, `HttpURLConnection`, Apache 5, each expecting `cancelled` | `RequestFactoryContract`: `should log a caller interrupted on a virtual thread as WARN cancelled …` |
-| platform thread, interrupted mid-call | all five: JDK `HttpClient`, Jetty and Reactor Netty expecting `cancelled`; `HttpURLConnection` and Apache 5 expecting `success` (`interruptibleOnPlatformThreads = false`) | `RequestFactoryContract`: `should log a caller interrupted on a platform thread the way this request factory honours it` |
-| `Future.cancel(true)` on a virtual worker | all five, each expecting `cancelled` | `RequestFactoryContract`: `should log a worker cancelled through its future as WARN cancelled …` |
-| interrupted pool lease | Apache 5 only | `HttpComponentsRequestFactoryIntegrationTest`: `should log a caller interrupted while waiting for a pooled connection as WARN cancelled` |
+| virtual thread, interrupted mid-call | all six: JDK `HttpClient`, Jetty, Reactor Netty, `HttpURLConnection`, Apache 5, Apache 4, each expecting `cancelled` | `RequestFactoryContract`: `should log a caller interrupted on a virtual thread as WARN cancelled …` |
+| platform thread, interrupted mid-call | all six: JDK `HttpClient`, Jetty and Reactor Netty expecting `cancelled`; `HttpURLConnection`, Apache 5 and Apache 4 expecting `success` (`interruptibleOnPlatformThreads = false`) | `RequestFactoryContract`: `should log a caller interrupted on a platform thread the way this request factory honours it` |
+| `Future.cancel(true)` on a virtual worker | all six, each expecting `cancelled` | `RequestFactoryContract`: `should log a worker cancelled through its future as WARN cancelled …` |
+| interrupted pool lease | Apache 5, Apache 4 | `HttpComponentsRequestFactoryIntegrationTest`, `HttpClient4RequestFactoryIntegrationTest`: `should log a caller interrupted while waiting for a pooled connection as WARN cancelled` |
+| pool lease timeout (the control: a timeout, not a cancellation) | Apache 5, Apache 4 | `HttpComponentsRequestFactoryIntegrationTest`, `HttpClient4RequestFactoryIntegrationTest`: `should log this request factory's pool lease timeout as WARN timeout` |
 | classification order, flag never cleared, close on another thread | none: engine-independent, driven by mock executions and hand-built exceptions | `ClientRequestLoggingInterceptorCancellationTest`, `CancellationsTest` |
 
 `RequestFactoryContract` runs once per engine, through its subclasses `JdkClientRequestFactoryIntegrationTest`,
 `JettyRequestFactoryIntegrationTest`, `ReactorNettyRequestFactoryIntegrationTest`,
-`SimpleRequestFactoryIntegrationTest` (`HttpURLConnection`) and `HttpComponentsRequestFactoryIntegrationTest`.
+`SimpleRequestFactoryIntegrationTest` (`HttpURLConnection`), `HttpComponentsRequestFactoryIntegrationTest` and
+`HttpClient4RequestFactoryIntegrationTest` (through the test-scoped `HttpClient4RequestFactory`).
 
 The exception types in §2.2 are what the engines threw in these runs. They are engine-internal and
 not part of legatium's contract; the suites pin the classification only, so a new engine version that

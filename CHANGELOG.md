@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Tests: the RestClient twin's connector contract also runs against **Apache HttpClient 4**, which
+  Spring Framework 7 ships no request factory for, through a test-scoped adapter
+  (`HttpClient4RequestFactory`, modelled on Spring 5's) - the shape a host still on HttpClient 4
+  bridges it with. Pinned: body tee, correlation header, gzip, read and connect timeout, the refused
+  connection, and the cancellation scenarios of ADR-0015 on virtual and platform threads, through
+  `Future.cancel(true)` and on an interrupted pool lease. `docs/cancellation-by-engine.md` gains the
+  engine (§2.3, rank 5 of §5). httpclient 4.5.14 is test-scoped in `legatium-restclient-logging` and
+  `legatium-common`; neither jar depends on it.
 - Docs: a site page **Cancellation by engine** (`docs/cancellation-by-engine.md`) on how each
   request factory Spring ships reacts when the caller abandons a blocking call: virtual against
   platform threads, the exception each engine raises and the caller gets thrown (Apache's raw
@@ -41,6 +49,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per engine Spring ships, on virtual and platform threads and through `Future.cancel(true)`, by the
   connector suites, the interrupted pool lease by the HttpComponents suite; the decision is
   [ADR-0015](docs/adr/ADR-0015-an-abandoned-blocking-call-is-cancelled.md). Issue #88.
+
+### Fixed
+
+- Both twins: Apache HttpClient 4's **pool lease timeout**
+  (`org.apache.http.conn.ConnectionPoolTimeoutException`) is now classified as `adapter_outcome=timeout`
+  at WARN instead of `failure` at ERROR, for a host that bridges HttpClient 4 with a request factory
+  of its own. Like HttpClient 5's lease timeout before 1.2.1, it is an `InterruptedIOException` without
+  a timeout cause; `Timeouts` now matches its `org.apache.http.conn.ConnectTimeoutException` family by
+  name. Pinned by the common module's test against the real classes and by the HttpClient 4 connector
+  suite.
 
 ## [1.2.1] - 2026-10-19
 

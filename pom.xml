@@ -113,6 +113,11 @@
              methods run as regression tests in every verify and fuzz for
              real in the scheduled Fuzz workflow (JAZZER_FUZZ=1). -->
         <jazzer.version>0.30.0</jazzer.version>
+        <!-- Apache HttpClient 4 (test scope): Spring Framework 7 ships no request factory for it,
+             and the Boot BOM manages only its httpcore; the RestClient twin's connector suite runs
+             it through a test-scoped adapter (HttpClient4RequestFactory). End-of-life, 4.5.x gets
+             maintenance releases only. -->
+        <httpclient4.version>4.5.14</httpclient4.version>
 
         <!-- Plugin Versions -->
         <flatten-maven-plugin.version>1.8.0</flatten-maven-plugin.version>
@@ -156,6 +161,12 @@
                 <groupId>com.code-intelligence</groupId>
                 <artifactId>jazzer-junit</artifactId>
                 <version>${jazzer.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.httpcomponents</groupId>
+                <artifactId>httpclient</artifactId>
+                <version>${httpclient4.version}</version>
                 <scope>test</scope>
             </dependency>
         </dependencies>

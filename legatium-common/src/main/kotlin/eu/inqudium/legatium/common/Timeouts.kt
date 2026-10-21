@@ -15,7 +15,11 @@ package eu.inqudium.legatium.common
  * timeout. Apache HttpComponents 5 needs one name: its POOL LEASE timeout
  * (`org.apache.hc.core5.http.ConnectionRequestTimeoutException`, raised when no pooled connection became
  * free within the connection request timeout) is an `InterruptedIOException`, a type that also carries a
- * thread interrupt during I/O and so cannot be matched as a whole. The other connectors Spring ships need
+ * thread interrupt during I/O and so cannot be matched as a whole. Apache HttpClient 4, which Spring no
+ * longer ships a request factory for but a host may still bridge with an adapter of its own, needs one
+ * more: its `org.apache.http.conn.ConnectTimeoutException` family, an `InterruptedIOException` too -
+ * the connect timeout carries the JDK's `SocketTimeoutException` as its cause, but its POOL LEASE
+ * timeout (`ConnectionPoolTimeoutException`, a subclass) carries none. The other connectors Spring ships need
  * no name of their own: the JDK client's connect timeout is an `HttpTimeoutException`, Jetty raises
  * `SocketTimeoutException` / `TimeoutException`, Apache's `ConnectTimeoutException` IS a
  * `SocketTimeoutException`, and Reactor Netty's pool acquire timeout is a
@@ -31,6 +35,7 @@ internal object Timeouts {
             "io.netty.handler.timeout.TimeoutException",
             "io.netty.channel.ConnectTimeoutException",
             "org.apache.hc.core5.http.ConnectionRequestTimeoutException",
+            "org.apache.http.conn.ConnectTimeoutException",
         )
 
     /**
