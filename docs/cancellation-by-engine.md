@@ -197,13 +197,17 @@ is every engine suite of this repository: each sets its factory explicitly.
 
 ## 7. How this is pinned
 
-| Behaviour | Test |
-|---|---|
-| virtual thread, interrupted mid-call, every engine | `RequestFactoryContract`: `should log a caller interrupted on a virtual thread as WARN cancelled …` |
-| platform thread, interrupted mid-call, every engine (`interruptibleOnPlatformThreads` per engine) | `RequestFactoryContract`: `should log a caller interrupted on a platform thread the way this request factory honours it` |
-| `Future.cancel(true)` on a virtual worker, every engine | `RequestFactoryContract`: `should log a worker cancelled through its future as WARN cancelled …` |
-| Apache's interrupted pool lease | `HttpComponentsRequestFactoryIntegrationTest`: `should log a caller interrupted while waiting for a pooled connection as WARN cancelled` |
-| classification order, flag never cleared, close on another thread | `ClientRequestLoggingInterceptorCancellationTest`, `CancellationsTest` |
+| Behaviour | Engines | Test |
+|---|---|---|
+| virtual thread, interrupted mid-call | all five: JDK `HttpClient`, Jetty, Reactor Netty, `HttpURLConnection`, Apache 5, each expecting `cancelled` | `RequestFactoryContract`: `should log a caller interrupted on a virtual thread as WARN cancelled …` |
+| platform thread, interrupted mid-call | all five: JDK `HttpClient`, Jetty and Reactor Netty expecting `cancelled`; `HttpURLConnection` and Apache 5 expecting `success` (`interruptibleOnPlatformThreads = false`) | `RequestFactoryContract`: `should log a caller interrupted on a platform thread the way this request factory honours it` |
+| `Future.cancel(true)` on a virtual worker | all five, each expecting `cancelled` | `RequestFactoryContract`: `should log a worker cancelled through its future as WARN cancelled …` |
+| interrupted pool lease | Apache 5 only | `HttpComponentsRequestFactoryIntegrationTest`: `should log a caller interrupted while waiting for a pooled connection as WARN cancelled` |
+| classification order, flag never cleared, close on another thread | none: engine-independent, driven by mock executions and hand-built exceptions | `ClientRequestLoggingInterceptorCancellationTest`, `CancellationsTest` |
+
+`RequestFactoryContract` runs once per engine, through its subclasses `JdkClientRequestFactoryIntegrationTest`,
+`JettyRequestFactoryIntegrationTest`, `ReactorNettyRequestFactoryIntegrationTest`,
+`SimpleRequestFactoryIntegrationTest` (`HttpURLConnection`) and `HttpComponentsRequestFactoryIntegrationTest`.
 
 The exception types in §2.2 are what the engines threw in these runs. They are engine-internal and
 not part of legatium's contract; the suites pin the classification only, so a new engine version that
