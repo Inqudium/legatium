@@ -77,6 +77,27 @@
 
     <build>
         <plugins>
+            <!-- The same minimum Maven version as the reactor (see its root POM); version managed by
+                 the Spring Boot parent. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-maven-version</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireMavenVersion>
+                                    <version>[3.6.3,)</version>
+                                </requireMavenVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <!-- Not an application: nothing to repackage, and no main classes to jar. -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>

@@ -467,6 +467,29 @@
         </pluginManagement>
 
         <plugins>
+            <!-- The lowest Maven the build is proven on: 3.6.3, the minimum the plugins in use require
+                 (versions:display-plugin-updates), was run with clean verify and produced
+                 byte-identical jars to 3.8.8, 3.9.0 and 3.9.15 on 2026-10-22. Raise it when a plugin
+                 update requires more. Version managed by the Spring Boot parent. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-maven-version</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireMavenVersion>
+                                    <version>[3.6.3,)</version>
+                                </requireMavenVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-dependency-plugin</artifactId>
