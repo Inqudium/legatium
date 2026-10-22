@@ -29,8 +29,24 @@
         <legatium.version>1.2.2-SNAPSHOT</legatium.version>
         <!-- The spring-core the twins resolve through spring-boot 4.1.1 - FastByteArrayOutputStream's home. -->
         <spring-core.version>7.0.9</spring-core.version>
+        <!-- The Micrometer the twins resolve through spring-boot 4.1.1. Without a BOM here, spring-web
+             7.0.9 pulls micrometer-observation 1.16.7 nearest-first next to legatium-common's
+             micrometer-core 1.17.1; the BOM keeps the family on one version. -->
+        <micrometer.version>1.17.1</micrometer.version>
         <uberjar.name>benchmarks</uberjar.name>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-bom</artifactId>
+                <version>${micrometer.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <dependency>
