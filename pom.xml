@@ -90,7 +90,9 @@
         <!-- Java Version (Managed by Spring Boot Parent) -->
         <java.version>21</java.version>
 
-        <!-- Kotlin Version (Override Spring Boot default) -->
+        <!-- Kotlin Version (Override Spring Boot default): the project has been on Kotlin 2.4
+             since it started (Boot 4.1.1 manages 2.3.21), kept current by Dependabot; lowering it
+             would be a compiler downgrade. Remove once Spring Boot manages >= this version. -->
         <kotlin.version>2.4.21</kotlin.version>
 
         <!--
@@ -123,11 +125,13 @@
         <flatten-maven-plugin.version>1.8.0</flatten-maven-plugin.version>
         <ktlint-maven-plugin.version>3.7.1</ktlint-maven-plugin.version>
         <dokka-maven-plugin.version>2.2.0</dokka-maven-plugin.version>
-        <maven-shade-plugin.version>3.6.2</maven-shade-plugin.version>
         <jacoco-maven-plugin.version>0.8.15</jacoco-maven-plugin.version>
-        <cyclonedx-maven-plugin.version>2.9.3</cyclonedx-maven-plugin.version>
         <maven-gpg-plugin.version>3.2.8</maven-gpg-plugin.version>
-        <central-publishing-maven-plugin.version>0.11.0</central-publishing-maven-plugin.version>
+        <central-publishing-maven-plugin.version>0.12.0</central-publishing-maven-plugin.version>
+        <!-- maven-dependency-plugin and versions-maven-plugin override the Spring Boot BOM's
+             properties of the same name (Boot 4.1.1 manages 3.10.0 and 2.21.0): pinned so the
+             dependency and update reports run at a version Dependabot keeps current, newer than
+             Boot's. Remove each once Spring Boot manages >= that version. -->
         <maven-dependency-plugin.version>3.11.0</maven-dependency-plugin.version>
         <versions-maven-plugin.version>2.23.0</versions-maven-plugin.version>
 
@@ -150,6 +154,11 @@
 
     <dependencyManagement>
         <dependencies>
+            <!-- JUnit's own BOM, newer than the 6.0.3 Spring Boot 4.1.1 manages: it moves the whole
+                 JUnit family together. Imported rather than overriding Boot's junit-jupiter.version
+                 property because Dependabot updates this declaration, while a property only the
+                 parent BOM reads is likely not tracked. Remove once Spring Boot manages >= this
+                 version. -->
             <dependency>
                 <groupId>org.junit</groupId>
                 <artifactId>junit-bom</artifactId>
@@ -340,6 +349,8 @@
                 <plugin>
                     <groupId>org.codehaus.mojo</groupId>
                     <artifactId>build-helper-maven-plugin</artifactId>
+                    <!-- Newer than the 3.6.1 Spring Boot 4.1.1 manages; remove once Spring Boot
+                         manages >= this version. -->
                     <version>3.6.2</version>
                     <executions>
                         <execution>
@@ -402,7 +413,6 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-shade-plugin</artifactId>
-                    <version>${maven-shade-plugin.version}</version>
                     <executions>
                         <!-- spring-boot-starter-parent pre-configures an UNNAMED shade
                              execution (uber-jar transformers, no artifactSet) that would
@@ -467,6 +477,29 @@
         </pluginManagement>
 
         <plugins>
+            <!-- The lowest Maven the build is proven on: 3.6.3, the minimum the plugins in use require
+                 (versions:display-plugin-updates), was run with clean verify and produced
+                 byte-identical jars to 3.8.8, 3.9.0 and 3.9.15 on 2026-10-22. Raise it when a plugin
+                 update requires more. Version managed by the Spring Boot parent. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-maven-version</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireMavenVersion>
+                                    <version>[3.6.3,)</version>
+                                </requireMavenVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-dependency-plugin</artifactId>
@@ -543,7 +576,6 @@
             <plugin>
                 <groupId>org.cyclonedx</groupId>
                 <artifactId>cyclonedx-maven-plugin</artifactId>
-                <version>${cyclonedx-maven-plugin.version}</version>
                 <configuration>
                     <outputFormat>json</outputFormat>
                     <schemaVersion>1.6</schemaVersion>
