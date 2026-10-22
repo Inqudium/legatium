@@ -49,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `on-failure` body logging writes the bodies of a cancelled exchange, as on the reactive twin. Pinned
   per engine Spring ships, on virtual and platform threads and through `Future.cancel(true)`, by the
   connector suites, the interrupted pool lease by the HttpComponents suite; the decision is
-  [ADR-0015](docs/adr/ADR-0015-an-abandoned-blocking-call-is-cancelled.md). Issue #88.
+  [ADR-0015](docs/adr/ADR-0015-an-abandoned-blocking-call-is-cancelled.md). [Issue #88](https://github.com/Inqudium/legatium/issues/88).
 
 ### Fixed
 
