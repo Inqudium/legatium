@@ -23,7 +23,7 @@ class ReactorNettyRequestFactoryIntegrationTest : RequestFactoryContract() {
     // docs/cancellation-by-engine.md, section "Per engine": the interrupt of `block()` wrapped in an IOException
     override val abandonedCallExceptions: AbandonedCallExceptions =
         AbandonedCallExceptions(
-            atInterceptor = ExpectedThrowable(IOException::class.java),
+            atInterceptor = ExpectedThrowable(IOException::class.java, cause = InterruptedException::class.java),
             toCaller = ResourceAccessException::class.java,
         )
 
