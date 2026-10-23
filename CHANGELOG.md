@@ -47,9 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the interceptor, read and never cleared; the cause chain (`InterruptedException`,
   `ClosedByInterruptException`, the JDK's socket closed by interrupt, Apache's aborted request) is the
   fallback for a flag already consumed. With the flag set the cancellation wins over a timeout
-  reported in the same moment; a read or pool lease timeout without it stays `timeout`, a plain
-  `InterruptedIOException` stays `failure`, and an interrupted call that still got its answer is
-  classified by its status. **Behaviour change:** an alert on `failure` for the blocking stack sees
+  reported in the same moment, whatever the exception's type. With neither the flag nor an interrupt
+  in the cause chain, a read or pool lease timeout stays `timeout` and a plain
+  `InterruptedIOException` stays `failure`: the type alone is no signal, because both timeouts are
+  `InterruptedIOException`s too. An interrupted call that still got its answer is classified by its
+  status. **Behaviour change:** an alert on `failure` for the blocking stack sees
   fewer events, one on `cancelled` now fires for it as well, and `adapter.logging.events` pre-registers
   `outcome=cancelled` on the blocking stack too - both stacks share the whole outcome vocabulary.
   `on-failure` body logging writes the bodies of a cancelled exchange, as on the reactive twin. Pinned
