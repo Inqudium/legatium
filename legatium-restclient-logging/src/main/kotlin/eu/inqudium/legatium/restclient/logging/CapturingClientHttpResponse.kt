@@ -36,8 +36,9 @@ import java.io.InputStream
  * text and headers (the read at handover tolerates a refusing engine, but the CLIENT's later access
  * propagates), `available`, the body stream's close, and the response close itself. Any exception (an
  * [java.io.IOException] from a dropped connection or a read timeout, an engine's unchecked wrapper) is
- * reported through [onFailure] - the exchange then classifies as a failure or timeout although a status
- * was already received - and rethrown unchanged. The caller and the event thus never disagree: a
+ * reported through [onFailure] - the exchange then classifies as a failure, a timeout, or - on an
+ * interrupted thread - cancelled (ADR-0015) although a status was already received - and rethrown
+ * unchanged. The caller and the event thus never disagree: a
  * response that fails the caller is never logged as `success`.
  *
  * The tee stream is TRANSPARENT to the application: it forwards the delegate's `mark`/`reset`

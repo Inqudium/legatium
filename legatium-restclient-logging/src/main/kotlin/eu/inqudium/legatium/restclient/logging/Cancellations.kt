@@ -1,5 +1,7 @@
 package eu.inqudium.legatium.restclient.logging
 
+import eu.inqudium.legatium.common.CauseGraph
+
 /**
  * Recognises a failed blocking call as one the CALLER abandoned (ADR-0015): its budget expired and the
  * worker was cancelled with `Future.cancel(true)`, or the calling thread was interrupted. The JDK then
@@ -10,8 +12,9 @@ package eu.inqudium.legatium.restclient.logging
  * ([Exchange.recordFailure]) - the JDK leaves it set when it closes a socket on interrupt, Spring's JDK
  * and Jetty request factories and Apache's pool lease restore it after catching the interrupt. This
  * object is the FALLBACK for a flag something between the engine and this interceptor already consumed:
- * the CAUSE chain (and suppressed exceptions, recursively), the way [eu.inqudium.legatium.common.Timeouts]
- * walks it, matched by class NAME so the twin needs no engine dependency:
+ * the CAUSE chain (and suppressed exceptions, recursively) - the [CauseGraph] walk
+ * [eu.inqudium.legatium.common.Timeouts] uses, so both classifications see the same throwables - matched
+ * by class NAME so the twin needs no engine dependency:
  *
  * - `java.lang.InterruptedException` and `java.nio.channels.ClosedByInterruptException`, as types: both
  *   mean an interrupt and nothing else.
@@ -44,30 +47,12 @@ internal object Cancellations {
      * True when [throwable], any cause, or any SUPPRESSED exception (recursively) reports a cancellation
      * as defined on this object. Null is never one.
      */
-    fun isCancellation(throwable: Throwable?): Boolean {
-        // A cause graph is finite in practice, but a cycle is legal; the visited set bounds the walk.
-        val visited = HashSet<Throwable>()
-        val pending = ArrayDeque<Throwable>()
-        throwable?.let(pending::add)
-        while (pending.isNotEmpty()) {
-            val current = pending.removeFirst()
-            if (!visited.add(current)) {
-                continue
-            }
-            if (isCancellation(current.javaClass, current.message)) {
-                return true
-            }
-            current.cause?.let(pending::add)
-            current.suppressed.forEach(pending::add)
-        }
-        return false
-    }
+    fun isCancellation(throwable: Throwable?): Boolean = CauseGraph.any(throwable) { isCancellation(it.javaClass, it.message) }
 
     private fun isCancellation(
         type: Class<*>,
         message: String?,
     ): Boolean =
-        generateSequence(type) { it.superclass }.any {
-            it.name in CANCELLATION_CLASS_NAMES || (message != null && CANCELLATION_MESSAGES[it.name] == message)
-        }
+        CauseGraph.hasTypeNamed(type, CANCELLATION_CLASS_NAMES) ||
+            (message != null && generateSequence(type) { it.superclass }.any { CANCELLATION_MESSAGES[it.name] == message })
 }

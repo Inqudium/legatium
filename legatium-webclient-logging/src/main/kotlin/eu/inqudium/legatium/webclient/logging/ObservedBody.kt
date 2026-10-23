@@ -29,8 +29,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  *   `cancelled` would flag every fire-and-forget call at WARN and, in `on-failure` body mode, write both
  *   bodies of a healthy call.
  * - **The caller walked away** - from anywhere else: a `timeout()` operator's timer thread, a disposed
- *   `Disposable`, a client that disconnected from a server streaming this body through. That is the
- *   reactive reality a blocking call cannot have, and it is what `adapter_outcome=cancelled` reports.
+ *   `Disposable`, a client that disconnected from a server streaming this body through. That is an
+ *   abandonment, and it is what `adapter_outcome=cancelled` reports - the disposition the blocking twin
+ *   writes for an interrupted caller too (ADR-0015).
  *
  * The distinction is the identity of the cancelling thread against the thread currently inside
  * `actual.onNext`: a cancel from within the delivery is the consumer's own decision, a cancel from any
