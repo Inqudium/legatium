@@ -6,21 +6,24 @@ package eu.inqudium.legatium.common
  * observation points are documented on each twin's `BoundedBodyCapture` (deliberately separate
  * implementations - ADR-0003).
  *
- * The seam observes what flows through the tee, not WHY: on the reactive stack Spring's own
+ * The seam observes what flows through the tee, not WHY. Assumption: on the reactive stack Spring's own
  * `releaseBody()` (`toBodilessEntity()`, the release of what an `exchangeToMono` handler left over)
  * subscribes and drains the body through the tee and therefore counts as [COMPLETE], with its bytes on
  * the size sample; the body skip of `bodyToMono(Void.class)` cancels after the first buffer and counts
- * as [PARTIAL]. On the blocking stack the same `toBodilessEntity()` never opens the stream and counts
- * as [UNREAD]. The counter's question - is a call site discarding payload it paid for? - is therefore
- * answered per ROUTE, against how that route's client is written, not across the two stacks.
+ * as [PARTIAL]; on the blocking stack the same `toBodilessEntity()` never opens the stream and counts
+ * as [UNREAD] (probed on Spring Framework 7.0.9). The counter's question - is a call site discarding
+ * payload it paid for? - is therefore answered per ROUTE, against how that route's client is written,
+ * not across the two stacks.
  *
- * The REQUEST side has no read state: a client writes its request body in full before the peer answers,
- * so what the tee counted there is what went out.
+ * The REQUEST side has no read state: a request body is WRITTEN by the client, not consumed by the
+ * application, so there is no consumption to observe. What its size sample counts per stack - and that
+ * it can exceed or fall short of what reached the peer - is the Common guide's section "What the body
+ * sizes measure".
  */
 enum class BodyReadState(
     /**
-     * The value of the `state` tag on the `adapter.response.body.read` counter - a contract with
-     * every dashboard keying on it.
+     * The value of the `state` tag on the `adapter.response.body.read` counter. Compatibility: a
+     * contract with every dashboard keying on it.
      */
     val tagValue: String,
 ) {

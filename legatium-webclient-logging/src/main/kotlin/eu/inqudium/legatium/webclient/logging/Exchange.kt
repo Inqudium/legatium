@@ -77,8 +77,10 @@ internal class Exchange(
         get() = name ?: target
 
     /**
-     * The failure of the call - the error signal of the response `Mono` (no response), or the error
-     * signal of the body `Flux` (a response exists, its status is known).
+     * The failure of the call - the error signal of the response `Mono` (no response), a synthetic
+     * `IllegalStateException` with [ClientRequestLoggingFilter.NO_RESPONSE_MESSAGE] when that `Mono`
+     * completed empty (no response either), or the error signal of the body `Flux` (a response exists,
+     * its status is known).
      */
     @Volatile
     var failure: Throwable? = null

@@ -15,7 +15,6 @@ internal object CauseGraph {
         throwable: Throwable?,
         predicate: (Throwable) -> Boolean,
     ): Boolean {
-        // A cause graph is finite in practice, but a cycle is legal; the visited set bounds the walk.
         val visited = HashSet<Throwable>()
         val pending = ArrayDeque<Throwable>()
         throwable?.let(pending::add)

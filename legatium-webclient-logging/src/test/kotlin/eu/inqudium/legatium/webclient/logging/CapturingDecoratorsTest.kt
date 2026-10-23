@@ -55,7 +55,7 @@ class CapturingDecoratorsTest {
         val connector = RecordingConnectorRequest()
 
         // When
-        CapturingClientHttpRequestDecorator(connector, capture).writeWith(Mono.just(buffer("hello"))).block()
+        CapturingClientHttpRequestDecorator(connector, capture, UNEXPECTED_TEE_FAILURE).writeWith(Mono.just(buffer("hello"))).block()
 
         // Then
         assertThat(connector.written).isInstanceOf(Mono::class.java)
@@ -83,9 +83,9 @@ class CapturingDecoratorsTest {
         val streaming = connectorRequest().apply { headers.contentLength = 9 }
 
         // When
-        CapturingClientHttpRequestDecorator(connector, declared).writeWith(Mono.just(buffer("hello"))).block()
-        CapturingClientHttpRequestDecorator(garbled, malformed).writeWith(Mono.just(buffer("hello"))).block()
-        CapturingClientHttpRequestDecorator(streaming, flushed).writeAndFlushWith(Flux.just(Flux.just(buffer("a\n")))).block()
+        CapturingClientHttpRequestDecorator(connector, declared, UNEXPECTED_TEE_FAILURE).writeWith(Mono.just(buffer("hello"))).block()
+        CapturingClientHttpRequestDecorator(garbled, malformed, UNEXPECTED_TEE_FAILURE).writeWith(Mono.just(buffer("hello"))).block()
+        CapturingClientHttpRequestDecorator(streaming, flushed, UNEXPECTED_TEE_FAILURE).writeAndFlushWith(Flux.just(Flux.just(buffer("a\n")))).block()
 
         // Then
         assertThat(declared.expectedBytes).isEqualTo(5L)
@@ -109,7 +109,7 @@ class CapturingDecoratorsTest {
         val connector = RecordingConnectorRequest()
 
         // When
-        CapturingClientHttpRequestDecorator(connector, capture).writeWith(Flux.just(buffer("hello "), buffer("world"))).block()
+        CapturingClientHttpRequestDecorator(connector, capture, UNEXPECTED_TEE_FAILURE).writeWith(Flux.just(buffer("hello "), buffer("world"))).block()
 
         // Then
         assertThat(connector.written).isInstanceOf(Flux::class.java).isNotInstanceOf(Mono::class.java)
@@ -138,7 +138,7 @@ class CapturingDecoratorsTest {
             )
 
         // When
-        CapturingClientHttpRequestDecorator(connector, capture).writeAndFlushWith(events).block()
+        CapturingClientHttpRequestDecorator(connector, capture, UNEXPECTED_TEE_FAILURE).writeAndFlushWith(events).block()
 
         // Then
         assertThat(connector.bodyAsString.block()).isEqualTo("a\nbb\nccc\n")
@@ -171,7 +171,7 @@ class CapturingDecoratorsTest {
                     .build()
 
             // When: the filter's rebuild, then the connector's write of it
-            request.withRequestBodyTee(capture).writeTo(connector, ExchangeStrategies.withDefaults()).block()
+            request.withRequestBodyTee(capture, UNEXPECTED_TEE_FAILURE).writeTo(connector, ExchangeStrategies.withDefaults()).block()
 
             // Then
             assertThat(connector.zeroCopied).isEqualTo(Triple(file, 0L, 1_234L))
@@ -204,7 +204,7 @@ class CapturingDecoratorsTest {
                     .build()
 
             // When
-            request.withRequestBodyTee(capture).writeTo(connector, ExchangeStrategies.withDefaults()).block()
+            request.withRequestBodyTee(capture, UNEXPECTED_TEE_FAILURE).writeTo(connector, ExchangeStrategies.withDefaults()).block()
 
             // Then
             assertThat(connector.bodyAsString.block()).isEqualTo("file body")
@@ -229,7 +229,7 @@ class CapturingDecoratorsTest {
         val connector = ZeroCopyConnectorRequest().apply { transferFailure = IOException("connection reset during sendfile") }
 
         // When
-        val thrown = catchThrowable { ZeroCopyCapturingClientHttpRequestDecorator(connector, capture).writeWith(Path.of("upload.bin"), 0, 1_234).block() }
+        val thrown = catchThrowable { ZeroCopyCapturingClientHttpRequestDecorator(connector, capture, UNEXPECTED_TEE_FAILURE).writeWith(Path.of("upload.bin"), 0, 1_234).block() }
 
         // Then
         assertThat(thrown).hasMessageContaining("connection reset during sendfile")
@@ -259,3 +259,6 @@ class CapturingDecoratorsTest {
         }
     }
 }
+
+/** The tee failure reporter of these tests, whose copies never throw: a call to it fails the test. */
+private val UNEXPECTED_TEE_FAILURE: (Exception) -> Unit = { e -> error("unexpected tee failure: $e") }

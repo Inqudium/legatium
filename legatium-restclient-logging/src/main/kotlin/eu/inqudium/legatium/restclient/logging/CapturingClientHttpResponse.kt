@@ -11,44 +11,45 @@ import java.io.InputStream
  * reporting a failure of ANY delegate operation always - and turns [close] into the EMISSION POINT of the
  * exchange.
  *
- * `RestClient` and `RestTemplate` consume the body AFTER the interceptor chain returned - through the
- * message converters, on the caller's thread - and close the response in a `finally` when they are done
- * (`RestClient.exchange(..., close = true)` and `RestTemplate.doExecute` alike). So the moment the
- * response is closed is the moment the exchange is truly over: status, headers and the body that was
- * actually read are FINAL there. Emitting when the interceptor returns would log a body of zero bytes and
- * a duration that excludes the read. A response the application never closes (a raw
- * `exchange(..., close = false)` the caller forgets to close) never completes - and stays open on the
- * `adapter.logging.exchanges.open` gauge, the module's liveness signal, rather than logging a guess.
+ * Assumption: `RestClient` and `RestTemplate` consume the body AFTER the interceptor chain returned -
+ * through the message converters, on the caller's thread - and close the response in a `finally` when
+ * they are done (`RestClient.exchange(..., close = true)` and `RestTemplate.doExecute` alike; probed on
+ * Spring Framework 7.0.9). So the moment the response is closed is the moment the exchange is truly over:
+ * status, headers and the body that was actually read are FINAL there. Rationale: not emitting when the
+ * interceptor returns, because that would log a body of zero bytes and a duration that excludes the read.
+ * A response the application never closes (a raw `exchange(..., close = false)` the caller forgets to
+ * close) never completes - and stays open on the `adapter.logging.exchanges.open` gauge, the module's
+ * liveness signal, rather than logging a guess.
  *
  * The tee records the READ STATE on the capture: opening the stream marks consumption as started;
  * observing the end of the stream marks it complete - an EOF return from either `read`, OR the byte count
  * reaching the length the response declared (the interceptor hands the capture a trustworthy
- * `Content-Length` at handover). The second rule exists because Spring's `ByteArrayHttpMessageConverter`
- * reads exactly `Content-Length` bytes with `readNBytes` and never asks for the EOF; without it every
- * `byte[]` answer counted as `partial`. Its corollary: a response that carries NO body - a 1xx, 204 or
- * 304 answer, a declared length of zero - is complete at handover, because the clients never open such
- * a body (Spring's own `hasMessageBody()` rule) and nothing an application could have discarded exists
- * ([eu.inqudium.legatium.common.BodyReadState]). Both are observations of what the application did,
- * never an extra read: the tee does not probe for EOF itself, so a body the application stopped reading
- * stays PARTIAL.
+ * `Content-Length` at handover). The second rule exists for Spring's `ByteArrayHttpMessageConverter`.
+ * Assumption: it reads exactly `Content-Length` bytes with `readNBytes` and never asks for the EOF
+ * (probed on Spring Framework 7.0.9); without the rule every `byte[]` answer counted as `partial`. Its
+ * corollary: a response that carries NO body - a 1xx, 204 or 304 answer, a declared length of zero - is
+ * complete at handover, because the clients never open such a body (Spring's own `hasMessageBody()` rule)
+ * and nothing an application could have discarded exists ([eu.inqudium.legatium.common.BodyReadState]).
+ * Both are observations of what the application did, never an extra read: the tee does not probe for EOF
+ * itself, so a body the application stopped reading stays PARTIAL.
  *
- * EVERY delegate operation that can fail the caller is guarded, not only the body reads: status, status
- * text and headers (the read at handover tolerates a refusing engine, but the CLIENT's later access
- * propagates), `available`, the body stream's close, and the response close itself. Any exception (an
- * [java.io.IOException] from a dropped connection or a read timeout, an engine's unchecked wrapper) is
- * reported through [onFailure] - the exchange then classifies as a failure, a timeout, or - on an
- * interrupted thread - cancelled (ADR-0015) although a status was already received - and rethrown
- * unchanged. The caller and the event thus never disagree: a
- * response that fails the caller is never logged as `success`.
+ * Safety: EVERY delegate operation that can fail the caller is guarded, not only the body reads - status,
+ * status text and headers (the CLIENT's own access after the handover read, which the interceptor's
+ * `snapshotResponse` owns), `available`, the body stream's close, and the response close itself - so the
+ * caller and the event never disagree: a response that fails the caller is never logged as `success`.
+ * Any exception (an [java.io.IOException] from a dropped connection or a read timeout, an engine's
+ * unchecked wrapper) is reported through [onFailure] - the exchange then classifies as an outcome other
+ * than `success` ([eu.inqudium.legatium.common.ClientOutcome]) although a status was already received -
+ * and rethrown unchanged.
  *
- * The tee stream is TRANSPARENT to the application: it forwards the delegate's `mark`/`reset`
- * capability unchanged - a buffered response (Spring's `BufferingClientHttpRequestFactory`, a
- * `ByteArrayInputStream` body) stays rewindable, an engine stream stays what it was - because Spring's
- * own `IntrospectingClientHttpResponse` probes `markSupported()` before deciding how to peek at the
- * body, and a custom extractor may too. A reset rewinds the capture with the stream
- * ([BoundedBodyCapture.reset]), so replayed bytes are neither counted nor logged twice. `skip` and the
- * bulk reads keep their `InputStream` defaults, which go through `read`: an engine's own skip would
- * move bytes past the tee uncounted.
+ * The tee stream is TRANSPARENT to the application: it forwards the delegate's `mark`/`reset` capability
+ * unchanged - a buffered response (Spring's `BufferingClientHttpRequestFactory`, a `ByteArrayInputStream`
+ * body) stays rewindable, an engine stream stays what it was. Assumption: Spring's own
+ * `IntrospectingClientHttpResponse` probes `markSupported()` before deciding how to peek at the body
+ * (probed on Spring Framework 7.0.9), and a custom extractor may too. A reset rewinds the capture with
+ * the stream ([BoundedBodyCapture.reset]), so replayed bytes are neither counted nor logged twice. `skip`
+ * and the bulk reads keep their `InputStream` defaults, which go through `read`. Rationale: not the
+ * engine's own skip, because it would move bytes past the tee uncounted.
  *
  * Single reader: the body is opened and read by one thread at a time, as every client does; the memo of
  * the tee stream is volatile for the documented handoff to a closing thread, not for concurrent readers.
@@ -56,8 +57,8 @@ import java.io.InputStream
  * [close] runs the delegate's close FIRST (returning the connection to the pool is the client's business
  * and must never wait for a log line), records a throwing close on the exchange, and runs [onClose] in a
  * `finally`, so a throwing delegate still completes the exchange - as a failure, with the exception the
- * caller is about to see. [onClose] is the interceptor's exactly-once completion; a double close is
- * harmless.
+ * caller is about to see. [onClose] is the interceptor's exactly-once completion ([Exchange.completed]),
+ * so a double close is harmless.
  */
 internal class CapturingClientHttpResponse(
     private val delegate: ClientHttpResponse,

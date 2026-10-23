@@ -6,15 +6,15 @@ package eu.inqudium.legatium.common
  *
  * `always` means every body of every call. What an operator nearly always wants is "bodies only when
  * something went wrong": that cuts the volume by orders of magnitude and hits exactly the lines a body
- * is wanted for. The outcome is final before the line is written, so the response side simply decides
- * at emission. The request body flows BEFORE the outcome is known, so [ON_FAILURE] captures it exactly
- * like [ALWAYS] does (bounded by `max-body-bytes`) and discards it for a success: the capture is paid,
- * the output is saved - and the output is what burdens the log pipeline.
+ * is wanted for. Neither body can wait for the outcome, which is final only at emission: the request
+ * body flows before it is known, the response body while the application reads it. [ON_FAILURE]
+ * therefore captures BOTH directions exactly like [ALWAYS] does (bounded by `max-body-bytes`) and
+ * decides at emission whether the line carries them, discarding them for a success: the capture is
+ * paid, the output is saved - and the output is what burdens the log pipeline.
  *
  * "Failed" is every outcome but `success`: `rejected` (a 4xx - the peer answered, the request was
  * wrong, and that is exactly the case a body explains; ADR-0012), `failure` (a 5xx or a thrown call),
- * `timeout`, `cancelled`. A slow but healthy call stays `success` and logs no
- * body.
+ * `timeout`, `cancelled`. A slow but healthy call stays `success` and logs no body.
  */
 enum class BodyLogMode {
     /** Nothing is captured for logging; a size meter may still install a count-only capture. */

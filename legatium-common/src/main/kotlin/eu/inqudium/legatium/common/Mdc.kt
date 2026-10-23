@@ -14,8 +14,8 @@ object MdcKeys {
     const val REQUEST_ID = "adapter_request_id"
 
     /**
-     * The HTTP method - under this key, NOT the field name `adapter_request_method`: a pattern
-     * layout or an MDC-keyed filter uses this spelling.
+     * The HTTP method - under this key, NOT the field name `adapter_request_method`. Compatibility: a
+     * pattern layout or an MDC-keyed filter uses this spelling.
      */
     const val REQUEST_METHOD = "adapter_method"
 
@@ -29,9 +29,10 @@ object MdcKeys {
 /**
  * Trace context keys of the exchange event, parsed from the OUTGOING W3C `traceparent` header (ADR-0002:
  * both twins source the trace id from the header the host's propagation put on the request, never from a
- * tracing bridge's API). [TRACE_ID] is Boot's logging-correlation key: the header's trace id IS the trace
- * the client span runs under, so the join holds. The header's parent-id is the span the PEER will see as
- * its parent - which is exactly the local client span of this call - so it is published under Boot's
+ * tracing bridge's API). Assumption: `traceId` and `spanId` are Boot's logging-correlation keys for the
+ * trace and the local span (probed on Spring Boot 4.1.1). The header's trace id IS the trace the client
+ * span runs under, so the join on [TRACE_ID] holds. The header's parent-id is the span the PEER will see
+ * as its parent - which is exactly the local client span of this call - so it is published under the
  * local-span key [SPAN_ID]. (This is the mirror image of the inbound side, where the header's parent-id
  * is the CALLER's span and must not be published as the local one.) Absent header means not logged.
  */
@@ -89,8 +90,8 @@ internal class MdcScope(
 
 /**
  * Puts [entries] into the MDC, then runs [andThen] (the removals a scope owns), and rolls back to
- * [previous] when either throws: a broken MDC adapter failing mid-put must not leave half an identity
- * on a pooled thread. A rollback failure is attached to the ORIGINAL install exception as suppressed
+ * [previous] when either throws. Safety: a broken MDC adapter failing mid-put must not leave half an
+ * identity on a pooled thread. A rollback failure is attached to the ORIGINAL install exception as suppressed
  * instead of replacing it. Shared by [MdcScope] and the RestClient twin's caller snapshot, so the
  * partial-install rule has one owner.
  */
@@ -113,9 +114,9 @@ internal inline fun installMdcEntries(
 }
 
 /**
- * Restores [previous] BEST-EFFORT - a null value removes the key: one failing adapter call must not
- * leave the remaining entries on a pooled thread. The first failure is rethrown after the loop, later
- * ones attached as suppressed. Shared by [MdcScope] and the RestClient twin's caller snapshot.
+ * Restores [previous] BEST-EFFORT - a null value removes the key. Safety: one failing adapter call must
+ * not leave the remaining entries on a pooled thread, so the first failure is rethrown after the loop,
+ * later ones attached as suppressed. Shared by [MdcScope] and the RestClient twin's caller snapshot.
  */
 internal fun restoreMdcEntries(previous: Map<String, String?>) {
     var failure: Exception? = null

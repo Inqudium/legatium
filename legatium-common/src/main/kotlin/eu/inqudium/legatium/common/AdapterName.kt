@@ -7,10 +7,10 @@ package eu.inqudium.legatium.common
  * `WebClient`), which every request of that client then carries and both twins read at wiring time
  * (ADR-0009).
  *
- * An attribute rather than a header, a property or a URI rule: a header would go on the wire and change
- * the request the module only observes; a property is per application, and the point is telling several
- * clients of ONE application apart; a rule on the URI is what breaks behind a sidecar in the first
- * place.
+ * Rationale: an attribute rather than a header, a property or a URI rule - a header would go on the wire
+ * and change the request the module only observes; a property is per application, and the point is
+ * telling several clients of ONE application apart; a rule on the URI is what breaks behind a sidecar in
+ * the first place.
  */
 internal object AdapterName {
     /**

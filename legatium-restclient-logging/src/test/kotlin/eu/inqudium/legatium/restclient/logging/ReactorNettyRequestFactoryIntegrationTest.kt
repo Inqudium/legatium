@@ -8,10 +8,11 @@ import java.io.IOException
 import java.time.Duration
 
 /**
- * [RequestFactoryContract] on Reactor Netty, blocking through `ReactorClientHttpRequestFactory`. Its
- * read timeout is `ReadTimeoutException` (an `io.netty.handler.timeout.TimeoutException`), its connect
- * timeout `io.netty.channel.ConnectTimeoutException` - both matched by name, neither a JDK type, and
- * both reach the interceptor inside the factory's `IOException` wrapper. Does NOT decompress: Reactor
+ * [RequestFactoryContract] on Reactor Netty, blocking through `ReactorClientHttpRequestFactory`.
+ * Assumption: its read timeout is `ReadTimeoutException` (an `io.netty.handler.timeout.TimeoutException`),
+ * its connect timeout `io.netty.channel.ConnectTimeoutException` - both matched by name, neither a JDK
+ * type, and both reach the interceptor inside the factory's `IOException` wrapper (probed on Reactor
+ * Netty 1.3.7, Spring Framework 7.0.9). Does NOT decompress: Reactor
  * Netty's `compress(false)` default sends no `Accept-Encoding` and decodes nothing.
  */
 class ReactorNettyRequestFactoryIntegrationTest : RequestFactoryContract() {

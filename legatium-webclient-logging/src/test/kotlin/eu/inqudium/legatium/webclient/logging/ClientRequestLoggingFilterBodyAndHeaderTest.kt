@@ -258,6 +258,49 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             // Then
             assertThat(keyValues(log.events.single())).doesNotContainKey("adapter_request_body")
         }
+
+        @Test
+        fun `should write the buffer untouched and count stage wiring when the request tee itself throws`() {
+            // What is tested: the fail-open path around the tee in the request decorator's writeWith - a
+            //   DataBuffer whose non-advancing read throws while the capture copies its prefix.
+            // Success criteria: the call succeeds, the connector receives the very buffer the inserter
+            //   wrote with its bytes intact, the exchange logs as a success whose request-body field is
+            //   the bare truncation note for the 7 bytes that flowed (counted before the copy that broke
+            //   - the text is lost, the size is not), the size sample is 7 bytes, and the fail-open
+            //   counter shows stage=wiring at 1.
+            // Why it matters: the tee is a passive copy; escaping the connector's body write, a failure
+            //   in it would fail the call the module only describes - it may cost the logged text, never
+            //   the upload nor the size sample, and it must be counted, not swallowed.
+            // Given: a measuring, body-logging filter and a request body buffer that breaks under the
+            //   tee's copy
+            val registry = SimpleMeterRegistry()
+            val filter = filterWith(base.copy(logRequestBody = BodyLogMode.ALWAYS, measureRequestBodySize = true), ticker, registry)
+            val broken =
+                object : DataBufferWrapper(buffer("payload")) {
+                    override fun toByteBuffer(
+                        srcPos: Int,
+                        dest: ByteBuffer,
+                        destPos: Int,
+                        length: Int,
+                    ): Unit = error("tee broke")
+                }
+            val connector = WritingExchange()
+            val request = request(method = HttpMethod.POST) { body(BodyInserters.fromDataBuffers(Flux.just<DataBuffer>(broken))) }
+
+            // When
+            val thrown = catchThrowable { filter.call(request, connector) }
+
+            // Then
+            assertThat(thrown).isNull()
+            val written = requireNotNull(requireNotNull(connector.received).body.collectList().block())
+            assertThat(written).singleElement().isSameAs(broken)
+            assertThat(written.single().toString(StandardCharsets.UTF_8)).isEqualTo("payload")
+            assertThat(keyValues(log.events.single()))
+                .containsEntry("adapter_outcome", "success")
+                .containsEntry("adapter_request_body", "... [truncated, 7 bytes total]")
+            assertThat(registry.get(ClientLoggingMetrics.REQUEST_BODY_SIZE_METER).summary().totalAmount()).isEqualTo(7.0)
+            assertThat(registry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
+        }
     }
 
     @Nested

@@ -9,20 +9,22 @@ import kotlin.reflect.KClass
  * the RestClient interceptor and the WebClient filter emit the same fields under the same names with
  * the same shapes, and the same VALUE vocabulary of [OUTCOME].
  *
- * These names are a CONTRACT with the log index, not local identifiers: renaming a constant below is free,
- * changing a [wireName] breaks every dashboard, saved search and alert rule keying on it. The mapping is
- * shipped as the repository-shared `/docs/elk/legatium-restclient-logging-fields.component-template.json` -
- * the DEFINITION of the family (no upstream data-stream mapping exists yet), composed into the log pipeline
- * by whoever wires a module in; `ClientLogFieldTest` keeps enum and template in lockstep, build-breaking
- * in both directions.
+ * Compatibility: these names are a CONTRACT with the log index, not local identifiers - renaming a
+ * constant below is free, changing a [wireName] breaks every dashboard, saved search and alert rule
+ * keying on it. The mapping is shipped as the repository-shared component template (the file
+ * `ClientLogFieldTest` loads) - the DEFINITION of the family (no upstream data-stream mapping exists
+ * yet), composed into the log pipeline by whoever wires a module in. `ClientLogFieldTest` keeps enum and
+ * template in lockstep, build-breaking in both directions: the same field names, and for every field
+ * the index type its declared [type] maps to.
  *
  * **Why an enum rather than string literals.** A literal repeated across call sites is a typo away from a
  * second, near-identical field no dashboard knows about; and beyond the name, a field declares its wire
- * SHAPE (the JVM type the index template maps), pinned by the lockstep test.
+ * SHAPE ([type]), which the lockstep test holds against the template's index type.
  *
- * The `adapter_` prefix keeps the family disjoint from the `endpoint_*` family the sibling project
- * limesium writes for INBOUND exchanges: one document may carry both (a client line emitted inside a
- * server request inherits the ambient `endpoint_*` MDC), and no field may mean two things.
+ * Compatibility: the `adapter_` prefix keeps the family disjoint from the `endpoint_*` family the
+ * sibling project limesium writes for INBOUND exchanges: one document may carry both (a client line
+ * emitted inside a server request inherits the ambient `endpoint_*` MDC), and no field may mean two
+ * things.
  *
  * ELK MAPPING. Each field carries an `ELK:` line stating the intended mapping and the access pattern that
  * earns it:
@@ -37,8 +39,11 @@ import kotlin.reflect.KClass
  */
 internal enum class ClientLogField(
     val wireName: String,
-    /** The exact JVM type a value of this field must have on the wire - asserted, never converted. */
-    private val type: KClass<out Any>,
+    /**
+     * The exact JVM type a value of this field must have on the wire - asserted, never converted.
+     * Internal for the lockstep test, which derives the field's expected index type from it.
+     */
+    internal val type: KClass<out Any>,
 ) {
     /**
      * ELK: `keyword`, index true, doc_values ON - aggregate. The [ClientOutcome] values - on both stacks,
@@ -142,9 +147,9 @@ internal enum class ClientLogField(
 
     /**
      * Whether [value] has the exact JVM type this field puts on the wire - the shape the index template
-     * maps. Consulted by `ClientLogFieldTest` for the lockstep pin, not at emission: the emitters are the
-     * only callers of [addKeyValue] and pass values of the declared types, so a runtime gate would guard
-     * a case the lockstep test already excludes.
+     * maps. Consulted by `ClientLogFieldTest`, not at emission: the emitters are the only callers of
+     * [addKeyValue] and pass values of the declared types, so a runtime gate would check every line for
+     * a case only an emitter change could introduce.
      */
     fun accepts(value: Any?): Boolean = value != null && type.isInstance(value)
 }

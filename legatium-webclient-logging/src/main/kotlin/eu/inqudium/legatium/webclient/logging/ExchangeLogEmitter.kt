@@ -56,8 +56,8 @@ internal class ExchangeLogEmitter(
      * (ADR-0010). Detected against this module's class loader by default (manual wiring); mutable for
      * the auto-configuration, which re-detects against the context's class loader - the production
      * second user this seam exists for - and for the tests, which swap in a throwing restorer to drive
-     * the fail-open path. A post-construction seam rather than a constructor parameter of the filter,
-     * so the entry point keeps one constructor signature. The RestClient twin has no counterpart seam:
+     * the fail-open path. Rationale: a post-construction seam rather than a constructor parameter of the
+     * filter, so the entry point keeps one constructor signature. The RestClient twin has no counterpart seam:
      * its `CallerMdcSnapshot` (ADR-0011) has one restore and no second implementation, and its tests
      * drive the fail-open path through a failing MDC adapter instead.
      */
@@ -191,7 +191,7 @@ internal class ExchangeLogEmitter(
     }
 
     /**
-     * Scope teardown guarded on its own - the teardown rule of [reportQuietly]: the line counts as
+     * Scope teardown guarded on its own - the teardown rule of [WiringCost.DIRTY_TEARDOWN]: the line counts as
      * emitted, a failure here (an MDC adapter, a host accessor) is bookkeeping (`stage=wiring`).
      */
     private fun restoreQuietly(
@@ -214,9 +214,9 @@ internal class ExchangeLogEmitter(
     }
 
     /**
-     * The caller's context restored, or nothing: a restorer that throws (a host accessor failing on this
-     * thread) costs the ambient keys, counted as stage=wiring, never the event - which then carries the
-     * module's own identity alone, exactly as before ADR-0010.
+     * The caller's context restored, or nothing. Safety: a restorer that throws (a host accessor failing
+     * on this thread) costs the ambient keys, counted as stage=wiring, never the event - which then
+     * carries the module's own identity alone, exactly as before ADR-0010.
      */
     private fun restoreAmbientQuietly(exchange: Exchange): AutoCloseable =
         try {
@@ -236,14 +236,12 @@ internal class ExchangeLogEmitter(
 
     /**
      * The SLF4J level carries the severity, adapter_outcome the semantic - decoupled on purpose
-     * ([ClientLogField.OUTCOME]): a timeout in the error's cause chain is WARN with its own outcome (the
-     * peer is slow, not broken), any other error signal is ERROR with `failure`, a subscription the
-     * caller abandoned (a downstream timeout operator, a disposed caller) is WARN with `cancelled` - the
-     * disposition the RestClient twin shares for a call its caller abandoned, here with the reactive
-     * trigger (ADR-0015); an answered exchange classifies by its
-     * status alone ([Classification.ofStatus], shared with the RestClient twin): a 5xx is WARN `failure`,
-     * a 4xx is `rejected` at INFO - WARN for the [Classification.ESCALATED_REJECTIONS] (ADR-0012) - and
-     * INFO `success` otherwise.
+     * ([ClientLogField.OUTCOME]). The local branches come first, in this order: a timeout in the error's
+     * cause chain is WARN with its own outcome (the peer is slow, not broken), any other error signal is
+     * ERROR with `failure`, a subscription the caller abandoned (a downstream timeout operator, a
+     * disposed caller) is WARN with `cancelled` - the disposition the RestClient twin shares for a call
+     * its caller abandoned, here with the reactive trigger (ADR-0015). An answered exchange classifies by
+     * its status alone: [Classification.ofStatus], shared with the RestClient twin.
      */
     private fun classify(
         failure: Throwable?,
@@ -332,11 +330,11 @@ internal class ExchangeLogEmitter(
     }
 
     /**
-     * Guarded on its own: whatever the body measurements throw costs the sample, never the event. The
-     * meter owner already confines the two host-registry faults itself - a rejected registration falls
-     * back to its private registry, a throwing host meter is counted per hit and warned once
-     * ([ClientLoggingMetrics]) - so this guard is the last line, warning per exchange because reaching
-     * it means the owner's own guards regressed.
+     * Safety: guarded on its own - whatever the body measurements throw costs the sample, never the
+     * event. The meter owner already confines the two host-registry faults itself - a rejected
+     * registration falls back to its private registry, a throwing host meter is counted per hit and
+     * warned once ([ClientLoggingMetrics]) - so this guard is the last line, warning per exchange
+     * because reaching it means the owner's own guards regressed.
      */
     private fun recordBodySizesQuietly(exchange: Exchange) {
         try {

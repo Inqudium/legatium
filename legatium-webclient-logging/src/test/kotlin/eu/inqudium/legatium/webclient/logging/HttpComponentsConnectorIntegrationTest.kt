@@ -20,14 +20,16 @@ import java.time.Duration
 import java.util.concurrent.TimeUnit
 
 /**
- * [ConnectorContract] on Apache HttpComponents 5's async client. Its connect timeout is
- * `org.apache.hc.client5.http.ConnectTimeoutException`, which IS a `java.net.SocketTimeoutException`;
- * its response timeout surfaces as a `SocketTimeoutException` too - both JDK types, no name of their
- * own in the classification. Its third timeout has no counterpart in the contract: the POOL LEASE
- * timeout, raised when no pooled connection became free within the connection request timeout: the
- * async client fails the lease with the pool's `DeadlineTimeoutException`, a
- * `java.util.concurrent.TimeoutException` (the classic client raises
- * `org.apache.hc.core5.http.ConnectionRequestTimeoutException` instead, matched by name) - pinned here.
+ * [ConnectorContract] on Apache HttpComponents 5's async client. Its third timeout has no counterpart
+ * in the contract: the POOL LEASE timeout, raised when no pooled connection became free within the
+ * connection request timeout - its classification is pinned here.
+ *
+ * Assumption: the connect timeout is `org.apache.hc.client5.http.ConnectTimeoutException`, which IS a
+ * `java.net.SocketTimeoutException`, and the response timeout surfaces as a `SocketTimeoutException`
+ * too - both JDK types, no name of their own in the classification; the async client fails a lease
+ * with the pool's `DeadlineTimeoutException`, a `java.util.concurrent.TimeoutException` (the classic
+ * client raises `org.apache.hc.core5.http.ConnectionRequestTimeoutException` instead, matched by name)
+ * (probed on HttpClient 5.6.4, HttpCore 5.4.3).
  */
 class HttpComponentsConnectorIntegrationTest : ConnectorContract() {
     override fun connector(
@@ -59,9 +61,9 @@ class HttpComponentsConnectorIntegrationTest : ConnectorContract() {
     fun `should log this connector's pool lease timeout as WARN timeout`() {
         // What is tested: the classification against the exception the async client really raises when
         //   its pool has no free connection within the connection request timeout - a third timeout
-        //   next to connect and response. The async pool enforces a lease deadline at its NEXT event
-        //   (a release, another lease), not on a timer: a connection that comes back after the deadline
-        //   fails the waiting request instead of serving it.
+        //   next to connect and response. Assumption: the async pool enforces a lease deadline at its
+        //   NEXT event (a release, another lease), not on a timer - a connection that comes back after
+        //   the deadline fails the waiting request instead of serving it (probed on HttpCore 5.4.3).
         // Success criteria: against a pool of ONE connection whose only slot is held past the 200 ms
         //   lease timeout and then released, the call errors, the single event is WARN with outcome
         //   timeout, `-> -` and no status, and the peer never saw a request.

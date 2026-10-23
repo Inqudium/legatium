@@ -59,10 +59,11 @@ internal class Exchange(
     val callerMdc: CallerMdcSnapshot = CallerMdcSnapshot.NONE,
 ) {
     /**
-     * The exactly-once guard of the COMPLETION (gauge close + emission): the response close and the
-     * no-response failure path can never both happen for one exchange, but a response closed twice can -
-     * whoever wins this CAS completes, and the emitter trusts it (one guard, like the reactive twin's
-     * state machine).
+     * Invariant: the ONE exactly-once guard of the COMPLETION (gauge close + emission, or the abandonment
+     * of an exchange an Error left) - whoever wins this CAS completes, every later arrival is a no-op,
+     * and the emitter trusts it instead of guarding again (one guard, like the reactive twin's state
+     * machine). The response close and the no-response failure path can never both happen for one
+     * exchange, but a response closed twice can.
      */
     val completed = AtomicBoolean(false)
 
@@ -95,8 +96,8 @@ internal class Exchange(
 
     /**
      * Records [e] as the [failure] together with the interrupt status of the CURRENT thread - read at
-     * the moment the exception reaches this module, on the thread it surfaced on, and never cleared:
-     * `isInterrupted`, not `Thread.interrupted()`, because the interrupt belongs to the caller.
+     * the moment the exception reaches this module, on the thread it surfaced on, and never cleared.
+     * Rationale: `isInterrupted`, not `Thread.interrupted()`, because the interrupt belongs to the caller.
      */
     fun recordFailure(e: Throwable) {
         failure = e
@@ -106,9 +107,9 @@ internal class Exchange(
     }
 
     /**
-     * The REAL response the wire call produced. Null when the call produced no response. Status and
-     * headers are READ at handover ([responseStatus], [responseHeaders]) - they are final there, and
-     * the emission runs after the client closed the response, when an engine need not answer.
+     * The REAL response the wire call produced. Null when the call produced no response. Its status and
+     * headers are read at handover into [responseStatus] and [responseHeaders] - the rule is
+     * `ClientRequestLoggingInterceptor.snapshotResponse`'s.
      */
     @Volatile
     var response: ClientHttpResponse? = null

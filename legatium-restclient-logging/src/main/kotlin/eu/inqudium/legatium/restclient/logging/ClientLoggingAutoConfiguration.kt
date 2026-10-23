@@ -32,10 +32,11 @@ import org.springframework.core.env.Environment
  * is logged; `adapter-logging.enabled=false` removes it again. Unlike an inbound filter the interceptor
  * needs no web application: a batch job or a message consumer calling out is a client too.
  *
- * Every bean backs off to a host-provided one: a host may pin [NanoTimeSource] or
+ * The four component beans back off to a host-provided one: a host may pin [NanoTimeSource] or
  * [CorrelationIdGenerator] (tests do), replace the [HeaderValueMasker] (a keyed fingerprint for a
  * compliance regime), or define its own [ClientRequestLoggingInterceptor] bean to take over the
- * interceptor while keeping the customizer wiring below.
+ * interceptor while keeping the customizer wiring below; the customizers and the observation report do
+ * not.
  *
  * The customizers live in nested configurations conditional on Boot's `spring-boot-restclient` module
  * (an optional dependency of this one): a host that builds its clients by hand keeps the interceptor bean
@@ -82,8 +83,8 @@ class ClientLoggingAutoConfiguration {
     /**
      * The interceptor as its own bean, so a host can replace it while keeping the customizers below.
      *
-     * The meter registry arrives as an [ObjectProvider] and is CONSUMED, never exported: a logging
-     * library must not define the host's `MeterRegistry`. A host without one - no actuator - gets an
+     * The meter registry arrives as an [ObjectProvider] and is CONSUMED, never exported (ADR-0008): a
+     * logging library must not define the host's `MeterRegistry`. A host without one - no actuator - gets an
      * empty [CompositeMeterRegistry]: Micrometer's meters against it are no-ops, so nothing is
      * accumulated in a registry nobody reads, and the module works unchanged.
      */
@@ -140,6 +141,11 @@ class ClientLoggingAutoConfiguration {
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(RestClientCustomizer::class)
     class RestClientCustomization {
+        /**
+         * Appends the interceptor to every `RestClient.Builder`'s interceptor list - it never replaces
+         * one the builder already holds - at [CUSTOMIZER_ORDER]. It does not back off: its bean name
+         * `clientLoggingRestClientCustomizer` is the host's handle to take it out of the context.
+         */
         @Bean
         @Order(CUSTOMIZER_ORDER)
         fun clientLoggingRestClientCustomizer(interceptor: ClientRequestLoggingInterceptor): RestClientCustomizer {
@@ -157,6 +163,11 @@ class ClientLoggingAutoConfiguration {
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(RestTemplateCustomizer::class)
     class RestTemplateCustomization {
+        /**
+         * Appends the interceptor to every `RestTemplate`'s interceptor list - it never replaces one the
+         * template already holds - at [CUSTOMIZER_ORDER]. It does not back off: its bean name
+         * `clientLoggingRestTemplateCustomizer` is the host's handle to take it out of the context.
+         */
         @Bean
         @Order(CUSTOMIZER_ORDER)
         fun clientLoggingRestTemplateCustomizer(interceptor: ClientRequestLoggingInterceptor): RestTemplateCustomizer {
@@ -175,10 +186,10 @@ class ClientLoggingAutoConfiguration {
          * interceptor list (a metrics or diagnostics wrapper), exactly as the inbound filter's
          * `HIGHEST_PRECEDENCE + 10` leaves room above it.
          *
-         * The consequence, decided and pinned by the auto-configuration test: a host customizer without
-         * an `@Order` sits at `Ordered.LOWEST_PRECEDENCE`, in that room, and is applied AFTER this one -
-         * its interceptor is appended behind the logging interceptor and runs inside it, so a header it
-         * adds is not on the logged line and a retry it performs is one line for all attempts. A host
+         * The consequence, decided and pinned by `ClientLoggingAutoConfigurationTest`: a host customizer
+         * without an `@Order` sits at `Ordered.LOWEST_PRECEDENCE`, in that room, and is applied AFTER this
+         * one - its interceptor is appended behind the logging interceptor and runs inside it, so a header
+         * it adds is not on the logged line and a retry it performs is one line for all attempts. A host
          * that wants its interceptor observed orders its customizer before this value (any explicit
          * `@Order` below `LOWEST_PRECEDENCE - 10`, `@Order(0)` being the usual choice).
          */

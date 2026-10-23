@@ -33,9 +33,9 @@ import java.util.concurrent.atomic.AtomicReference
  * JDK `HttpClient`, Apache HttpComponents 5, Jetty, Reactor Netty, `HttpURLConnection`): the
  * interceptor touches an engine only through `ClientHttpRequestInterceptor` and the response tee on the
  * engine's own stream, so what this contract pins is that those seams hold against each real engine -
- * the body tee and its read state, the wire correlation header, the exception types each engine raises
- * for its CONNECT and READ timeouts as the shared `Timeouts` classification recognises them, wrapped in
- * `RestClient`'s `ResourceAccessException` - and how each engine hands a gzip answer to the
+ * the body tee and its read state, the wire correlation header, the classification of each engine's
+ * CONNECT and READ timeouts by the shared `Timeouts` (the exception types are the engine's business, not
+ * pinned), wrapped in `RestClient`'s `ResourceAccessException` - and how each engine hands a gzip answer to the
  * application, which is where the engines genuinely differ: some decompress transparently (and strip
  * the `Content-Length` the capture would otherwise trust), some hand the compressed bytes through. A
  * refused connection is the control: a failure that must NOT read as a timeout. Three scenarios pin the
@@ -49,8 +49,9 @@ import java.util.concurrent.atomic.AtomicReference
  * operators, pinned so that an engine upgrade which changes it fails the build instead of leaving the
  * page wrong. A failure there means: update the page and the subclass's expectation together.
  *
- * The reactive twin's `ConnectorContract` is the model; a subclass supplies the factory and declares
- * whether its engine decompresses, every scenario, assertion and expected line is the same.
+ * The reactive twin's `ConnectorContract` is the model. A subclass supplies the factory and declares its
+ * engine's facts through the abstract members; every scenario, assertion and expected line is otherwise
+ * the same.
  */
 @SpringBootTest(
     classes = [IntegrationApp::class],

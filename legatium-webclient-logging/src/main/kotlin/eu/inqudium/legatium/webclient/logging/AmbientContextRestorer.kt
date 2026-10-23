@@ -44,10 +44,10 @@ internal fun interface AmbientContextRestorer {
          * Present on BOTH loaders: the one the caller decides against ([classLoader] - the context's,
          * through which the host's optional dependencies are visible and which a test can narrow) and
          * the one [ContextPropagationRestorer]'s Micrometer references actually LINK through
-         * ([linkedThrough], the defining loader of this module's classes). A shared-lib deployment that
-         * puts the module in a parent loader and the library in the child alone would pass the first
-         * check and fail the construction with a `NoClassDefFoundError` at context start - against the
-         * fail-open promise; it gets [NONE]. The second parameter is a test seam.
+         * ([linkedThrough], the defining loader of this module's classes). Safety: a shared-lib
+         * deployment that puts the module in a parent loader and the library in the child alone would
+         * pass the first check and fail the construction with a `NoClassDefFoundError` at context start -
+         * against the fail-open promise; it gets [NONE]. The second parameter is a test seam.
          */
         fun detect(
             classLoader: ClassLoader? = AmbientContextRestorer::class.java.classLoader,
@@ -63,10 +63,10 @@ internal fun interface AmbientContextRestorer {
 
 /**
  * The context-propagation implementation - its own class, so the Micrometer types are resolved only
- * when [AmbientContextRestorer.detect] found them on the classpath. Reactor registers the
- * `ContextAccessor` that reads a `ContextView` (a service-loader entry of reactor-core), the host
- * registers the `ThreadLocalAccessor`s; the factory captures the accessors' values from the context
- * and installs them.
+ * when [AmbientContextRestorer.detect] found them on the classpath. The host registers the
+ * `ThreadLocalAccessor`s; the factory captures the accessors' values from the context and installs
+ * them. Assumption: Reactor registers the `ContextAccessor` that reads a `ContextView` itself, as a
+ * service-loader entry of reactor-core (probed on Reactor Core 3.8.7).
  */
 internal class ContextPropagationRestorer(
     registry: ContextRegistry = ContextRegistry.getInstance(),

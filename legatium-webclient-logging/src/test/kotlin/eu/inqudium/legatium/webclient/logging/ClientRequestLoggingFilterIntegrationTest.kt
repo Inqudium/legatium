@@ -31,12 +31,7 @@ import java.util.concurrent.TimeoutException
         "adapter-logging.response-headers.unmasked=Content-Type",
         "adapter-logging.request-headers.includes=X-Correlation-Id",
         "adapter-logging.request-headers.unmasked=X-Correlation-Id",
-        // The tracing bridge is on this test classpath for the tracing suite; excluded here, so the
-        // calls are TRACELESS (an active bridge injects a traceparent into EVERY call, sampled or not)
-        // and the correlation contract is what goes on the wire.
-        "spring.autoconfigure.exclude=" +
-            "org.springframework.boot.micrometer.tracing.brave.autoconfigure.BraveAutoConfiguration," +
-            "org.springframework.boot.micrometer.tracing.autoconfigure.MicrometerTracingAutoConfiguration",
+        TRACELESS_CALLS,
     ],
 )
 class ClientRequestLoggingFilterIntegrationTest : IntegrationFixture() {

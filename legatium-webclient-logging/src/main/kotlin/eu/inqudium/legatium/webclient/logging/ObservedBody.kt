@@ -22,12 +22,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - **The consumer decided it has read enough** - and says so from WITHIN the delivery of a buffer to
  *   it. Assumption: Spring's own body skip (`bodyToMono(Void.class)`, `toEntity(Void.class)`, an
  *   unsupported media type) drains a `ClientHttpResponse` through `takeWhile(release; false)`, which
- *   cancels upstream in `onNext` of the FIRST buffer; a `take(n)` cancels in `onNext` of the n-th. The
- *   exchange is over,
- *   the peer answered, the application chose not to read the rest: the outcome is `success`, and the
- *   read state stays `partial` (the size counter shows what was consumed). Logging these as
- *   `cancelled` would flag every fire-and-forget call at WARN and, in `on-failure` body mode, write both
- *   bodies of a healthy call.
+ *   cancels upstream in `onNext` of the FIRST buffer (probed on Spring Framework 7.0.9); a `take(n)`
+ *   cancels in `onNext` of the n-th. The exchange is over, the peer answered, the application chose not
+ *   to read the rest: the outcome is `success`, and the read state stays `partial` (the size counter
+ *   shows what was consumed). Logging these as `cancelled` would flag every fire-and-forget call at
+ *   WARN and, in `on-failure` body mode, write both bodies of a healthy call.
  * - **The caller walked away** - from anywhere else: a `timeout()` operator's timer thread, a disposed
  *   `Disposable`, a client that disconnected from a server streaming this body through. That is an
  *   abandonment, and it is what `adapter_outcome=cancelled` reports - the disposition the blocking twin
@@ -48,7 +47,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * ## Order of the terminal signal and the emission
  *
- * The terminal signal is handed on BEFORE the exchange completes ([onTerminal] runs after
+ * Invariant: the terminal signal is handed on BEFORE the exchange completes ([onTerminal] runs after
  * `actual.onComplete`/`onError` returned). The consumer's synchronous terminal work - Spring's decoder
  * joining and decoding the body, an `onErrorResume` - therefore runs first, and the duration the
  * emitter samples afterwards includes it: the reactive counterpart of the blocking twin's response
@@ -63,11 +62,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * ## Only the first subscription is observed
  *
  * The exchange has ONE body; the ownership of its terminal signal belongs to the first subscription,
- * not to every subscription. Spring subscribes to a body a second time as a matter of course:
- * `exchangeToMono`/`exchangeToFlux` release the body after the handler returned (`releaseIfNotConsumed`),
- * and the JDK, Jetty and HttpComponents responses answer any second subscription with an error
- * ("The client response body can only be consumed once") that Spring swallows - Reactor Netty completes
- * it empty. Were every subscription observed, that synchronous error would arrive INSIDE the first
+ * not to every subscription. Assumption: Spring subscribes to a body a second time as a matter of
+ * course - `exchangeToMono`/`exchangeToFlux` release the body after the handler returned
+ * (`releaseIfNotConsumed`), and the JDK, Jetty and HttpComponents responses answer any second
+ * subscription with an error ("The client response body can only be consumed once") that Spring
+ * swallows, where Reactor Netty completes it empty (probed on Spring Framework 7.0.9 and Reactor Netty
+ * 1.3.7). Were every subscription observed, that synchronous error would arrive INSIDE the first
  * subscription's `actual.onComplete()` (the release runs from the decoder's completion), before the
  * first observer reached [onTerminal], and would win the exchange's completion as a `failure`: every
  * healthy `exchangeToMono` call logged at ERROR on three of the four connectors. So the first
@@ -130,20 +130,9 @@ internal class ObservedBody(
         }
 
         override fun onNext(buffer: DataBuffer) {
-            // The tee is a passive copy and fail-open: a tee that throws costs the logged text of this
-            // chunk (its bytes are counted before the copy), never the buffer - the caller's original
-            // continues downstream untouched.
-            val observed =
-                if (capture == null) {
-                    buffer
-                } else {
-                    try {
-                        tee(capture, buffer)
-                    } catch (e: Exception) {
-                        onTeeFailure(e)
-                        buffer
-                    }
-                }
+            // The fail-open tee of both directions: a copy that throws costs this chunk's logged text,
+            // never the buffer the caller reads.
+            val observed = if (capture == null) buffer else teeOrPass(capture, buffer, onTeeFailure)
             deliveringOn = Thread.currentThread()
             try {
                 actual.onNext(observed)

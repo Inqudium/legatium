@@ -6,8 +6,8 @@ package eu.inqudium.legatium.common
  * semantics are a cross-twin contract.
  *
  * MASKED BY DEFAULT (ADR-0005): a logged header's value is replaced by the [HeaderValueMasker]'s
- * rendering unless its name is explicitly allowed in plaintext. The two lists that widen the selection
- * and the one list that removes masking are therefore never coupled the wrong way round: an
+ * rendering unless its name is explicitly allowed in plaintext. The one list that widens the selection
+ * ([includes]) and the one that removes masking ([unmasked]) are therefore independent: an
  * `includes: ["*"]` typed for a debugging session costs readability, not confidentiality.
  *
  * The four lists and their precedence: [includes] minus [excludes] is what is logged (an exclude always

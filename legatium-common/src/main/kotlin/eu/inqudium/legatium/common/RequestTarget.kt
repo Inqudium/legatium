@@ -3,19 +3,19 @@ package eu.inqudium.legatium.common
 import java.net.URI
 
 /**
- * The logged coordinates of an outbound request, from its URI: the peer [host] with an explicit port
- * when the URI names one (null for a URI without an authority), the RAW [path] as sent (`/` for an
- * empty one), and the [target] `scheme://host[:port]/path` without the query - the message and MDC
- * coordinate. RAW, still percent-encoded, on purpose: `java.net.URI`'s decoded `getPath()`/`getQuery()`
- * turn `%0A`/`%0D` into real line breaks that would forge lines in every plain-text sink (message, MDC
+ * The logged coordinates of an outbound request, from its URI: the peer [host] with an explicit port when
+ * the URI names one (null for a URI without an authority), the RAW [path] as sent (`/` for an empty one),
+ * and the [target] `scheme://host[:port]/path` without the query - the message and MDC coordinate.
+ * Rationale: RAW, still percent-encoded, because `java.net.URI`'s decoded `getPath()`/`getQuery()` turn
+ * `%0A`/`%0D` into real line breaks that would forge lines in every plain-text sink (message, MDC
  * `adapter_route`, fields); activation matching keeps the decoded path. Shared by both twins.
  *
- * `java.net.URI` refuses to parse an authority that is not a syntactically valid host as one - a service
- * name with an underscore (`billing_api`, common in Compose and Kubernetes) has `getHost()` null and
- * `getPort()` -1 although the request goes to exactly that peer. Such a REGISTRY-BASED authority is
- * taken as the host verbatim (user info stripped), so the coordinates and the exclude-hosts match name
- * the peer instead of rendering `http:///path`. An IPv6 literal keeps its brackets here, as it appears
- * in the URL; [hostName] strips them for the activation match.
+ * Assumption: `java.net.URI` refuses to parse an authority that is not a syntactically valid host as
+ * one: a service name with an underscore (`billing_api`, common in Compose and Kubernetes) has
+ * `getHost()` null and `getPort()` -1 although the request goes to exactly that peer. Such a REGISTRY-BASED authority
+ * is taken as the host verbatim (user info stripped), so the coordinates and the exclude-hosts match name
+ * the peer instead of rendering `http:///path`. An IPv6 literal keeps its brackets here, as it appears in
+ * the URL; [hostName] strips them for the activation match.
  */
 internal class RequestTarget private constructor(
     val host: String?,
