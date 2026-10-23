@@ -9,14 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Tests: the RestClient twin's connector contract also runs against **Apache HttpClient 4**, which
-  Spring Framework 7 ships no request factory for, through a test-scoped adapter
-  (`HttpClient4RequestFactory`, modelled on Spring 5's) - the shape a host still on HttpClient 4
-  bridges it with. Pinned: body tee, correlation header, gzip, read and connect timeout, the refused
-  connection, and the cancellation scenarios of ADR-0015 on virtual and platform threads, through
-  `Future.cancel(true)` and on an interrupted pool lease. `docs/cancellation-by-engine.md` gains the
-  engine (§2.3, rank 5 of §5). httpclient 4.5.14 is test-scoped in `legatium-restclient-logging` and
-  `legatium-common`; neither jar depends on it.
+- Docs: `docs/cancellation-by-engine.md` covers **Apache HttpClient 4** as well (§2.3, rank 5 of §5),
+  which Spring Framework 7 ships no request factory for: observed on 2026-10-21 by running the
+  connector contract once through a temporary adapter modelled on Spring 5's, the shape a host still
+  on HttpClient 4 bridges it with. The adapter and its suite were not kept - the observation is
+  documentation, not a contract the build re-checks.
 - Docs: a site page **Cancellation by engine (RestClient / RestTemplate)**
   (`docs/cancellation-by-engine.md`) on how each request factory Spring ships reacts when the
   caller abandons a blocking call - the blocking twin only, the reactive twin is not affected:
@@ -58,8 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at WARN instead of `failure` at ERROR, for a host that bridges HttpClient 4 with a request factory
   of its own. Like HttpClient 5's lease timeout before 1.2.1, it is an `InterruptedIOException` without
   a timeout cause; `Timeouts` now matches its `org.apache.http.conn.ConnectTimeoutException` family by
-  name. Pinned by the common module's test against the real classes and by the HttpClient 4 connector
-  suite.
+  name. Pinned by the common module's test against the real classes (httpclient 4.5.14 test-scoped
+  there; neither jar depends on it).
 
 ## [1.2.1] - 2026-10-19
 
