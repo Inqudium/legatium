@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Tests: the exceptions `docs/cancellation-by-engine.md` documents for an abandoned blocking call
+  are **pinned per engine** - the exact type the interceptor receives (with message prefix and
+  cause where the page names them) and the type thrown to the `RestClient` caller, on a virtual
+  thread, a platform thread, through `Future.cancel(true)` and on Apache 5's interrupted pool lease
+  (`RequestFactoryContract.abandonedCallExceptions`, 16 scenarios). An engine upgrade that changes
+  them now fails the build instead of leaving the page wrong; CONTRIBUTING and ADR-0015 record the
+  exception to the rule that engine suites pin the classification only.
 - Docs: `docs/cancellation-by-engine.md` covers **Apache HttpClient 4** as well (§2.3, rank 5 of §5),
   which Spring Framework 7 ships no request factory for: observed on 2026-10-21 by running the
   connector contract once through a temporary adapter modelled on Spring 5's, the shape a host still

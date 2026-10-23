@@ -2,7 +2,9 @@ package eu.inqudium.legatium.restclient.logging
 
 import org.springframework.http.client.ClientHttpRequestFactory
 import org.springframework.http.client.ReactorClientHttpRequestFactory
+import org.springframework.web.client.ResourceAccessException
 import reactor.netty.http.client.HttpClient
+import java.io.IOException
 import java.time.Duration
 
 /**
@@ -16,6 +18,13 @@ class ReactorNettyRequestFactoryIntegrationTest : RequestFactoryContract() {
     override val decompressesTransparently: Boolean = false
 
     override val interruptibleOnPlatformThreads: Boolean = true
+
+    // docs/cancellation-by-engine.md, section "Per engine": the interrupt of `block()` wrapped in an IOException
+    override val abandonedCallExceptions: AbandonedCallExceptions =
+        AbandonedCallExceptions(
+            atInterceptor = ExpectedThrowable(IOException::class.java),
+            toCaller = ResourceAccessException::class.java,
+        )
 
     override fun requestFactory(
         connectTimeout: Duration,

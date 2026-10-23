@@ -12,8 +12,12 @@ import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.http.HttpRequest
 import org.springframework.http.MediaType
+import org.springframework.http.client.ClientHttpRequestExecution
 import org.springframework.http.client.ClientHttpRequestFactory
+import org.springframework.http.client.ClientHttpRequestInterceptor
+import org.springframework.http.client.ClientHttpResponse
 import org.springframework.web.client.HttpServerErrorException
 import org.springframework.web.client.ResourceAccessException
 import org.springframework.web.client.RestClient
@@ -38,6 +42,12 @@ import java.util.concurrent.atomic.AtomicReference
  * abandoned call as `cancelled` (ADR-0015): a caller interrupted mid-call on a virtual thread, the same
  * interrupt on a platform thread - which only an engine waiting on a future honours - and a worker
  * cancelled through its future, the TimeLimiter shape.
+ *
+ * Three more scenarios pin what the ENGINE throws in those situations - the exception the interceptor
+ * receives and the one the `RestClient` caller gets ([abandonedCallExceptions]). That is no part of
+ * legatium's contract; it is what `docs/cancellation-by-engine.md` (section "Per engine") tells
+ * operators, pinned so that an engine upgrade which changes it fails the build instead of leaving the
+ * page wrong. A failure there means: update the page and the subclass's expectation together.
  *
  * The reactive twin's `ConnectorContract` is the model; a subclass supplies the factory and declares
  * whether its engine decompresses, every scenario, assertion and expected line is the same.
@@ -75,6 +85,61 @@ abstract class RequestFactoryContract : PeerIntegrationSuite() {
      */
     protected abstract val interruptibleOnPlatformThreads: Boolean
 
+    /**
+     * What this engine throws when its caller abandons a call mid-exchange - interrupted on a virtual
+     * thread, cancelled through its future, or interrupted on a platform thread where the engine
+     * honours that ([interruptibleOnPlatformThreads]): the columns "Exception at the interceptor" and
+     * "Thrown to the `RestClient` caller" of `docs/cancellation-by-engine.md`, section "Per engine".
+     */
+    protected abstract val abandonedCallExceptions: AbandonedCallExceptions
+
+    /** An engine's exceptions for an abandoned call, as the cancellation page documents them. */
+    protected class AbandonedCallExceptions(
+        /** What the engine threw out of `execute`, as the interceptor receives it. */
+        val atInterceptor: ExpectedThrowable,
+        /** What `RestClient` hands its caller - the interceptor's exception wrapped, or passed through. */
+        val toCaller: Class<out Throwable>,
+    )
+
+    /** An exception by its exact type, optionally its message prefix and the exact type of its direct cause. */
+    protected class ExpectedThrowable(
+        val type: Class<out Throwable>,
+        val messagePrefix: String? = null,
+        val cause: Class<out Throwable>? = null,
+    ) {
+        fun assertMatches(
+            actual: Throwable?,
+            what: String,
+        ) {
+            assertThat(actual).describedAs(what).isExactlyInstanceOf(type)
+            messagePrefix?.let { assertThat(actual?.message).describedAs("%s message", what).startsWith(it) }
+            cause?.let { assertThat(actual?.cause).describedAs("%s cause", what).isExactlyInstanceOf(it) }
+        }
+    }
+
+    /**
+     * Registered after legatium's interceptor, so it runs INSIDE it, next to the engine: it records what
+     * the engine threw out of `execute` - the exception legatium's interceptor receives - and rethrows it
+     * unchanged.
+     */
+    protected class EngineThrowRecorder : ClientHttpRequestInterceptor {
+        @Volatile
+        var thrown: Throwable? = null
+            private set
+
+        override fun intercept(
+            request: HttpRequest,
+            body: ByteArray,
+            execution: ClientHttpRequestExecution,
+        ): ClientHttpResponse =
+            try {
+                execution.execute(request, body)
+            } catch (e: Throwable) {
+                thrown = e
+                throw e
+            }
+    }
+
     /** Boot's prototype builder - a fresh one per test instance; an engine suite's own scenario builds its client on it too. */
     @Autowired
     protected lateinit var restClientBuilder: RestClient.Builder
@@ -82,14 +147,19 @@ abstract class RequestFactoryContract : PeerIntegrationSuite() {
     @Autowired
     private lateinit var registry: MeterRegistry
 
-    /** A client on this engine; [timeout] applies to connect AND read - SHORT only where the timeout is the subject. */
+    /**
+     * A client on this engine; [timeout] applies to connect AND read - SHORT only where the timeout is the
+     * subject. A [recorder] runs inside legatium's interceptor (Boot's builder already carries that one).
+     */
     private fun client(
         baseUrl: String,
         timeout: Duration = GENEROUS,
+        recorder: EngineThrowRecorder? = null,
     ): RestClient =
         restClientBuilder
             .baseUrl(baseUrl)
             .requestFactory(requestFactory(connectTimeout = timeout, readTimeout = timeout))
+            .also { builder -> recorder?.let { builder.requestInterceptor(it) } }
             .build()
 
     private fun readStateCount(state: String): Double =
@@ -298,10 +368,14 @@ abstract class RequestFactoryContract : PeerIntegrationSuite() {
         assertThat(event.throwableProxy).isNotNull()
     }
 
-    /** What a call on its own thread ended with: the exception it threw, and its interrupt flag right after. */
+    /**
+     * What a call on its own thread ended with: the exception it threw, its interrupt flag right after,
+     * and - when an [EngineThrowRecorder] watched it - what the engine threw at the interceptor.
+     */
     protected class AbandonedCall(
         val thrown: Throwable?,
         val interruptedAfter: Boolean,
+        val atInterceptor: Throwable? = null,
     )
 
     /**
@@ -352,8 +426,11 @@ abstract class RequestFactoryContract : PeerIntegrationSuite() {
     private fun awaitRequestAtPeer() = awaitUntil("the request reached the peer") { peer.received.isNotEmpty() }
 
     /** A `/slow` call on a thread of [threads], interrupted once the request reached the peer. */
-    private fun interruptedMidCall(threads: Thread.Builder): AbandonedCall {
-        val client = client(peer.baseUrl)
+    private fun interruptedMidCall(
+        threads: Thread.Builder,
+        recorder: EngineThrowRecorder? = null,
+    ): AbandonedCall {
+        val client = client(peer.baseUrl, recorder = recorder)
         val call =
             ThreadedCall {
                 client
@@ -365,13 +442,37 @@ abstract class RequestFactoryContract : PeerIntegrationSuite() {
         val worker = call.startOn(threads)
         awaitRequestAtPeer()
         worker.interrupt()
-        return call.result()
+        return call.result().let { AbandonedCall(it.thrown, it.interruptedAfter, recorder?.thrown) }
+    }
+
+    /** A `/slow` call on a virtual worker whose future is cancelled with `cancel(true)` once the request reached the peer. */
+    private fun cancelledThroughFuture(recorder: EngineThrowRecorder? = null): AbandonedCall {
+        val client = client(peer.baseUrl, recorder = recorder)
+        val call =
+            ThreadedCall {
+                client
+                    .get()
+                    .uri("/slow")
+                    .retrieve()
+                    .body(String::class.java)
+            }
+        return Executors.newVirtualThreadPerTaskExecutor().use { workers ->
+            val future = workers.submit(call)
+            awaitRequestAtPeer()
+            future.cancel(true)
+            call.result().let { AbandonedCall(it.thrown, it.interruptedAfter, recorder?.thrown) }
+        }
+    }
+
+    /** The engine's documented exceptions for an abandoned call: [abandonedCallExceptions] at both ends. */
+    private fun assertThrownAsDocumented(call: AbandonedCall) {
+        abandonedCallExceptions.atInterceptor.assertMatches(call.atInterceptor, "exception at the interceptor")
+        assertThat(call.thrown).describedAs("exception thrown to the caller").isExactlyInstanceOf(abandonedCallExceptions.toCaller)
     }
 
     private fun assertCancelled(call: AbandonedCall) {
-        // Only THAT the call failed: what an engine throws on an interrupt is engine-internal (CONTRIBUTING.md,
-        // test rules) - Apache's classic client even retries the socket the interrupt closed, and the
-        // retry's pool lease throws a raw CancellationException past RestClient's wrapper.
+        // Only THAT the call failed: the classification must not depend on what the engine throws -
+        // the `should throw what the cancellation page documents` scenarios pin that separately.
         assertThat(call.thrown).describedAs("the call failed").isNotNull()
         assertThat(call.interruptedAfter).describedAs("interrupt flag after the emission").isTrue()
         val event = log.events.single()
@@ -430,28 +531,63 @@ abstract class RequestFactoryContract : PeerIntegrationSuite() {
         //   worker's interrupt flag is still set after the emission.
         // Why it matters: under load this is the most frequent abandoned exchange, and it read as an
         //   ERROR failure before - filling the level alerting fires on with "the caller left".
-        // Given
-        val client = client(peer.baseUrl)
-        val call =
-            ThreadedCall {
-                client
-                    .get()
-                    .uri("/slow")
-                    .retrieve()
-                    .body(String::class.java)
-            }
-        val result =
-            Executors.newVirtualThreadPerTaskExecutor().use { workers ->
-                val future = workers.submit(call)
-                awaitRequestAtPeer()
-
-                // When: the caller's budget expires
-                future.cancel(true)
-                call.result()
-            }
+        // Given/When: the caller's budget expires while the request is at the peer
+        val result = cancelledThroughFuture()
 
         // Then
         assertCancelled(result)
+    }
+
+    @Test
+    fun `should throw what the cancellation page documents when a caller is interrupted on a virtual thread`() {
+        // What is tested: the ENGINE's side of the virtual-thread interrupt - the exception it throws
+        //   out of `execute` (what legatium's interceptor receives) and the one `RestClient` hands the
+        //   caller, against `abandonedCallExceptions`.
+        // Success criteria: both match the documented types exactly (message prefix and direct cause
+        //   where documented).
+        // Why it matters: `docs/cancellation-by-engine.md` tells operators which exception to catch
+        //   (Apache's raw CancellationException escapes a ResourceAccessException handler); an engine
+        //   upgrade that changes it must fail here instead of leaving the page wrong.
+        // Given/When
+        val call = interruptedMidCall(Thread.ofVirtual(), EngineThrowRecorder())
+
+        // Then
+        assertThrownAsDocumented(call)
+    }
+
+    @Test
+    fun `should throw what the cancellation page documents when a caller is interrupted on a platform thread`() {
+        // What is tested: the engine's side of the platform-thread interrupt - documented exceptions
+        //   for an engine that honours it, none at all for one that blocks in a socket read.
+        // Success criteria: an interruptible engine throws what `abandonedCallExceptions` documents at
+        //   both ends; any other engine throws nothing, neither to the interceptor nor to the caller.
+        // Why it matters: "the worker stays blocked until the answer" is the page's central operating
+        //   consequence for a TimeLimiter on platform threads; an engine that starts to honour the
+        //   interrupt, or stops to, must fail here.
+        // Given/When
+        val call = interruptedMidCall(Thread.ofPlatform(), EngineThrowRecorder())
+
+        // Then
+        if (interruptibleOnPlatformThreads) {
+            assertThrownAsDocumented(call)
+        } else {
+            assertThat(call.atInterceptor).describedAs("exception at the interceptor").isNull()
+            assertThat(call.thrown).describedAs("exception thrown to the caller").isNull()
+        }
+    }
+
+    @Test
+    fun `should throw what the cancellation page documents when a worker is cancelled through its future`() {
+        // What is tested: the engine's side of the TimeLimiter shape - a virtual worker interrupted by
+        //   `Future.cancel(true)` - against `abandonedCallExceptions`.
+        // Success criteria: both ends match the documented types exactly.
+        // Why it matters: this is the shape the page's recommendation is written for; what the worker's
+        //   code sees thrown decides whether its own error handling runs.
+        // Given/When
+        val call = cancelledThroughFuture(EngineThrowRecorder())
+
+        // Then
+        assertThrownAsDocumented(call)
     }
 
     companion object {

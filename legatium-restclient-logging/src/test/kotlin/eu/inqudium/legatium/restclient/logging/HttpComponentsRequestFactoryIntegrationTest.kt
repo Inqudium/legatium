@@ -5,6 +5,7 @@ import eu.inqudium.legatium.common.keyValues
 import org.apache.hc.client5.http.HttpRoute
 import org.apache.hc.client5.http.config.ConnectionConfig
 import org.apache.hc.client5.http.impl.classic.HttpClients
+import org.apache.hc.client5.http.impl.classic.RequestFailedException
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManager
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder
 import org.apache.hc.core5.http.HttpHost
@@ -18,6 +19,7 @@ import org.springframework.http.client.HttpComponentsClientHttpRequestFactory
 import org.springframework.web.client.ResourceAccessException
 import org.springframework.web.client.RestClient
 import java.time.Duration
+import java.util.concurrent.CancellationException
 
 /**
  * [RequestFactoryContract] on Apache HttpComponents 5's classic client. Its connect timeout is
@@ -35,6 +37,13 @@ class HttpComponentsRequestFactoryIntegrationTest : RequestFactoryContract() {
     override val decompressesTransparently: Boolean = true
 
     override val interruptibleOnPlatformThreads: Boolean = false
+
+    // docs/cancellation-by-engine.md, section "Per engine": the retry's pool lease after the closed socket, passed through RestClient unwrapped
+    override val abandonedCallExceptions: AbandonedCallExceptions =
+        AbandonedCallExceptions(
+            atInterceptor = ExpectedThrowable(CancellationException::class.java),
+            toCaller = CancellationException::class.java,
+        )
 
     override fun requestFactory(
         connectTimeout: Duration,
@@ -59,7 +68,10 @@ class HttpComponentsRequestFactoryIntegrationTest : RequestFactoryContract() {
      * the manager, so no second call, no second thread, no second event, and released before the client
      * is destroyed - with [leaseTimeout] as the connection request timeout.
      */
-    private fun clientOnExhaustedPool(leaseTimeout: Duration): RestClient {
+    private fun clientOnExhaustedPool(
+        leaseTimeout: Duration,
+        recorder: EngineThrowRecorder? = null,
+    ): RestClient {
         val connections =
             PoolingHttpClientConnectionManagerBuilder
                 .create()
@@ -69,7 +81,11 @@ class HttpComponentsRequestFactoryIntegrationTest : RequestFactoryContract() {
         val factory = requestFactory(connections).also { it.setConnectionRequestTimeout(leaseTimeout) }
         val held = connections.lease("held", HttpRoute(HttpHost.create(peer.baseUrl)), Timeout.of(GENEROUS), null).get(Timeout.of(GENEROUS))
         closing(AutoCloseable { connections.release(held, null, TimeValue.ZERO_MILLISECONDS) })
-        return restClientBuilder.baseUrl(peer.baseUrl).requestFactory(factory).build()
+        return restClientBuilder
+            .baseUrl(peer.baseUrl)
+            .requestFactory(factory)
+            .also { builder -> recorder?.let { builder.requestInterceptor(it) } }
+            .build()
     }
 
     @Test
@@ -140,5 +156,38 @@ class HttpComponentsRequestFactoryIntegrationTest : RequestFactoryContract() {
         assertThat(event.formattedMessage).startsWith("Adapter http exchange GET ${peer.baseUrl}/things/1 -> - [")
         assertThat(keyValues(event)).containsEntry("adapter_outcome", "cancelled").doesNotContainKey("adapter_response_status_code")
         assertThat(event.throwableProxy).isNull()
+    }
+
+    @Test
+    fun `should throw what the cancellation page documents when a caller is interrupted waiting for a pooled connection`() {
+        // What is tested: the engine's side of the interrupted pool LEASE - the exception the classic
+        //   client throws out of `execute` and the one RestClient hands the caller.
+        // Success criteria: RequestFailedException("Request aborted") over the InterruptedException at
+        //   the interceptor; ResourceAccessException at the caller.
+        // Why it matters: `docs/cancellation-by-engine.md` documents that the lease wait, unlike the
+        //   socket read, cancels cleanly on both thread kinds with the usual wrapper; an upgrade that
+        //   changes it must fail here instead of leaving the page wrong.
+        // Given: the pool's one slot held, a lease timeout far beyond the test, a recorder next to the engine
+        val recorder = EngineThrowRecorder()
+        val client = clientOnExhaustedPool(Duration.ofSeconds(30), recorder)
+        val call =
+            ThreadedCall {
+                client
+                    .get()
+                    .uri("/things/1")
+                    .retrieve()
+                    .body(String::class.java)
+            }
+        val worker = call.startOn(Thread.ofPlatform())
+        awaitUntil("the call parked on the pool") { worker.state == Thread.State.TIMED_WAITING }
+
+        // When
+        worker.interrupt()
+        val result = call.result()
+
+        // Then
+        ExpectedThrowable(RequestFailedException::class.java, "Request aborted", InterruptedException::class.java)
+            .assertMatches(recorder.thrown, "exception at the interceptor")
+        assertThat(result.thrown).describedAs("exception thrown to the caller").isExactlyInstanceOf(ResourceAccessException::class.java)
     }
 }
