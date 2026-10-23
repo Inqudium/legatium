@@ -160,9 +160,19 @@ exchange" and the same five pre-registered outcomes.
 
 **Neutral:**
 
-- What an engine throws on an interrupt stays engine-internal and is
-  not pinned; the suites pin the classification only.
+- What an engine throws on an interrupt is not part of legatium's
+  contract, and the classification never depends on it. It is pinned
+  anyway, in scenarios of their own, because the cancellation page
+  documents it for operators (History, 2026-10-23).
 
 ## History
 
 - **2026-10-21:** first cut.
+- **2026-10-23:** the exceptions an engine throws for an abandoned
+  call - at the interceptor and at the `RestClient` caller - are
+  pinned per engine (`RequestFactoryContract.abandonedCallExceptions`,
+  the `should throw what the cancellation page documents …` scenarios,
+  and the interrupted pool lease of the HttpComponents suite), so that
+  `docs/cancellation-by-engine.md` cannot drift from an engine
+  upgrade unnoticed. They pin the page, not the contract; CONTRIBUTING
+  records the exception to its engine-exception rule.

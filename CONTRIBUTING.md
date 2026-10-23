@@ -121,6 +121,12 @@ the UI with a written reason.
   pinning it per engine would turn every engine upgrade into a test edit for no safety gained
   (decision of 2026-09-19, defect analyses of that day, findings 19 resp. 20). Unit tests against
   the module's own fakes may pin messages, because there the message is the test's own input.
+  **One deliberate exception:** what an engine throws when its caller abandons a blocking call is
+  pinned per engine (`abandonedCallExceptions` of `RequestFactoryContract`, the `should throw what
+  the cancellation page documents …` scenarios), because `docs/cancellation-by-engine.md` tells
+  operators which exception to catch. These scenarios pin the PAGE, not legatium's contract: when
+  an engine upgrade fails one, the page and the suite's expectation are updated together (decision
+  of 2026-10-23, ADR-0015).
 - Changes to the shared field/configuration contract need the reference file and the
   contract tests in **both** modules updated.
 - Test classes follow the existing `*Test.kt` naming (Surefire picks up `**/*Test.kt`).

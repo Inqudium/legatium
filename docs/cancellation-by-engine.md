@@ -180,9 +180,10 @@ timeout no longer than the `TimeLimiter` budget and catches `CancellationExcepti
 threads, ranks 1 to 5 are equivalent. No engine stops the peer's work: for a non-idempotent call the
 choice of engine changes nothing about whether it was executed.
 
-The versions are those of the connector-suite run behind this page. A dependency upgrade can change
-an engine's behaviour; the suites then fail or show a changed breadcrumb, and this table is updated
-with them.
+The versions are those the table was last verified against. A dependency upgrade that changes an
+engine's behaviour fails the suites - the classification and the exceptions of §2.2 are both pinned
+(§7) - and this table is then updated together with the suite's expectation. Apache HttpClient 4's
+row is the exception: an observation of 2026-10-21 that nothing re-checks (§2.3).
 
 ## 6. Which engine you get by default
 
@@ -251,6 +252,8 @@ is every engine suite of this repository: each sets its factory explicitly.
 | interrupted pool lease | Apache 5 | `HttpComponentsRequestFactoryIntegrationTest`: `should log a caller interrupted while waiting for a pooled connection as WARN cancelled` |
 | pool lease timeout (the control: a timeout, not a cancellation) | Apache 5 | `HttpComponentsRequestFactoryIntegrationTest`: `should log this request factory's pool lease timeout as WARN timeout` |
 | Apache 4's timeout classes as `timeout` | Apache 4 (by class name, no engine run) | `TimeoutsTest`: `should recognise Apache HttpClient 4's connect and pool lease timeouts by their class name` |
+| the exceptions of §2.2 - at the interceptor and at the caller - on a virtual thread, a platform thread and through `Future.cancel(true)` | all five, each against its suite's `abandonedCallExceptions` (none at all on a platform thread for `HttpURLConnection` and Apache 5) | `RequestFactoryContract`: `should throw what the cancellation page documents when …` (three scenarios) |
+| the exceptions of §2.2 for the interrupted pool lease | Apache 5 | `HttpComponentsRequestFactoryIntegrationTest`: `should throw what the cancellation page documents when a caller is interrupted waiting for a pooled connection` |
 | classification order, flag never cleared, close on another thread | none: engine-independent, driven by mock executions and hand-built exceptions | `ClientRequestLoggingInterceptorCancellationTest`, `CancellationsTest` |
 
 `RequestFactoryContract` runs once per engine, through its subclasses `JdkClientRequestFactoryIntegrationTest`,
@@ -258,6 +261,9 @@ is every engine suite of this repository: each sets its factory explicitly.
 `SimpleRequestFactoryIntegrationTest` (`HttpURLConnection`) and `HttpComponentsRequestFactoryIntegrationTest`.
 Apache HttpClient 4's rows in §2 and §5 are the observation of 2026-10-21 (§2.3) and are not re-run.
 
-The exception types in §2.2 are what the engines threw in these runs. They are engine-internal and
-not part of legatium's contract; the suites pin the classification only, so a new engine version that
-throws something else shows up as a changed breadcrumb, not as a different line.
+The exception types in §2.2 are not part of legatium's contract - the line legatium writes does not
+depend on them - but they are what an operator catches, so they are pinned in scenarios of their own:
+the exact type at the interceptor (with the message prefix and the direct cause where §2.2 names
+them) and the exact type thrown to the caller. A new engine version that throws something else fails
+those scenarios, and this page is updated with the expectation. The retry counts of the Apache
+engines are not pinned.
