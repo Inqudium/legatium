@@ -13,8 +13,12 @@ import java.util.concurrent.atomic.AtomicLong
  */
 fun interface CorrelationIdGenerator {
     /**
-     * A fresh id for one traceless call - sent on the wire and logged as `adapter_request_id`; it must
-     * be usable as an HTTP header value.
+     * A fresh id for one traceless call - sent on the wire and logged as `adapter_request_id`. It must
+     * satisfy the rule an id already on the request is accepted by (ADR-0002): one to 200 characters,
+     * visible ASCII only (`0x21`..`0x7E`). The generated id itself is NOT checked against that rule - it
+     * goes onto the wire, the message and the MDC as returned - but a retrying outer interceptor
+     * re-enters with it on the request, where an id outside the rule is rejected and replaced by a fresh
+     * one: the attempts of one call then log under different ids.
      */
     fun nextCorrelationId(): String
 
@@ -41,8 +45,8 @@ fun interface CorrelationIdGenerator {
  *   the per-call path is one atomic increment plus a radix conversion, no lock, no I/O.
  * - Uniqueness is guaranteed within an instance and probabilistic across instances (64 bits of prefix).
  * - Ids from one instance sort in allocation order; callers must not upper-case the value.
- * - Both widths are load-bearing (unambiguous concatenation, ordering); exceeding a width breaks both
- *   silently - guarded by a test, not a hot-path check ([COUNTER_WIDTH]).
+ * - Invariant: both widths are fixed - load-bearing for unambiguous concatenation and ordering - and
+ *   unchecked on the per-call path; what guards them is on [COUNTER_WIDTH].
  */
 internal class CountingCorrelationIdGenerator(
     /** Seeded from [SecureRandom], once, for the entropy of the prefix (ADR-0004). */
@@ -81,9 +85,12 @@ internal class CountingCorrelationIdGenerator(
         private const val PREFIX_WIDTH = 13
 
         /**
-         * 36^8 ids - longer than any instance lives; load-bearing for concatenation and ordering.
-         * Exceeding it breaks both silently, which the width-boundary test in
-         * `CountingCorrelationIdGeneratorTest` guards through the `counterStart` seam (ADR-0004).
+         * 36^8 ids - the operational certainty of [CorrelationIdGenerator.DEFAULT], not an unconditional
+         * one. A counter beyond the width lengthens the id and breaks concatenation and ordering
+         * silently. The width-boundary test of `CountingCorrelationIdGeneratorTest` (ADR-0004) fails when
+         * either width constant changes in either direction: a narrowed counter at the zero-padded
+         * counter 0, a widened counter or a changed prefix width at the 21 characters of counter 36^8 - 1,
+         * reached through the `counterStart` seam.
          */
         private const val COUNTER_WIDTH = 8
     }

@@ -101,7 +101,7 @@ the UI with a written reason.
 - A comment that states an invariant, an assumption about a third party, a workaround, a
   rejected alternative, a guard's purpose or a compatibility constraint opens that sentence
   with the prefix ADR-0013 defines (`Invariant:`, `Assumption:`, `Workaround:`, `Rationale:`,
-  `Safety:`, `Compatibility:`; `ELK:` on the log fields), so `grep -rn "Assumption:" */src/main`
+  `Safety:`, `Compatibility:`; `ELK:` on the log fields), so `grep -rn "Assumption:" */src`
   is the checklist of a dependency bump and `Invariant:` the module's invariant catalog. One
   prefix per statement, on the sentence that makes it - most comments carry none.
 

@@ -13,8 +13,8 @@ import org.springframework.util.ClassUtils
  * builder (`ObservationRestClientCustomizer`, `ObservationRestTemplateCustomizer`,
  * `ObservationWebClientCustomizer` - registered only with an `ObservationRegistry` bean) together with
  * Micrometer Tracing's handler (registered only with a `Tracer` bean), which injects the header when the
- * observation starts. That decision has no `adapter-logging.*` key and was so far readable nowhere at
- * startup, although it flips the identity contract: a traced call takes the trace id as its request id
+ * observation starts. That decision has no `adapter-logging.*` key and shows nowhere else at startup,
+ * although it flips the identity contract: a traced call takes the trace id as its request id
  * and gets NO correlation header, a traceless one gets a generated id and the header.
  *
  * [describe] asks the context for beans of the customizer and tracer classes and renders one of three

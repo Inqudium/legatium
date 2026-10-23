@@ -8,8 +8,9 @@ import java.time.Duration
 
 /**
  * [RequestFactoryContract] on `HttpURLConnection` (`SimpleClientHttpRequestFactory`), the engine of a
- * `RestTemplate()` constructed by hand. Both timeouts are `java.net.SocketTimeoutException`, matched as
- * a JDK type. Does NOT decompress: the URL connection hands a gzip answer through as sent.
+ * `RestTemplate()` constructed by hand. Assumption: both timeouts are `java.net.SocketTimeoutException`,
+ * matched as a JDK type (probed on JDK 26.0.1). Does NOT decompress: the URL connection hands a gzip
+ * answer through as sent.
  */
 class SimpleRequestFactoryIntegrationTest : RequestFactoryContract() {
     override val decompressesTransparently: Boolean = false

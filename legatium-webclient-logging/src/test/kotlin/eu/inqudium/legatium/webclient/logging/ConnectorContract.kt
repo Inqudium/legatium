@@ -35,11 +35,7 @@ import java.time.Duration
         "adapter-logging.log-response-body=always",
         "adapter-logging.request-headers.includes=X-Correlation-Id",
         "adapter-logging.request-headers.unmasked=X-Correlation-Id",
-        // Traceless calls, as in the Reactor Netty suite: the bridge is excluded so the correlation
-        // contract is what goes on the wire.
-        "spring.autoconfigure.exclude=" +
-            "org.springframework.boot.micrometer.tracing.brave.autoconfigure.BraveAutoConfiguration," +
-            "org.springframework.boot.micrometer.tracing.autoconfigure.MicrometerTracingAutoConfiguration",
+        TRACELESS_CALLS,
     ],
 )
 abstract class ConnectorContract : IntegrationFixture() {
@@ -116,9 +112,10 @@ abstract class ConnectorContract : IntegrationFixture() {
     fun `should log a body consumed inside exchangeToMono as success through this connector`() {
         // What is tested: the exactly-once completion against THIS engine's body publisher when Spring
         //   subscribes to the body a second time - exchangeToMono releases the body after the handler
-        //   returned (releaseIfNotConsumed), and the JDK, Jetty and HttpComponents responses answer
-        //   that second subscription with an error ("can only be consumed once"), which Spring itself
-        //   swallows. Reactor Netty completes it empty, so the Reactor Netty suite is the control.
+        //   returned (releaseIfNotConsumed). Assumption: the JDK, Jetty and HttpComponents responses
+        //   answer that second subscription with an error ("can only be consumed once"), which Spring
+        //   itself swallows, and Reactor Netty completes it empty, so the Reactor Netty suite is the
+        //   control (probed on JDK 26.0.1, Jetty 12.1.12, HttpCore 5.4.3, Reactor Netty 1.3.7).
         // Success criteria: the handler's body arrives; exactly one INFO event with outcome success,
         //   without a cause, after the first consumption completed the exchange.
         // Why it matters: a second subscription that could set the exchange's failure after the first

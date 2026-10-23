@@ -16,31 +16,31 @@ import reactor.util.context.Context
  *
  * The exchange completes at the body's terminal signal once a response was delivered, and at this
  * Mono's own error or cancel signal otherwise. The handover between the two owners is a RACE when a
- * cancel arrives from another thread while the response is being handed on: with `map` setting the
- * state before Reactor's `FluxMap` calls the downstream, a cancel in that window was ignored as "the
- * body owns it" - but a downstream that is cancelling drops the value it is handed and never subscribes
- * to the body, so neither owner completed the exchange: no event, the open-exchanges gauge one too high
- * forever. The peek operators cannot see when the downstream has RETURNED from `onNext`; a subscriber of
- * our own can.
+ * cancel arrives from another thread while the response is being handed on. Rationale: not `map`,
+ * because with `map` setting the state before Reactor's `FluxMap` calls the downstream, a cancel in
+ * that window was ignored as "the body owns it" - but a downstream that is cancelling drops the value
+ * it is handed and never subscribes to the body, so neither owner completed the exchange: no event,
+ * the open-exchanges gauge one too high forever. The peek operators cannot see when the downstream
+ * has RETURNED from `onNext`; a subscriber of our own can.
  *
  * The state therefore moves `OPEN -> DELIVERING` before `actual.onNext` and `DELIVERING -> RESPONDED`
  * after it returned. A cancel that reaches this operator in `OPEN` or `DELIVERING` from any OTHER thread
  * than the delivering one is the caller walking away - possibly while the downstream is about to drop the
  * response - and completes the exchange as `cancelled` right here (the body, if it is ever subscribed to,
  * finds the exchange completed and stays silent). A cancel from WITHIN the delivery on the same thread is
- * the downstream taking the response and cutting the Mono short as part of that (`Flux.next()` cancels
- * upstream before it hands the value on): the body owns the exchange from here, exactly as after a
- * normal `onComplete`. The thread identity is the same distinction [ObservedBody] draws for the body.
- * Pinned by the filter's unit tests with a `next()` and a barrier-driven concurrent cancel.
+ * the downstream taking the response and cutting the Mono short as part of that: the body owns the
+ * exchange from here, exactly as after a normal `onComplete`. Assumption: `Flux.next()` cancels
+ * upstream before it hands the value on (probed on Reactor Core 3.8.7). The thread identity is the
+ * same distinction [ObservedBody] draws for the body. Pinned by the filter's unit tests with a
+ * `next()` and a barrier-driven concurrent cancel.
  *
  * The same-thread rule has a documented limit: an OUTER operator that fails synchronously on the
  * delivered response - a host filter's `flatMap { Mono.error(...) }` or `map { throw ... }` ordered
- * before the module's customizer - is cancelled by Reactor's `onOperatorError` from inside `onNext`
- * on the delivering thread, which reads as "the downstream took it". The response is dropped without
- * its body subscribed or released, so the exchange stays RESPONDED on the gauge, like a raw
- * `exchange()` caller that drops the response (module guide, "A body nobody consumes"): the host must
- * read or release a
- * response it discards.
+ * before the module's customizer - reads as "the downstream took it". Assumption: Reactor's
+ * `onOperatorError` cancels such an operator's upstream from inside `onNext` on the delivering thread
+ * (probed on Reactor Core 3.8.7). The response is dropped without its body subscribed or released, so
+ * the exchange stays RESPONDED on the gauge, like a raw `exchange()` caller that drops the response
+ * (module guide, "A body nobody consumes"): the host must read or release a response it discards.
  */
 internal class ObservedResponse(
     source: Mono<ClientResponse>,
@@ -127,7 +127,8 @@ internal class ObservedResponse(
         override fun onComplete() {
             if (exchange.state.get() == ExchangeState.OPEN) {
                 // An EMPTY completion - a broken connector, a host filter that swallowed an error into
-                // Mono.empty() - is a failure: WebClient raises exactly this for the caller.
+                // Mono.empty() - is a failure, recorded with the message WebClient raises for the caller
+                // (mirrored by NO_RESPONSE_MESSAGE).
                 exchange.failure = IllegalStateException(ClientRequestLoggingFilter.NO_RESPONSE_MESSAGE)
             }
             try {

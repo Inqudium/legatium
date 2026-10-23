@@ -52,7 +52,7 @@ the category; the sentence after it is the rule, in the house form
 | Prefix | States | Ask the repository for it when |
 |---|---|---|
 | `Invariant:` | A property that holds at every point the code can be observed, or an ordering the code relies on (a write order, a lock order, "this runs LAST"). Prefer a `check`/`require` when it is cheap; the prefix marks the ones that are not. | changing concurrency, ordering or a field another thread reads |
-| `Assumption:` | A fact about a third party - Spring, Boot, Reactor, Netty, the JDK, a connector - the module relies on but cannot enforce, with the version it was verified against where one matters. | bumping a dependency: `grep -rn "Assumption:" */src/main` is the checklist of that upgrade |
+| `Assumption:` | A fact about a third party - Spring, Boot, Reactor, Netty, the JDK, a connector - the module relies on but cannot enforce, with the version it was verified against where one matters. | bumping a dependency: `grep -rn "Assumption:" */src` (main AND test) is the checklist of that upgrade |
 | `Workaround:` | Code or configuration shaped around a defect or limitation of a third party, with what breaks when it is removed. | bumping a dependency: the work list of things to try removing |
 | `Rationale:` | A rejected alternative with its failure mode - "not X, because X did Y". Not for every why: the house form states decision and reason in one sentence without a prefix; this prefix marks the alternative that must not be retried. | about to "simplify" a construction that looks roundabout |
 | `Safety:` | Why a guard, a catch or a rethrow exists in a fail-open path, and what escaping it would cost (a lost event, a failed call, a corrupted response). | touching a `try`/`catch` of the twins |
@@ -96,7 +96,11 @@ vocabulary has one home.
   `pluginsConfiguration` in the root POM (`Workaround:`).
 - Test comments keep their own three-question block (`What is
   tested:` / `Success criteria:` / `Why it matters:`); the prefixes
-  of this record are for production and build comments.
+  of this record are for production and build comments, with one
+  exception: a test's KDoc or rationale that states an engine fact
+  the suite does not pin (an exception type, a pool's deadline
+  rule) carries `Assumption:` with the probed version, so the
+  upgrade grep finds it next to the production ones.
 
 ### What is not enforced
 
@@ -144,3 +148,14 @@ is unaffected.
   of statement it is, the ADR number where the decision trail is.
 - The sibling project limesium may adopt the same vocabulary; each
   project keeps its own record.
+
+## History
+
+- **2026-09-20:** decided; the first eight statements prefixed.
+- **2026-10-23:** the upgrade checklist grep widened from
+  `*/src/main` to `*/src`. The engine suites' class KDocs named the
+  exception type of every engine timeout, some with "pinned here",
+  while the suites pin only the classification (CONTRIBUTING, test
+  rules); the comment audit of that day turned those facts into `Assumption: … (probed on <engine>
+  <version>)` lines in test code, which a grep over `src/main`
+  alone would miss on the next engine upgrade.

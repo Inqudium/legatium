@@ -36,6 +36,16 @@ import java.util.concurrent.atomic.AtomicLong
  */
 internal val AWAIT: Duration = Duration.ofSeconds(5)
 
+/**
+ * The tracing bridge - on the test classpath for the tracing suite - excluded, so the calls of a suite
+ * are TRACELESS: an active bridge injects a traceparent into EVERY call, sampled or not, and the
+ * correlation contract must be what goes on the wire.
+ */
+internal const val TRACELESS_CALLS =
+    "spring.autoconfigure.exclude=" +
+        "org.springframework.boot.micrometer.tracing.brave.autoconfigure.BraveAutoConfiguration," +
+        "org.springframework.boot.micrometer.tracing.autoconfigure.MicrometerTracingAutoConfiguration"
+
 /** An immutable outgoing request, as WebClient builds it. */
 internal fun request(
     method: HttpMethod = HttpMethod.GET,

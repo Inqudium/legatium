@@ -9,32 +9,38 @@ package eu.inqudium.legatium.common
  * The decision walks the CAUSE graph (clients wrap: `ResourceAccessException` over
  * `SocketTimeoutException`, `WebClientRequestException` over Netty's `ReadTimeoutException`) and, per
  * link, the class hierarchy BY NAME - every listed type, the JDK ones included, is matched by its fully
- * qualified name over the link's superclass chain. That covers Netty's
- * `io.netty.handler.timeout.TimeoutException` family and its CONNECT timeout
- * (`io.netty.channel.ConnectTimeoutException`, a `java.net.ConnectException` that no JDK timeout type
- * covers) without a Netty dependency in either twin. Apache HttpComponents 5 needs one name: its POOL
- * LEASE timeout (`org.apache.hc.core5.http.ConnectionRequestTimeoutException`, raised when no pooled
- * connection became free within the connection request timeout) is an `InterruptedIOException`, a type
- * that also carries a thread interrupt during I/O and so cannot be matched as a whole. Apache
- * HttpClient 4, which Spring no longer ships a request factory for but a host may still bridge with an adapter of
- * its own, needs one more: its `org.apache.http.conn.ConnectTimeoutException` family, an
- * `InterruptedIOException` too - the connect timeout carries the JDK's `SocketTimeoutException` as its
- * cause, but its POOL LEASE timeout (`ConnectionPoolTimeoutException`, a subclass) carries none. The
- * other connectors Spring ships need no name of their own: the JDK client's connect timeout is an
- * `HttpTimeoutException`, Jetty raises `SocketTimeoutException` / `TimeoutException`, Apache's
- * `ConnectTimeoutException` IS a `SocketTimeoutException`, and Reactor Netty's pool acquire timeout is a
- * `java.util.concurrent.TimeoutException` - pinned per engine by the twins' connector suites. Anything
- * else is a plain failure.
+ * qualified name over the link's superclass chain, so the engines' own timeout types are recognised
+ * without a dependency on any engine in either twin. Each name earns its place by one engine fact, stated
+ * at the entry. Rationale: not `java.io.InterruptedIOException` as a whole, although both Apache pool
+ * lease timeouts are one - the type also carries a thread interrupt during I/O, which is no timeout; the
+ * lease types are therefore listed by their own names. Anything else is a plain failure.
  */
 internal object Timeouts {
     private val TIMEOUT_CLASS_NAMES =
         setOf(
+            // Assumption: Jetty's idle and total timeouts and Reactor Netty's pool acquire timeout are this
+            // type (probed on Jetty 12.1.12 and Reactor Netty 1.3.7; the pool acquire pinned by
+            // `ReactorNettyConnectorIntegrationTest`).
             "java.util.concurrent.TimeoutException",
+            // Assumption: the JDK `HttpURLConnection` timeouts, Jetty's connect timeout and HttpComponents
+            // 5's `org.apache.hc.client5.http.ConnectTimeoutException` are this type (probed on JDK 25 and
+            // 26, Jetty 12.1.12, HttpClient 5.6.4).
             "java.net.SocketTimeoutException",
+            // Assumption: the JDK `HttpClient`'s request and connect timeouts are this type or its subclass
+            // `HttpConnectTimeoutException`, neither a `SocketTimeoutException` (probed on JDK 25 and 26).
             "java.net.http.HttpTimeoutException",
+            // Assumption: Netty's read and write timeouts are this family (probed on Netty 4.2.17.Final).
             "io.netty.handler.timeout.TimeoutException",
+            // Assumption: Netty's connect timeout is a `java.net.ConnectException` that no JDK timeout type
+            // covers (probed on Netty 4.2.17.Final).
             "io.netty.channel.ConnectTimeoutException",
+            // Assumption: HttpComponents 5's pool lease timeout - no pooled connection became free within
+            // the connection request timeout - is this `InterruptedIOException` (probed on HttpCore 5.4.3).
             "org.apache.hc.core5.http.ConnectionRequestTimeoutException",
+            // Assumption: Apache HttpClient 4 - no Spring request factory any more, but a host may bridge
+            // it with an adapter of its own - raises this `InterruptedIOException` family: the connect
+            // timeout with the JDK's `SocketTimeoutException` as its cause, the pool lease timeout
+            // (`ConnectionPoolTimeoutException`, a subclass) with none (probed on HttpClient 4.5.14).
             "org.apache.http.conn.ConnectTimeoutException",
         )
 

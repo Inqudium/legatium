@@ -65,8 +65,8 @@ internal class ExchangeLogEmitter(
      * dashboards blind to this extra line.
      */
     fun logRequestStart(exchange: Exchange) {
-        // The guard covers the COMPLETE arrival operation including the level gate: isInfoEnabled is a
-        // call into the host's logging backend and as fallible as the emission itself - outside the
+        // Safety: the guard covers the COMPLETE arrival operation including the level gate - isInfoEnabled
+        // is a call into the host's logging backend and as fallible as the emission itself; outside the
         // guard it could fail the call this line merely announces.
         failOpen(
             onInterrupted = { e ->
@@ -110,8 +110,7 @@ internal class ExchangeLogEmitter(
     /**
      * The single emission point of the completion event, called exclusively from the interceptor's
      * exactly-once completion - at response close, or right away when the call produced no response -
-     * so status, response headers and captures are FINAL; the interceptor's [Exchange.completed] CAS is
-     * the one exactly-once guard.
+     * so status, response headers and captures are FINAL; exactly once by [Exchange.completed].
      *
      * The emission runs under the exchange's MDC (an ADDITIVE overlay: an inbound request's identity or
      * a bridge's keys on the thread stay visible beside it), so the encoder emits the request id as an
@@ -120,10 +119,10 @@ internal class ExchangeLogEmitter(
      * plain-text appender that drops key-values and MDC still shows the gist of the exchange.
      */
     fun logExchange(exchange: Exchange) {
-        // The fail-open guard covers EVERYTHING after the interceptor's exactly-once CAS: the pre-gate
-        // section reads host-provided beans (the time source) and the response object - an exception
-        // there must not escape into the client's close path and lose the event WITHOUT the emission
-        // counter seeing it.
+        // Safety: the fail-open guard covers EVERYTHING after the interceptor's exactly-once CAS - the
+        // pre-gate section reads host-provided beans (the time source) and the response object, and an
+        // exception there must not escape into the client's close path and lose the event WITHOUT the
+        // emission counter seeing it.
         failOpen(
             onInterrupted = { e ->
                 metrics.emissionFailure()
@@ -149,10 +148,10 @@ internal class ExchangeLogEmitter(
         // Compared at full precision (a 1.5 ms threshold must not flag a 1 ms exchange); the 1 ms floor
         // is `ClientLoggingProperties.slowRequestThreshold`'s.
         val slow = Duration.ofNanos(elapsedNanos) >= properties.slowRequestThreshold
-        // Metrics BEFORE the level gate: a metric must not depend on how loud the logger is configured.
+        // Invariant: metrics BEFORE the level gate - a metric must not depend on how loud the logger is
+        // configured.
         recordBodySizesQuietly(exchange)
-        // Status and headers were read at handover (the interceptor counted and warned if the engine
-        // refused): the emission runs after the client's close and never asks the response again.
+        // Read at handover (`ClientRequestLoggingInterceptor.snapshotResponse`), never from the closed response.
         val status = exchange.responseStatus
         val classification = classify(exchange.failure, exchange.interrupted, status)
         // Slow escalates INFO -> WARN without changing the outcome.
@@ -190,8 +189,9 @@ internal class ExchangeLogEmitter(
     }
 
     /**
-     * Scope teardown guarded on its own - the teardown rule of [reportQuietly]: the line counts as
-     * emitted, a failure here is bookkeeping (`stage=wiring`).
+     * Safety: scope teardown is guarded on its own - the teardown rule of [WiringCost.DIRTY_TEARDOWN] - because the
+     * line already counts as emitted, so a failure here is bookkeeping (`stage=wiring`), never a lost
+     * event.
      */
     private fun restoreQuietly(
         scope: AutoCloseable,
@@ -213,11 +213,9 @@ internal class ExchangeLogEmitter(
     }
 
     /**
-     * The caller's MDC restored for a close on another thread, or nothing: an MDC adapter that throws
-     * at the install costs the caller's keys, counted as stage=wiring, never the event - which then
-     * carries the module's own identity alone, exactly as before ADR-0011. (The tests drive this path
-     * with a failing adapter swapped in through `MdcAdapterSwap`, at the boundary the failure comes
-     * from in production; there is no restorer seam.)
+     * The caller's MDC restored for a close on another thread, or nothing. Safety: an MDC adapter that
+     * throws at the install costs the caller's keys, counted as stage=wiring, never the event - which
+     * then carries the module's own identity alone.
      */
     private fun restoreCallerMdcQuietly(exchange: Exchange): AutoCloseable =
         try {
@@ -237,15 +235,17 @@ internal class ExchangeLogEmitter(
 
     /**
      * The SLF4J level carries the severity, adapter_outcome the semantic - decoupled on purpose
-     * ([ClientLogField.OUTCOME]): a call the CALLER abandoned - it threw while its thread was
-     * interrupted, or with an interrupt in its cause chain ([Cancellations]) - is WARN with `cancelled`
-     * and no cause, the reactive twin's disposition for the same situation, and wins over a timeout type
-     * the transport reported in the same moment (ADR-0015); a timeout is WARN with its own outcome (the
-     * peer is slow, not broken), any other thrown call is ERROR with `failure`; an answered call
-     * classifies by its status alone ([Classification.ofStatus], shared with the WebClient twin): a 5xx
-     * is WARN `failure`, a 4xx is `rejected` at INFO - WARN for the [Classification.ESCALATED_REJECTIONS]
-     * (ADR-0012) - and INFO `success` otherwise. An interrupt WITHOUT a failure classifies by the status:
-     * the exchange completed before anybody stopped waiting for it.
+     * ([ClientLogField.OUTCOME]). A thrown call takes the FIRST matching branch:
+     *
+     * - abandoned by the CALLER - it threw while its thread was interrupted, or with an interrupt in its
+     *   cause chain ([Cancellations]): WARN `cancelled` without a cause, the reactive twin's disposition
+     *   for the same situation, and ahead of a timeout type the transport reported in the same moment
+     *   (ADR-0015);
+     * - a timeout: WARN with its own outcome - the peer is slow, not broken;
+     * - anything else: ERROR `failure`.
+     *
+     * An answered call classifies by [Classification.ofStatus]. An interrupt WITHOUT a failure
+     * classifies by the status: the exchange completed before anybody stopped waiting for it.
      */
     private fun classify(
         failure: Throwable?,
@@ -305,8 +305,8 @@ internal class ExchangeLogEmitter(
     }
 
     /**
-     * Multi-value resolution, like the request side: a single-value `getFirst` would silently truncate
-     * repeated headers (`Set-Cookie` being the classic).
+     * Multi-value resolution, like the request side. Rationale: not a single-value `getFirst`, because it
+     * would silently truncate repeated headers (`Set-Cookie` being the classic).
      */
     private fun selectedResponseHeaders(headers: HttpHeaders?): List<Pair<String, String>> =
         headers?.let {
@@ -317,8 +317,8 @@ internal class ExchangeLogEmitter(
 
     /**
      * Body fields only when the direction's [eu.inqudium.legatium.common.BodyLogMode] admits THIS
-     * outcome ("failed" = outcome not `success`, which since ADR-0012 includes a `rejected` 4xx); a
-     * count-only capture (size metrics) must not surface as an empty field.
+     * outcome ("failed" = any outcome other than `success`, [ClientOutcome]); a count-only capture (size
+     * metrics) must not surface as an empty field.
      */
     private fun loggedBodies(
         exchange: Exchange,
@@ -337,11 +337,11 @@ internal class ExchangeLogEmitter(
     }
 
     /**
-     * Guarded on its own: whatever the body measurements throw costs the sample, never the event. The
-     * meter owner already confines the two host-registry faults itself - a rejected registration falls
-     * back to its private registry, a throwing host meter is counted per hit and warned once
-     * ([ClientLoggingMetrics]) - so this guard is the last line, warning per exchange because reaching
-     * it means the owner's own guards regressed.
+     * Safety: guarded on its own, so whatever the body measurements throw costs the sample, never the
+     * event. The meter owner already confines the two host-registry faults itself - a rejected
+     * registration falls back to its private registry, a throwing host meter is counted per hit and
+     * warned once ([ClientLoggingMetrics]) - so this guard is the last line, warning per exchange because
+     * reaching it means the owner's own guards regressed.
      */
     private fun recordBodySizesQuietly(exchange: Exchange) {
         try {

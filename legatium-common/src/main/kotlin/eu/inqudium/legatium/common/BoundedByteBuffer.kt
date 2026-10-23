@@ -14,15 +14,15 @@ import java.util.Objects
  * reactive one), and counting the bytes that flowed, including those beyond the cap, is the twin's
  * business too: the total comes back in for [render].
  *
- * A bare array rather than a `ByteArrayOutputStream`: the blocking twin's tee stream forwards `reset`,
- * so the buffer must be able to CUT BACK ([truncate]), and the array is sized once by the length the
- * peer or the caller declared ([expect]), so a body within its declaration lands in one allocation
- * without growth - up to [MAX_HINTED_CAPACITY]: the declaration is the peer's word, and a byte must
- * not be able to reserve a large cap in one go. Allocated on the first buffered byte - a buffer nothing
- * is written to (count-only mode, a body never read) costs no memory. Without a hint the first array
- * has at least [MIN_CAPACITY] bytes (or the cap, when that is smaller) and at least the first write's
- * length, so a byte-wise reader does not pay an allocation and a copy for each of the first doublings.
- * Beyond that the array doubles, never past [maxBytes].
+ * Rationale: a bare array rather than a `ByteArrayOutputStream`: the blocking twin's tee stream forwards
+ * `reset`, so the buffer must be able to CUT BACK ([truncate]), and the array is sized once by the length
+ * the peer or the caller declared ([expect]), so a body within its declaration lands in one allocation
+ * without growth - up to [MAX_HINTED_CAPACITY]: the declaration is the peer's word, and a byte must not
+ * be able to reserve a large cap in one go. Allocated on the first buffered byte - a buffer nothing is
+ * written to (count-only mode, a body never read) costs no memory. Without a hint the first array has at
+ * least [MIN_CAPACITY] bytes (or the cap, when that is smaller) and at least the first write's length, so
+ * a byte-wise reader does not pay an allocation and a copy for each of the first doublings. Beyond that
+ * the array doubles, never past [maxBytes].
  */
 internal class BoundedByteBuffer(
     private val maxBytes: Int,
@@ -211,14 +211,18 @@ internal class BoundedByteBuffer(
         internal const val MIN_CAPACITY = 256
 
         /**
-         * The most a sizing hint allocates in one go - four times the default capture limit, so a hint
-         * sizes the array exactly for every cap up to here; a larger cap costs a truthful body the
-         * doublings from here (a copy of about the cap in total), a lying declaration at most this much.
-         * Exposed for the tests.
+         * The most a sizing hint allocates in one go - four times the default
+         * [ClientLoggingProperties.maxBodyBytes], so a hint sizes the array exactly for every cap up to here;
+         * a larger cap costs a truthful body the doublings from here (a copy of about the cap in total), a
+         * lying declaration at most this much. Exposed for the tests.
          */
         internal const val MAX_HINTED_CAPACITY = 64 * 1024
 
-        /** Room for what at most three tail bytes decode to: three replacement characters. */
+        /**
+         * Room for what at most three tail bytes decode to - three replacement characters - plus one slot
+         * of headroom, so the bound need not be exact: a buffer too small would stop the decoder with an
+         * overflow before it consumed the tail, and [utf8Cut] would then cut too early.
+         */
         private const val TAIL_CHARS = 4
 
         /**

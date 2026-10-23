@@ -406,8 +406,9 @@ class ClientRequestLoggingMetricsTest {
             // Success criteria: the same length-exact read as in `should count a body the ByteArray
             //   converter reads to its declared length as complete`, with `Content-Encoding: identity` on
             //   the response, counts state=complete and nothing under state=partial.
-            // Why it matters: a rule reading "any Content-Encoding -> unknown" passes the gzip case
-            //   above and would turn every byte[] answer of a peer that declares identity into a
+            // Why it matters: a rule reading "any Content-Encoding -> unknown" passes `should keep
+            //   counting a length-exact read as partial when a Content-Encoding makes the length
+            //   untrustworthy` and would turn every byte[] answer of a peer that declares identity into a
             //   partial read - the false alarm the declared-length rule exists to prevent.
             // Given: measuring, a response declaring length AND the identity encoding, on an engine-like stream
             val measuring = interceptorWith(properties.copy(measureResponseBodySize = true), ticker, registry)

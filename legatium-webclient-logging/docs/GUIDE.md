@@ -256,7 +256,7 @@ WebClient.retrieve()/exchangeToMono()/exchange()
  onResponse: response.mutate().body { flux -> ObservedBody(flux, exchange, capture, complete, …) }.build()
                  subscribe:         only the FIRST subscription is observed (Spring's release path subscribes again);
                                     capture.markStarted()
-                 onNext(buffer):    actual.onNext(tee(capture, buffer))   ← a passive copy, fail-open
+                 onNext(buffer):    actual.onNext(teeOrPass(capture, buffer, …))   ← a passive copy, fail-open
                  onComplete():      capture.markCompleted(); actual.onComplete(); finally complete   ← emission
                  onError(t):        exchange.failure = t;  actual.onError(t);  finally complete      ← emission
                  cancel():          from within the delivery (the consumer's own `take`, Spring's skip) → success, partial;
@@ -512,6 +512,7 @@ response objects):
 | Stage | Where | What happens on failure | Counted as |
 |---|---|---|---|
 | wiring | `wireOrNull` (correlation bean, header selection, request rebuild, capture construction) | the filter degrades to a plain pass-through for this call | `failopen{stage=wiring}` |
+| wiring | the body tee, request and response alike (`teeOrPass`: the request decorator's `writeWith` / `writeAndFlushWith`, `ObservedBody.onNext`) | the logged text of that one buffer is lost; its bytes were counted before the copy, and the original buffer flows on untouched to the connector or the caller | `failopen{stage=wiring}` |
 | wiring | gauge bookkeeping in `complete` | the event still follows | `failopen{stage=wiring}` |
 | wiring | body-size recording, operational counter updates | the event follows without the sample / the count | `failopen{stage=wiring}` |
 | arrival | `logRequestStart` (including the level gate) | the arrival line is dropped | `failopen{stage=arrival}` |

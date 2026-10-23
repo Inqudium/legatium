@@ -17,7 +17,10 @@ package eu.inqudium.legatium.common
  * only that ADR says whether they agree; nothing here can check the peer's constant.
  */
 internal object CorrelationHeader {
-    /** Pinned as a literal by `CorrelationHeaderTest`: a change is a contract change against every peer (ADR-0002). */
+    /**
+     * Compatibility: a change is a contract change against every peer (ADR-0002); pinned as a literal by
+     * `CorrelationHeaderTest`.
+     */
     const val MAX_LENGTH = 200
 
     /** [value] when it satisfies the rule, null when absent or unacceptable. */

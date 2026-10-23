@@ -93,8 +93,7 @@ internal class BoundedBodyCapture(
         }
 
     /**
-     * Buffers the prefix of a chunk that [count] has ALREADY counted - the tee counts a chunk in full
-     * before it copies, so a copy that throws costs the logged text of that chunk, never its size. Up to
+     * Buffers the prefix of a chunk that [count] has ALREADY counted (the order is [tee]'s). Up to
      * [remainingCapacity] bytes are kept; a no-op once frozen.
      */
     fun store(
@@ -109,15 +108,11 @@ internal class BoundedBodyCapture(
 
     /**
      * Bytes the buffer can still take before [maxBytes]; 0 in count-only mode, once the cap is reached,
-     * or once frozen. The reactive tee sizes its bounded prefix copy from this - the reason the tee's
-     * transient allocation is bounded by the configured cap instead of the buffer size.
+     * or once frozen. The size of [tee]'s bounded prefix copy.
      */
     fun remainingCapacity(): Int = lock.withLock { if (frozen) 0 else buffer.remaining }
 
-    /**
-     * Counts [length] bytes that flowed: the reactive tee's FIRST call per chunk, for the whole chunk,
-     * before it copies the prefix [store] keeps. Counting cannot throw, the copy can.
-     */
+    /** Counts [length] bytes that flowed: [tee]'s FIRST call per chunk, for the whole chunk. */
     fun count(length: Int) = count(length.toLong())
 
     /** [count] for a byte count that never passed through user space (a zero-copy file transfer). */
@@ -154,8 +149,9 @@ internal class BoundedBodyCapture(
 
         /**
          * The `Content-Length` a request or response declares, read through [declared], folded to
-         * [UNKNOWN_LENGTH] when the value is malformed: Spring parses the header with `Long.parseLong`
-         * and throws, and a peer's or a caller's bad header must never be thrown into the delivery.
+         * [UNKNOWN_LENGTH] when the value is malformed: a peer's or a caller's bad header must never be
+         * thrown into the delivery. Assumption: Spring parses the header with `Long.parseLong` and
+         * throws its `NumberFormatException` (probed on Spring Framework 7.0.9).
          */
         inline fun declaredLength(declared: () -> Long): Long =
             try {

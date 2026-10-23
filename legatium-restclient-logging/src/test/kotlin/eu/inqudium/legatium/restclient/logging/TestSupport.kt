@@ -149,10 +149,10 @@ internal class PinnedMdcAppender : AppenderBase<ILoggingEvent>() {
 @ExtendWith(PeerExtension::class)
 abstract class PeerIntegrationSuite {
     /**
-     * The peer of this suite class, injected into every test instance by [PeerExtension] - an instance
-     * field, so two suite classes running at once could not reassign each other's peer through a
-     * static slot, under the default per-method lifecycle, so Boot's prototype `RestClient.Builder` is
-     * still a fresh one per test.
+     * The peer of this suite class, injected into every test instance by [PeerExtension]. An instance
+     * field, not a static slot, so two suite classes running at once cannot reassign each other's peer;
+     * injected per instance under the default per-method lifecycle, so Boot's prototype
+     * `RestClient.Builder` stays a fresh one per test.
      */
     internal lateinit var peer: PeerServer
 
@@ -174,8 +174,9 @@ abstract class PeerIntegrationSuite {
     protected fun <T : AutoCloseable> closing(resource: T): T = resource.also { closeables += it }
 
     /**
-     * Registers a JDK `HttpClient` for a BOUNDED release after the test - the one engine whose own
-     * `close()` is `shutdown()` plus an UNBOUNDED `awaitTermination()`. A client of these suites still
+     * Registers a JDK `HttpClient` for a BOUNDED release after the test. Assumption: it is the one engine
+     * whose own `close()` is `shutdown()` plus an UNBOUNDED `awaitTermination()` (probed on JDK 26.0.1).
+     * A client of these suites still
      * owns a cancelled connect (a closed port, the Tarpit) or a cancelled read (`/slow`) whose
      * selector-side cleanup must finish first; a JDK whose cleanup hangs would hang the suite until the
      * job timeout instead of failing with a cause. `shutdownNow()` plus [ENGINE_RELEASE] releases what

@@ -33,8 +33,9 @@ import org.springframework.core.io.ResourceLoader
  * legatium-restclient-logging's key for key; both modules may even live in one application (a servlet
  * host using `WebClient` for streaming calls), each logging the client it serves.
  *
- * Every bean backs off to a host-provided one - the time source, the id generator, the
- * [HeaderValueMasker] (a keyed fingerprint for a compliance regime), the filter itself. The meter
+ * The four component beans back off to a host-provided one - the time source, the id generator, the
+ * [HeaderValueMasker] (a keyed fingerprint for a compliance regime), the filter itself; the customizer
+ * and the observation report do not, a host that wants them gone excludes them. The meter
  * registry arrives as an [ObjectProvider] and is CONSUMED, never exported - a logging library must not
  * define the host's `MeterRegistry`; without one (no actuator) an empty [CompositeMeterRegistry] makes
  * every meter a no-op and the module works unchanged.
@@ -111,7 +112,8 @@ class ClientLoggingAutoConfiguration {
         val filter = ClientRequestLoggingFilter(properties, nanoTime, correlationIds, meterRegistry.getIfAvailable { CompositeMeterRegistry() }, masker)
         // The classpath opt-in of ADR-0010 is decided against the CONTEXT's class loader - the one the
         // host's optional dependencies are visible through, and the one a test can narrow - not against
-        // the module's own; the filter's constructor default serves manual wiring, where the two coincide.
+        // the module's own; the emitter's `ambientRestorer` default serves manual wiring, where the two
+        // coincide.
         // The opt-in has no property; the report is the only place a host can read the outcome.
         filter.emitter.ambientRestorer = AmbientContextRestorer.detect(resourceLoader.classLoader)
         if (filter.emitter.ambientRestorer is ContextPropagationRestorer) {
@@ -139,15 +141,19 @@ class ClientLoggingAutoConfiguration {
         }
 
     /**
-     * Attaches the filter to every `WebClient.Builder` Boot hands out (and to every HTTP service client
-     * group built from one). Ordered LATE among the customizers, so the filter is appended behind the
-     * filters of customizers ordered before [CUSTOMIZER_ORDER] and runs INSIDE them - closest to the
-     * connector, once per attempt of an outer retry ([ClientRequestLoggingFilter]). An unordered host
-     * customizer runs inside the logging ([CUSTOMIZER_ORDER]).
+     * The customizer's home, active only with Boot's `spring-boot-webclient` module on the classpath
+     * (see the class KDoc of [ClientLoggingAutoConfiguration]).
      */
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(WebClientCustomizer::class)
     class WebClientCustomization {
+        /**
+         * Attaches the filter to every `WebClient.Builder` Boot hands out (and to every HTTP service
+         * client group built from one): it APPENDS the filter to the builder's list and replaces none of
+         * the filters already there. Ordered at [CUSTOMIZER_ORDER], which decides which host filters the
+         * logging sees. No `@ConditionalOnMissingBean`: the bean name `clientLoggingWebClientCustomizer`
+         * is the host's handle to exclude it, for a host that attaches the filter bean itself.
+         */
         @Bean
         @Order(CUSTOMIZER_ORDER)
         fun clientLoggingWebClientCustomizer(filter: ClientRequestLoggingFilter): WebClientCustomizer {
@@ -166,16 +172,21 @@ class ClientLoggingAutoConfiguration {
          * Late, not last: room is left below for a host customizer that must see the fully configured
          * filter list (a metrics or diagnostics wrapper) - the same value as the RestClient twin's.
          *
-         * The consequence, decided and pinned by the auto-configuration test: a host customizer without
-         * an `@Order` sits at `Ordered.LOWEST_PRECEDENCE`, in that room, and is applied AFTER this one -
-         * its filter is appended behind the logging filter and runs inside it, so a header it adds is
-         * not on the logged line and a retry it performs is one line for all attempts. A host that wants
-         * its filter observed orders its customizer before this value (any explicit `@Order` below
-         * `LOWEST_PRECEDENCE - 10`, `@Order(0)` being the usual choice).
+         * The consequence, decided and pinned by `ClientLoggingAutoConfigurationTest`: a host customizer
+         * without an `@Order` sits at `Ordered.LOWEST_PRECEDENCE`, in that room, and is applied AFTER this
+         * one - its filter is appended behind the logging filter and runs inside it, so a header it adds
+         * is not on the logged line and a retry it performs is one line for all attempts. A host
+         * customizer ordered before this value is applied first: its filter runs OUTSIDE the logging, the
+         * logging filter runs inside it - closest to the connector, once per attempt of an outer retry. A
+         * host that wants its filter observed therefore orders its customizer before this value (any
+         * explicit `@Order` below `LOWEST_PRECEDENCE - 10`, `@Order(0)` being the usual choice).
          */
         const val CUSTOMIZER_ORDER = Ordered.LOWEST_PRECEDENCE - 10
 
-        /** Boot's observation customizer for the builder this twin attaches to, by class name (an optional class). */
+        /**
+         * Boot's observation customizer for the builder this twin attaches to, by class name (an optional
+         * class). Assumption: the name below is the class Boot ships (probed on Spring Boot 4.1.1).
+         */
         private val OBSERVATION_CUSTOMIZERS = mapOf("org.springframework.boot.webclient.observation.ObservationWebClientCustomizer" to "WebClient.Builder")
 
         /** The wiring report of the class KDoc, at DEBUG; the exchange lines have their own logger. */

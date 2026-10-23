@@ -57,6 +57,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- WebClient twin: a request-body tee whose copy throws (an exotic `DataBuffer`) no longer fails the
+  call. The request side now goes through the same fail-open guard as the response side: the buffer
+  is written untouched, the size is still counted, the copy failure costs that chunk's logged text and
+  is counted `adapter.logging.failopen{stage=wiring}`. The filter's KDoc promised this before; only the
+  response tee kept it.
+- Docs (KDoc): `log-response-body: on-failure` buffers the response body on every call like the
+  request side - only writing it into the line waits for the outcome; the request-size and
+  response-size meters are tagged `uri`, `host` and `name`, with the caller-controlled `host` as the
+  documented cardinality precondition; a header value is masked when its name is in `masked` minus
+  `unmasked` (a narrowed `masked` logs the rest in plaintext); a host `CorrelationIdGenerator` must
+  return 1 to 200 visible ASCII characters. Corrected in the public KDoc of `ClientLoggingProperties`,
+  `BodyLogMode`, `BodyReadState`, `HeaderLogProperties` and `CorrelationIdGenerator`.
 - Both twins: Apache HttpClient 4's **pool lease timeout**
   (`org.apache.http.conn.ConnectionPoolTimeoutException`) is now classified as `adapter_outcome=timeout`
   at WARN instead of `failure` at ERROR, for a host that bridges HttpClient 4 with a request factory

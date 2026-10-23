@@ -475,8 +475,10 @@ Rules that hold for every combination:
   cancellation can no longer change what was logged. A zero-copy file upload (Reactor Netty's `sendfile`)
   keeps its path under request capture; its bytes are counted, not copied.
 
-**Cardinality of the body meters.** The size summaries and the read-state counter are tagged `uri` and
-`host`. The `uri` tag is the URI template the client recorded — and only when it carries a placeholder:
+**Cardinality of the body meters.** The size summaries and the read-state counter are tagged `uri`,
+`host` and `name` — the client's [adapter name](adr/ADR-0009-adapter-name-is-a-request-attribute.md),
+`UNNAMED` for a client the application did not name, so it is bounded by the number of clients the
+application names. The `uri` tag is the URI template the client recorded — and only when it carries a placeholder:
 both clients record whatever string was passed to `uri(String, ...)`, so a concatenated
 `uri("/things/" + id)` would otherwise put one tag value per id on the meter; such values fold to
 `UNKNOWN` (as does every `RestTemplate` call, which records no template). The `host` tag is

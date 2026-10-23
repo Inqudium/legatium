@@ -226,8 +226,10 @@ class CapturingClientHttpResponseTest {
     @EnumSource(MetadataGuard::class)
     internal fun `should report a delegate whose status text, headers or available throws and rethrow it unchanged`(site: MetadataGuard) {
         // What is tested: the guards at getStatusText, getHeaders and the tee stream's available - the
-        //   three of the wrapper's five documented guard sites no other test drives (getStatusCode is
-        //   pinned through the interceptor, the reads and closes above).
+        //   guard sites of the wrapper's class KDoc no other test drives (getStatusCode is pinned by
+        //   `should classify a response whose status the client cannot read as a failure`, the body
+        //   stream's close by `should report a body stream whose close throws and rethrow it unchanged`,
+        //   the reads and the response close by the failure tests of `ClientRequestLoggingInterceptorTest`).
         // Success criteria: the delegate's IOException reaches the caller unchanged and is the single
         //   failure reported on the exchange.
         // Why it matters: RestClient's status handlers and converters read the status text and the

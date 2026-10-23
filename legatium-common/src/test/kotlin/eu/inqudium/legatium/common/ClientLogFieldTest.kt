@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.springframework.core.io.ClassPathResource
 import java.nio.charset.StandardCharsets
+import kotlin.reflect.KClass
 
 /**
  * Contract of the [ClientLogField] family: the wire names (a contract with the log index), the per-field
@@ -150,18 +151,33 @@ class ClientLogFieldTest {
         }
 
         @Test
-        fun `should map the numeric and boolean shapes the code guarantees`() {
-            // What is tested: the type half of the lockstep - the three non-keyword fields against the JVM
-            //   type the enum declares (Long duration, Int status, Boolean slow flag).
-            // Success criteria: duration maps as long, the status code as short, the slow flag as boolean.
-            // Why it matters: a keyword duration cannot be ranged or percentiled, and a status mapped as a
-            //   number that is summed reads as garbage - the index type is what makes the dashboards work.
-            // Given/When/Then: the shape each field declares and the type the index expects
-            //   must describe the same value - long duration, short status (three digits, a label never
-            //   summed), boolean flags
-            assertThat(properties[ClientLogField.DURATION_MS.wireName]).containsEntry("type", "long")
-            assertThat(properties[ClientLogField.RESPONSE_STATUS_CODE.wireName]).containsEntry("type", "short")
-            assertThat(properties[ClientLogField.SLOW.wireName]).containsEntry("type", "boolean")
+        fun `should map every field to the index type its declared JVM type stands for`() {
+            // What is tested: the type half of the lockstep - for EVERY field, the template's index type
+            //   against the one derived from the JVM type the enum declares for it.
+            // Success criteria: each field maps to the index type of its declared type (String keyword,
+            //   Long long, Int short, Boolean boolean); a declared type outside that table fails too.
+            // Why it matters: a keyword duration cannot be ranged or percentiled, and a new numeric field
+            //   mapped as keyword would pass a lockstep of names alone - the index type is what makes the
+            //   dashboards work, and a new JVM shape must be decided here rather than slip through.
+            // Given: the index type each declared JVM type stands for - Int as short, because the status
+            //   code is a three-digit label, never summed
+            val indexTypeOf: Map<KClass<out Any>, String> =
+                mapOf(
+                    String::class to "keyword",
+                    Long::class to "long",
+                    Int::class to "short",
+                    Boolean::class to "boolean",
+                )
+
+            // When/Then: every field's mapping carries the index type its declared type stands for
+            ClientLogField.entries.forEach { field ->
+                assertThat(indexTypeOf)
+                    .describedAs("%s declares %s, which has no index type yet", field.wireName, field.type)
+                    .containsKey(field.type)
+                assertThat(properties[field.wireName])
+                    .describedAs("%s declares %s", field.wireName, field.type)
+                    .containsEntry("type", indexTypeOf.getValue(field.type))
+            }
         }
 
         @Test
@@ -185,8 +201,8 @@ class ClientLogFieldTest {
     inner class `Declared shape` {
         @Test
         fun `should accept exactly the JVM type each field declares`() {
-            // What is tested: the shape each field declares for the index template - what the lockstep
-            //   test maps and what the emitters pass.
+            // What is tested: the shape each field declares for the index template - what the type
+            //   lockstep derives the index type from and what the emitters pass.
             // Success criteria: a value of the declared type is accepted, a value of another type (an Int
             //   where the mapping says long) or null is not.
             // Why it matters: the declared shape is what the component template maps; the emitters are

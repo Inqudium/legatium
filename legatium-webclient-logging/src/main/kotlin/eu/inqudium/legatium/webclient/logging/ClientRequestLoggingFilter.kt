@@ -94,16 +94,22 @@ import reactor.util.context.ContextView
  * The auto-configuration appends this filter through a LATE customizer, so it runs INSIDE the filters
  * of earlier customizers and of the builder's own configuration: it sees the request as it goes to the
  * connector - after an authentication filter added its header, once per attempt of a retrying filter.
- * Filters the host adds AFTER the customizers ran run inside this one and are outside that guarantee.
- * The traceparent header is not affected by the order: the client observation injects it into the
- * request BEFORE the filter chain runs (pinned beside a real bridge by the tracing integration test).
+ * Which host customizers count as earlier, an unordered one included, is decided at
+ * [ClientLoggingAutoConfiguration.CUSTOMIZER_ORDER]. Filters the host adds AFTER the customizers ran
+ * run inside this one and are outside that guarantee. The traceparent header is not affected by the
+ * order: the client observation injects it into the request BEFORE the filter chain runs (pinned
+ * beside a real bridge by `ClientRequestLoggingTracingIntegrationTest`).
  *
  * ## Fail-open, including the wiring and every callback
  *
- * Identical contract to the RestClient twin: a wiring failure degrades the filter to a plain
- * pass-through (`stage=wiring`); a tee that throws costs one buffer's capture (`stage=wiring`); the
- * terminal callbacks complete the exchange through the emitter, which confines emission failures
- * (`stage=emission`) and its host-meter updates (`stage=wiring`). Calls are never affected.
+ * The same promise as the RestClient twin's: a wiring failure degrades the filter to a plain
+ * pass-through (`stage=wiring`); a tee that throws - on the request body as the connector writes it,
+ * or on the response body as the caller reads it - costs the logged text of that one buffer
+ * (`stage=wiring`): the buffer is counted before the copy, so the size sample survives, and the
+ * original buffer flows on untouched ([teeOrPass]). The terminal callbacks complete the exchange
+ * through the emitter, which confines emission failures (`stage=emission`) and its host-meter updates
+ * (`stage=wiring`). Calls are never affected. Only the place differs: the twin copies the request body
+ * inside its fail-open wiring, this filter at the connector's write.
  *
  * ## Manual wiring: filters on one `MeterRegistry` share one metrics owner
  *
@@ -175,13 +181,13 @@ class ClientRequestLoggingFilter
                         }
                         next.exchange(wiring.request)
                     } catch (e: Exception) {
-                        // Thrown while assembling, inside this defer: routed into the chain below as the
-                        // error signal, so the response operator completes the exchange.
+                        // Safety: thrown while assembling, inside this defer - routed into the chain below
+                        // as the error signal, so the response operator completes the exchange.
                         Mono.error(e)
                     } catch (t: Throwable) {
-                        // An Error is outside the fail-open promise (`failOpen`). Whether Reactor treats
-                        // it as fatal (rethrown through subscribe) or turns it into the caller's error
-                        // signal (a plain Error, which deferContextual routes like an exception), no
+                        // Safety: an Error is outside the fail-open promise (`failOpen`). Whether Reactor
+                        // treats it as fatal (rethrown through subscribe) or turns it into the caller's
+                        // error signal (a plain Error, which deferContextual routes like an exception), no
                         // operator of this filter exists yet to see it - so the gauge is closed here.
                         abandonExchange(exchange, t)
                         throw t
@@ -196,7 +202,8 @@ class ClientRequestLoggingFilter
 
         /**
          * The fail-open wiring: an exception degrades the filter to a plain pass-through (the caller sees
-         * null), counted `stage=wiring` - a logging component must never fail the call it describes.
+         * null), counted `stage=wiring`. Safety: a logging component must never fail the call it
+         * describes.
          */
         private fun wireOrNull(
             request: ClientRequest,
@@ -221,7 +228,9 @@ class ClientRequestLoggingFilter
          * The response arrived: records it on the exchange and returns the response with its body wrapped -
          * the tee (when a capture exists) and the terminal hooks that complete the exchange. `mutate()`
          * copies status, headers, cookies and request; the body flux is transformed lazily, so nothing is
-         * read here. Pure assembly, no host call: nothing in it can fail and strand the response. The
+         * read here. Pure assembly with ONE host read, the declared length that sizes the capture's
+         * buffer - guarded for the failure it has, a malformed value, which
+         * [BoundedBodyCapture.declaredLength] folds to unknown instead of stranding the response. The
          * state transitions belong to [ObservedResponse], which calls this between them.
          */
         private fun onResponse(
@@ -230,22 +239,30 @@ class ClientRequestLoggingFilter
         ): ClientResponse {
             exchange.response = response
             val capture = exchange.responseCapture
-            // The declared length sizes the capture's buffer, a malformed one folded to unknown.
             capture?.expectBytes(BoundedBodyCapture.declaredLength { response.headers().contentLength().orElse(BoundedBodyCapture.UNKNOWN_LENGTH) })
             return response
                 .mutate()
-                .body { body -> ObservedBody(body, exchange, capture, ::complete, ::teeFailure) }
+                .body { body -> ObservedBody(body, exchange, capture, ::complete, ::responseTeeFailure) }
                 .build()
         }
 
-        /** A tee that threw cost the capture of one buffer - counted as wiring, the call untouched. */
-        private fun teeFailure(e: Exception) {
+        /** A request tee that threw cost the capture of one buffer - counted as wiring, the call untouched. */
+        private fun requestTeeFailure(e: Exception) = teeFailure(e, "Request")
+
+        /** A response tee that threw cost the capture of one buffer - counted as wiring, the call untouched. */
+        private fun responseTeeFailure(e: Exception) = teeFailure(e, "Response")
+
+        private fun teeFailure(
+            e: Exception,
+            direction: String,
+        ) {
             reportWiringFailure(
                 metrics,
                 internalLog,
                 WiringCost.DEGRADED_EVENT,
                 e,
-                "Response body tee failed - the logged body may be incomplete",
+                "{} body tee failed - the logged body may be incomplete",
+                direction,
             )
         }
 
@@ -267,7 +284,7 @@ class ClientRequestLoggingFilter
             val outgoing =
                 request
                     .let { if (identity.sendCorrelationHeader) ClientRequest.from(it).headers { h -> h.set(properties.correlationIdHeader, identity.requestId) }.build() else it }
-                    .let { if (captures.request != null) it.withRequestBodyTee(captures.request) else it }
+                    .let { if (captures.request != null) it.withRequestBodyTee(captures.request, ::requestTeeFailure) else it }
             val outgoingHeaders = outgoing.headers()
             val target = RequestTarget.of(request.url())
             val exchange =
@@ -303,11 +320,11 @@ class ClientRequestLoggingFilter
         }
 
         /**
-         * Exactly-once: closes the gauge and emits, whichever terminal callback wins the transition. The
-         * callbacks run inside Reactor's signal propagation, where an escaping exception would be rethrown
-         * into the caller's pipeline: the emission is confined in the emitter (`stage=emission`, its
-         * host-meter updates as `stage=wiring`), and the gauge close is a private counter that cannot
-         * throw.
+         * Exactly-once: closes the gauge and emits, whichever terminal callback wins the transition.
+         * Safety: the callbacks run inside Reactor's signal propagation, where an escaping exception would
+         * be rethrown into the caller's pipeline - so the emission is confined in the emitter
+         * (`stage=emission`, its host-meter updates as `stage=wiring`), and the gauge close is a private
+         * counter that cannot throw.
          */
         private fun complete(exchange: Exchange) {
             if (exchange.state.getAndSet(ExchangeState.COMPLETED) == ExchangeState.COMPLETED) {
@@ -320,10 +337,8 @@ class ClientRequestLoggingFilter
          * The caller cancelled the response Mono. Before a response (`OPEN`) or while the response is being
          * handed to a downstream that may drop it (`DELIVERING`) this ends the exchange as `cancelled`; once
          * the downstream has taken the response (`RESPONDED`) the body owns the completion and the cancel
-         * is ignored - a host operator such as `next()` cancels the Mono from within the delivery, before
-         * it hands the value on, and reaches [ObservedResponse] on the delivering thread, which does not
-         * call this at all. The CAS loop makes the decision atomic against the delivering thread's own
-         * transitions.
+         * is ignored. A cancel from within the delivery never gets here - [ObservedResponse] tells the two
+         * apart. The CAS loop makes the decision atomic against the delivering thread's own transitions.
          */
         private fun cancelUnlessResponded(exchange: Exchange) {
             while (true) {
@@ -378,10 +393,11 @@ class ClientRequestLoggingFilter
         companion object {
             /**
              * Request attribute under which `WebClient` records the URI template of a call made through the
-             * template form of `uri(...)`. Mirrors `DefaultWebClient.URI_TEMPLATE_ATTRIBUTE`
-             * (`WebClient.class.getName() + ".uriTemplate"`), which is private - derived the same way
-             * instead, so it matches the value the client sets (pinned by `UriTemplateAttributeTest`) and
-             * stays absent for an expanded `URI`.
+             * template form of `uri(...)`, derived the same way as the client derives it, so it matches the
+             * value the client sets (pinned by `UriTemplateAttributeTest`) and stays absent for an expanded
+             * `URI`. Assumption: it mirrors `DefaultWebClient.URI_TEMPLATE_ATTRIBUTE`
+             * (`WebClient.class.getName() + ".uriTemplate"`), which is private (probed on Spring Framework
+             * 7.0.9).
              */
             const val URI_TEMPLATE_ATTRIBUTE = "org.springframework.web.reactive.function.client.WebClient.uriTemplate"
 
@@ -394,14 +410,16 @@ class ClientRequestLoggingFilter
              * WebClient.builder().defaultRequest { it.attribute(ADAPTER_NAME_ATTRIBUTE, "billing") }
              * ```
              *
-             * The same string on both twins, so a host carrying both jars names its clients with one
-             * constant. A blank or non-string value counts as no name.
+             * Compatibility: the same string on both twins, so a host carrying both jars names its clients
+             * with one constant. A blank or non-string value counts as no name.
              */
             const val ADAPTER_NAME_ATTRIBUTE = AdapterName.ATTRIBUTE
 
             /**
-             * The cause attached to an exchange whose connector completed empty - WebClient's own
-             * message for the caller.
+             * The message of the cause attached to an exchange whose connector completed empty.
+             * Assumption: it mirrors the `IllegalStateException` `DefaultWebClient` raises for the caller
+             * in that case, word for word except for Spring's trailing period (probed on Spring Framework
+             * 7.0.9); the tests compare against this constant, not against Spring's text.
              */
             const val NO_RESPONSE_MESSAGE = "The underlying HTTP client completed without emitting a response"
 

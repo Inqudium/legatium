@@ -203,26 +203,32 @@ class CountingCorrelationIdGeneratorTest {
 
         @Test
         fun `should keep the fixed width up to the last counter value the width can hold`() {
-            // What is tested: the 21-character contract at its real boundary - the last value the
-            //   counter width can render - reached through the internal counterStart seam instead of
-            //   2.8e12 warm-up calls.
-            // Success criteria: the id at counter 36^8 - 1 still has exactly 21 characters and ends in
-            //   eight `z`; the very next id grows to 22 characters, pinning the documented, deliberately
-            //   unguarded overflow behavior (padStart silently stops applying).
+            // What is tested: both ends of the counter width behind a non-zero prefix - counter 0, padded
+            //   to exactly eight digits, and counter 36^8 - 1, the last value eight digits can hold,
+            //   reached through the internal counterStart seam instead of 2.8e12 warm-up calls.
+            // Success criteria: counter 0 renders as the prefix plus eight `0` and 36^8 - 1 as the prefix
+            //   plus eight `z`, both exactly 21 characters; the very next id grows to 22 characters,
+            //   pinning the documented, deliberately unguarded overflow (padStart silently stops applying).
             // Why it matters: beyond the width both load-bearing format properties - the fixed split
             //   point and the lexicographic ordering - break without any signal. This test is the
-            //   executable guard the production KDoc points to: narrowing a width constant fails here
-            //   instead of in production.
-            // Given: a counter one step before the width boundary
-            val generator = CountingCorrelationIdGenerator(prefixSeed = 0L, counterStart = COUNTER_CAPACITY - 1)
+            //   executable guard the production KDoc points to: changing either width constant in either
+            //   direction fails here - a narrowed COUNTER_WIDTH at the zero-padded counter 0 (the eight `z`
+            //   of 36^8 - 1 need no padding, so that id alone would not notice), a widened COUNTER_WIDTH
+            //   or a changed PREFIX_WIDTH at the lengths of both ids.
+            // Given: a prefix that is not all zeros (seed 35 renders as `z`), so the counter's own padding
+            //   cannot hide in the prefix's; one counter at zero and one a step before the width boundary
+            val prefix = "000000000000z"
+            val fromZero = CountingCorrelationIdGenerator(prefixSeed = 35L)
+            val atBoundary = CountingCorrelationIdGenerator(prefixSeed = 35L, counterStart = COUNTER_CAPACITY - 1)
 
             // When
-            val lastInWidth = generator.nextCorrelationId()
-            val firstBeyond = generator.nextCorrelationId()
+            val firstInWidth = fromZero.nextCorrelationId()
+            val lastInWidth = atBoundary.nextCorrelationId()
+            val firstBeyond = atBoundary.nextCorrelationId()
 
-            // Then: the last in-width id honors the contract; the next one is the documented breakage
-            assertThat(lastInWidth).hasSize(21)
-            assertThat(lastInWidth).endsWith("zzzzzzzz")
+            // Then: both in-width ids honor the contract exactly; the next one is the documented breakage
+            assertThat(firstInWidth).isEqualTo(prefix + "00000000")
+            assertThat(lastInWidth).isEqualTo(prefix + "zzzzzzzz")
             assertThat(firstBeyond).hasSize(22)
         }
 

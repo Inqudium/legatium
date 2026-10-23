@@ -8,8 +8,9 @@ import java.io.IOException
 import java.time.Duration
 
 /**
- * [RequestFactoryContract] on Jetty's client. Its connect timeout is a `SocketTimeoutException`, its
- * read timeout a `java.util.concurrent.TimeoutException` - both JDK types. DECOMPRESSES transparently:
+ * [RequestFactoryContract] on Jetty's client. Assumption: its connect timeout is a
+ * `SocketTimeoutException`, its read timeout a `java.util.concurrent.TimeoutException` - both JDK types
+ * (probed on jetty-client 12.1.12). DECOMPRESSES transparently:
  * the client's default `GZIPContentDecoder` decodes a gzip answer, so application and tee see the
  * plaintext. The Jetty client is a lifecycle: the factory starts it, the test stops it.
  */

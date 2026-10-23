@@ -91,39 +91,42 @@ internal enum class ClientStack(
  * All fixed-tag meters are PRE-registered at construction: a `rate()` alert must see the zero before the
  * first occurrence, not a meter that springs into existence at the very moment it should already fire.
  *
- * ONE INSTANCE PER REGISTRY AND STACK, enforced by [forRegistry]: Micrometer deduplicates meters by id,
- * so a second instance of this class against the same registry would share the counters (harmless -
- * increments merge) but NOT the gauge: the second gauge registration is silently ignored and that
- * instance's open-exchange movements become invisible. Every interceptor or filter therefore obtains its
- * metrics through [forRegistry], and entry points on one registry share one owner - the gauge then
- * reports the total open exchanges across them. The two twins' gauges carry different `client` tags
- * and therefore different ids, so a host carrying both twins gets both.
+ * ONE INSTANCE PER REGISTRY AND STACK, enforced by [forRegistry]. Assumption: Micrometer deduplicates
+ * meters by id and silently ignores a second gauge registration under an existing id, keeping the FIRST
+ * (probed on Micrometer 1.17.1). A second instance of this class against the same registry would
+ * therefore share the counters (harmless - increments merge) but NOT the gauge: that instance's
+ * open-exchange movements become invisible. Every interceptor or filter therefore obtains its metrics
+ * through [forRegistry], and entry points on one registry share one owner - the gauge then reports the
+ * total open exchanges across them. The two twins' gauges carry different `client` tags and therefore
+ * different ids, so a host carrying both twins gets both; sum over the tag for the total.
  *
- * FAIL-OPEN REGISTRATION - a decided trade: Micrometer rejects a registration whose id already exists
- * with a different meter type (a host or another library owning an `adapter.*` name). Unguarded, that
- * throw at construction would abort the application context - a logging library must not - and at the
- * lazy body-size registration would suppress the exchange event. Every registration therefore falls
- * back to a private [SimpleMeterRegistry] for the conflicting meter, logged once per meter name: the
- * module keeps working and the affected meter is simply not exported. Failing the context start would
- * contradict the fail-open promise, and "not registering" needs a per-type no-op meter - one private
- * registry is the cheapest shape that never throws (ADR-0008).
+ * FAIL-OPEN REGISTRATION - a decided trade. Assumption: Micrometer rejects a registration whose id
+ * already exists with a different meter type (probed on Micrometer 1.17.1) - a host or another library
+ * owning an `adapter.*` name. Unguarded, that throw at construction would abort the application
+ * context - a logging library must not - and at the lazy body-size registration would suppress the
+ * exchange event. Every registration therefore falls back to a private [SimpleMeterRegistry] for the
+ * conflicting meter, logged once per meter name: the module keeps working and the affected meter is
+ * simply not exported. Rationale: failing the context start would contradict the fail-open promise, and
+ * "not registering" needs a per-type no-op meter - one private registry is the cheapest shape that never
+ * throws (ADR-0008).
  *
- * The GAUGE has a second collision case Micrometer does not reject: an id of the SAME type that already
- * exists (a host gauge under this name and `client` tag, an older copy of this library on another
- * classloader) is returned as-is, and the state function of the new registration is silently dropped -
- * this instance would then count into an `AtomicLong` nobody exports. The gauge registration therefore
- * checks the host registry for an existing meter under its exact name and tag FIRST and, if one is
- * there, takes the same private-registry path with the same one-time warning: a visibly degraded gauge
- * instead of a silently wrong one. (Counters and summaries have no such case: an existing counter of
- * the same id is the shared meter, and increments merge.)
+ * The GAUGE has a second collision case Micrometer does not reject. Assumption: an existing gauge under the
+ * SAME id is returned as-is and the state function of the new registration is silently dropped (probed on
+ * Micrometer 1.17.1) - for a host gauge under this name and `client` tag, or an older copy of this library
+ * on another classloader, this instance would then count into an `AtomicLong` nobody exports. The gauge
+ * registration therefore checks the host registry for an existing meter under its exact name and tag FIRST
+ * and, if one is there, takes the same private-registry path with the same one-time warning: a visibly
+ * degraded gauge instead of a silently wrong one. (Counters and summaries have no such case: an existing
+ * counter of the same id is the shared meter, and increments merge.)
  *
  * The DYNAMIC body meters (the two size summaries and the read-state counter, tagged per URI template,
  * host and client name) are resolved ONCE per tag set and kept in a cache that mirrors the registry's
  * entries under those three names - one entry per meter the registry HOLDS, so the cache adds no
- * cardinality and needs no size policy of its own; the `uri` folding ([uriTag]) and the documented host
- * precondition bound both alike, and which meters are admitted is [cacheBodyMeter]'s rule. Without the
- * cache every measured exchange rebuilt the builder, the tags and the `Meter.Id` three times only to
- * hit Micrometer's deduplicating lookup - the `BodyMeterRecordBenchmark` in `benchmarks/` measured it.
+ * cardinality and needs no size policy of its own; the `uri` folding ([uriTag]) and the host
+ * precondition documented on [ClientLoggingProperties.measureRequestBodySize] bound both alike, and which
+ * meters are admitted is [cacheBodyMeter]'s rule. Without the cache every measured exchange rebuilt the
+ * builder, the tags and the `Meter.Id` three times only to hit Micrometer's deduplicating lookup - the
+ * cost `BodyMeterRecordBenchmark` measures.
  * The one way cache and registry could drift apart - a host removing one of the dynamic meters - is
  * closed by a removal listener that drops the entry, so the next exchange registers anew instead of
  * recording into a detached instance. The listener covers the dynamic meters ONLY: the fixed meters are
@@ -131,22 +134,19 @@ internal enum class ClientStack(
  * has decided against it - the owner keeps counting into the detached instance rather than
  * re-registering behind the host's back.
  *
- * Invariant: the cache is never written from inside a `ConcurrentHashMap.computeIfAbsent` - the LOCK
- * ORDER. Micrometer notifies removal listeners while holding its registry-wide meter-map lock, and
- * registering a new id takes that same lock; a mapping function runs under the map's bin lock, and a
- * registration in there would wait for the registry lock while the listener, holding it, waits for the
- * bin lock to drop the removed entry. A miss resolves the meter OUTSIDE the map and publishes it with
- * `putIfAbsent` ([cacheBodyMeter]); a lost race registers the same id twice, which Micrometer
- * deduplicates to one instance anyway.
+ * Assumption: Micrometer notifies removal listeners while holding its registry-wide meter-map lock, and
+ * registering a new id takes that same lock (probed on Micrometer 1.17.1). Invariant: the cache is never
+ * written from inside a `ConcurrentHashMap.computeIfAbsent` - the LOCK ORDER. A mapping function runs
+ * under the map's bin lock, and a registration in there would wait for the registry lock while the
+ * listener, holding it, waits for the bin lock to drop the removed entry. A miss resolves the meter
+ * OUTSIDE the map and publishes it with `putIfAbsent` ([cacheBodyMeter]); a lost race registers the same
+ * id twice, which Micrometer deduplicates to one instance anyway.
  *
- * ACCEPTED RESIDUE of that order (decided 2026-09-19, recorded in ADR-0008): between the
- * registration returning and the `putIfAbsent` lies a window of microseconds in which a host removal
- * of that very meter runs the listener against a cache that holds no entry yet; the detached instance
- * is then published and takes every later sample of its tag set, unseen by any exporter, until the
- * owner is recreated. It needs a host that removes meters at runtime (a `clear()`, a pruner) AND the
- * removal inside that window, and it costs the samples of one tag set - never an event, never a call.
- * Closing it would take a registry-wide lookup after every first-time registration; the trade against
- * the deadlock the order removed is deliberate, and the residue is documented rather than paid for.
+ * ACCEPTED RESIDUE of that order (ADR-0008): a host removal of a meter in the microseconds between its
+ * registration returning and the `putIfAbsent` finds no entry to drop, and the detached instance then
+ * takes every later sample of its tag set, unseen by any exporter, until the owner is recreated - the
+ * samples of one tag set, never an event, never a call. Closing it would take a registry-wide lookup
+ * after every first-time registration.
  */
 internal class ClientLoggingMetrics private constructor(
     private val meterRegistry: MeterRegistry,
@@ -226,9 +226,7 @@ internal class ClientLoggingMetrics private constructor(
             ) { registry ->
                 Gauge
                     .builder(OPEN_EXCHANGES_METER, open) { it.get().toDouble() }
-                    // Tagged per twin: Micrometer deduplicates by id and would silently keep the FIRST
-                    // gauge registered under a bare name, so in a host carrying both twins the second
-                    // twin's open exchanges would vanish. Two ids, two gauges; sum over the tag for the total.
+                    // Tagged per twin: the per-twin gauge id of the class KDoc, so a host carrying both twins gets both.
                     .tag(CLIENT_TAG, stack.tagValue)
                     .description(stack.openExchangesDescription)
                     .register(registry)
@@ -257,11 +255,11 @@ internal class ClientLoggingMetrics private constructor(
      * for this exchange but NOT cached - the removal listener could never release it, and one entry per
      * denied tag set would grow the cache exactly where the operator bounded the registry. Nor is a
      * meter whose id no longer carries the key's `uri`, `host` and `name` values: a tag-FOLDING filter
-     * (`MeterFilter.replaceTagValues`, `ignoreTags`, a custom `map`; Micrometer's `maximumAllowableTags`
-     * is not one - it denies, never maps) answers every raw tag set beyond its allowance with ONE real
-     * meter, and caching that meter under each raw key would again hold more entries than the registry
-     * holds meters. The window between [resolve] returning and the `putIfAbsent` is the accepted residue
-     * of the class KDoc.
+     * (`MeterFilter.replaceTagValues`, `ignoreTags`, a custom `map`) answers every raw tag set beyond its
+     * allowance with ONE real meter, and caching that meter under each raw key would again hold more
+     * entries than the registry holds meters. Assumption: Micrometer's `maximumAllowableTags` is no such
+     * filter - it denies, never maps (probed on Micrometer 1.17.1). The window between [resolve]
+     * returning and the `putIfAbsent` is the accepted residue of the class KDoc.
      */
     private fun <M : Meter> cacheBodyMeter(
         cache: ConcurrentHashMap<BodyMeterKey, M>,
@@ -282,9 +280,9 @@ internal class ClientLoggingMetrics private constructor(
     fun wiringFailure() = failOpenCounters.getValue(FailOpenStage.WIRING).increment()
 
     /**
-     * Counts one EMITTED exchange event under [outcome]. Guarded: the event is already on the logger when
-     * this runs, so a failing host counter must neither be reported as a lost emission nor disturb the
-     * caller.
+     * Counts one EMITTED exchange event under [outcome]. Safety: guarded, because the event is already on
+     * the logger when this runs, so a failing host counter must neither be reported as a lost emission nor
+     * disturb the caller.
      */
     fun eventEmitted(outcome: ClientOutcome) = updateQuietly(EVENTS_METER) { eventCounters.getValue(outcome).increment() }
 
@@ -297,8 +295,8 @@ internal class ClientLoggingMetrics private constructor(
     }
 
     /**
-     * Counts the request-id origin. Guarded like [eventEmitted]: a throwing host counter must not degrade
-     * the call to an unlogged pass-through.
+     * Counts the request-id origin. Safety: guarded like [eventEmitted], because a throwing host counter
+     * must not degrade the call to an unlogged pass-through.
      */
     fun requestId(source: RequestIdSource) =
         updateQuietly(CORRELATION_METER) {
@@ -414,13 +412,13 @@ internal class ClientLoggingMetrics private constructor(
 
     /**
      * Bytes that ACTUALLY flowed, tagged by the URI template (low-cardinality by construction: a recorded
-     * value without a placeholder is folded to [UNTEMPLATED_URI], see [uriTag]), the peer host - which
-     * is caller-controlled and therefore a documented precondition of the opt-in measuring properties -
-     * and the client's name ([AdapterName], `UNNAMED` for a client the host did not name). A zero-byte
-     * body records no sample - the distribution describes bodies that exist, and the sum stays exact
-     * either way. The summaries are resolved per tag set on first use and cached (class KDoc). Guarded
-     * like the fixed counters ([updateQuietly]): a host summary that throws on record is counted per hit
-     * and warned once.
+     * value without a placeholder is folded to [UNTEMPLATED_URI], see [uriTag]), the peer host - which is
+     * caller-controlled and therefore bounded only by the precondition documented on
+     * [ClientLoggingProperties.measureRequestBodySize] - and the client's name ([AdapterName], `UNNAMED`
+     * for a client the host did not name). A zero-byte body records no sample - the distribution describes
+     * bodies that exist, and the sum stays exact either way. The summaries are resolved per tag set on
+     * first use and cached (class KDoc). Guarded like the fixed counters ([updateQuietly]): a host summary
+     * that throws on record is counted per hit and warned once.
      */
     private fun recordBodySize(
         meterName: String,
@@ -456,10 +454,9 @@ internal class ClientLoggingMetrics private constructor(
         private val internalLog = LoggerFactory.getLogger(ClientLoggingMetrics::class.java)
 
         /**
-         * Meter counting logging failures the fail-open path swallowed, tagged `stage=emission` (the
-         * exchange event was LOST), `stage=arrival` (the optional start line was lost) or `stage=wiring`
-         * (wiring or bookkeeping around the call failed; a pre-call wiring failure degrades to an
-         * unlogged pass-through, a post-call one usually still emits the event). Calls are never
+         * Meter counting logging failures the fail-open path swallowed, tagged `stage` ([FailOpenStage]; a
+         * pre-call wiring failure degrades to an unlogged pass-through, a post-call one usually still
+         * emits the event). Calls are never
          * affected by what this counts - that is the fail-open contract. The meter exists because the
          * failure it counts is the one state logs cannot reliably show: when the emission breaks, the
          * missing exchange line IS the symptom, and the report about it is itself only a log line in the
@@ -468,10 +465,10 @@ internal class ClientLoggingMetrics private constructor(
         const val FAIL_OPEN_METER = "adapter.logging.failopen"
 
         /**
-         * Meter counting the exchange events actually EMITTED (after the level gate; arrival lines are
-         * not counted), tagged `outcome`. Its sum is the ground truth for reconciling metric-side event
-         * counts against the log index: any difference is loss in the log pipeline itself (appender
-         * overflow, broker loss, index rejection), isolated from application behavior.
+         * Meter counting the exchange events actually EMITTED (after the level gate; arrival lines are not
+         * counted), tagged `outcome` ([ClientOutcome]). Its sum is the ground truth for reconciling
+         * metric-side event counts against the log index: any difference is loss in the log pipeline itself
+         * (appender overflow, broker loss, index rejection), isolated from application behavior.
          */
         const val EVENTS_METER = "adapter.logging.events"
 
@@ -482,8 +479,8 @@ internal class ClientLoggingMetrics private constructor(
         const val RESPONSE_BODY_SIZE_METER = "adapter.response.body.size"
 
         /**
-         * Counter of exchanges by response-body consumption, tagged `uri` (template), `host`, `name` and `state`
-         * (`unread` | `partial` | `complete`, see [BodyReadState]). The body tee mirrors CONSUMPTION,
+         * Counter of exchanges by response-body consumption, tagged `uri` (template), `host`, `name` and
+         * `state` ([BodyReadState]). The body tee mirrors CONSUMPTION,
          * not transmission: the logged body and the size sample describe the bytes the application read,
          * so neither can tell a body the peer sent but the application ignored from one that was never
          * sent. This counter is the one place that distinction is visible - a call site with a rising
@@ -494,7 +491,7 @@ internal class ClientLoggingMetrics private constructor(
 
         /**
          * Gauge of exchanges between entry (wiring) and the exactly-once completion, tagged `client`
-         * (`restclient` | `webclient`) - the liveness check of the emission architecture itself, which
+         * ([ClientStack]) - the liveness check of the emission architecture itself, which
          * rests on the application closing or consuming every response it was handed. Hovers near the
          * in-flight call count in health; a monotonically growing baseline means exchanges never end
          * and exchange events are being lost SILENTLY - the one failure mode neither the fail-open
@@ -503,7 +500,7 @@ internal class ClientLoggingMetrics private constructor(
         const val OPEN_EXCHANGES_METER = "adapter.logging.exchanges.open"
 
         /**
-         * Counter of request-id origins, tagged `source=trace|header|generated` (ADR-0002) - the watch on
+         * Counter of request-id origins, tagged `source` ([RequestIdSource], ADR-0002) - the watch on
          * the identity contract with the host's propagation: a rising `generated` share means the
          * application stopped propagating `traceparent` or a correlation header onto its outbound calls,
          * a regression neither logs nor other metrics surface reliably.
@@ -531,7 +528,7 @@ internal class ClientLoggingMetrics private constructor(
         const val CLIENT_TAG = "client"
 
         // Both sides weak: the KEY must not pin a host registry that outlives its context, and the VALUE
-        // must not pin the owner beyond the registry. The owner lives exactly as long as its registry:
+        // must not pin the owner beyond the registry. Invariant: the owner lives exactly as long as its registry:
         // the removal listener the registry holds captures the owner, so the reference here is never
         // cleared while the registry is reachable, and a new entry point on a live registry always
         // finds the existing owner (never its own gauge id left behind by a collected one).

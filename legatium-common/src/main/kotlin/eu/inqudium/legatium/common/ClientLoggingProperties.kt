@@ -11,12 +11,15 @@ import java.time.Duration
  *
  * Everything an operator may tune is a Boot property with a safe default, and everything a host
  * application may want to replace wholesale (time source, id generator, the interceptor or filter
- * itself) is an overridable bean instead of a constructor argument.
- * A many-parameter constructor is exactly what this design avoids.
+ * itself) is an overridable bean instead of a constructor argument: the interceptor and the filter take
+ * every setting through this one object, never one constructor parameter per setting.
  *
  * Body values are logged verbatim, when their direction's [BodyLogMode] admits the exchange's outcome.
- * Header values are verbatim only when named in the section's [HeaderLogProperties.unmasked]; every
- * other logged value is rendered by the [HeaderValueMasker] bean (by default a stable short fingerprint).
+ * A logged header value is rendered by the [HeaderValueMasker] bean (by default a stable short
+ * fingerprint) when its name is in the section's [HeaderLogProperties.masked] minus
+ * [HeaderLogProperties.unmasked], and verbatim otherwise. The default `masked` list (`*`) masks every
+ * logged value (ADR-0005), so by default only the names in `unmasked` appear verbatim; a narrowed or
+ * empty `masked` list logs the remaining values in plaintext.
  */
 @ConfigurationProperties("adapter-logging")
 data class ClientLoggingProperties(
@@ -85,24 +88,32 @@ data class ClientLoggingProperties(
      * the log volume (ADR-0006).
      */
     val logRequestBody: BodyLogMode = BodyLogMode.NEVER,
-    /** As [logRequestBody], for the response body; the outcome is final at emission, so nothing is captured in vain. */
+    /**
+     * As [logRequestBody], for the response body: [BodyLogMode.ON_FAILURE] buffers the response body on
+     * every call too, up to [maxBodyBytes], and only writing it into the line waits for the outcome
+     * (ADR-0006) - memory per call in flight is the same as under [BodyLogMode.ALWAYS].
+     */
     val logResponseBody: BodyLogMode = BodyLogMode.NEVER,
     /**
-     * Whether the request body SIZE is measured (meter `adapter.request.body.size`, tagged by the URI
-     * template and the host). Deliberately independent of [logRequestBody]: a metric must not appear
-     * and disappear with a logging flag. Measure-only installs a count-only capture - nothing is
-     * buffered. Recorded when the exchange completes (response close resp. the body's terminal
-     * signal), and only for bodies that actually flowed (zero bytes record no sample). On the blocking
-     * stack the interceptor copies the serialized body BEFORE the wire call and has no seam at the
-     * write, so it records the sample only for an exchange that received a response - the one proof
-     * that the bytes went out; the reactive stack tees at the connector's write and needs no such rule.
-     * What each sample measures per direction and stack is the Common guide's section "What the body
-     * sizes measure".
+     * Whether the request body SIZE is measured (meter `adapter.request.body.size`, tagged `uri` - the
+     * URI template -, `host` and `name` - the client's adapter name, `UNNAMED` when the host gave none;
+     * ADR-0009). The `host` tag is caller-controlled and NOT folded - a precondition of this property: a
+     * host that calls an unbounded set of peer hosts (webhooks, per-tenant endpoints) registers one tag
+     * set per peer - leave measuring off there, or cap the tag with a Micrometer `MeterFilter`.
+     * Deliberately independent of [logRequestBody]: a metric must not appear and disappear with a logging
+     * flag. Measure-only installs a count-only capture - nothing is buffered. Recorded when the exchange
+     * completes (response close resp. the body's terminal signal), and only for bodies that actually
+     * flowed (zero bytes record no sample). On the blocking stack the interceptor copies the serialized
+     * body BEFORE the wire call and has no seam at the write, so it records the sample only for an
+     * exchange that received a response - the one proof that the bytes went out; the reactive stack tees
+     * at the connector's write and needs no such rule. What each sample measures per direction and stack
+     * is the Common guide's section "What the body sizes measure".
      */
     val measureRequestBodySize: Boolean = false,
     /**
-     * As [measureRequestBodySize], for the response (`adapter.response.body.size`), plus the
-     * `adapter.response.body.read` counter that tells an unread response body from an absent one.
+     * As [measureRequestBodySize] - the same three tags and the same `host` precondition - for the
+     * response (`adapter.response.body.size`), plus the `adapter.response.body.read` counter (the same
+     * tags plus `state`) that tells an unread response body from an absent one.
      */
     val measureResponseBodySize: Boolean = false,
     /**
@@ -158,9 +169,9 @@ data class ClientLoggingProperties(
     companion object {
         /**
          * RFC 9110 `token` grammar for a field name. The configured name is written onto every traceless
-         * outgoing request; an HTTP engine or connector that validates field names (the JDK client does)
-         * would reject a non-token at runtime on EVERY call - failing the CALL, not merely the log line
-         * - so it is validated at binding time.
+         * outgoing request. Assumption: an HTTP engine or connector that validates field names (the JDK
+         * client does) rejects a non-token at runtime on EVERY call - failing the CALL, not merely the log
+         * line - so it is validated at binding time.
          */
         private val HTTP_FIELD_NAME = Regex("[!#$%&'*+\\-.^_`|~0-9A-Za-z]+")
     }

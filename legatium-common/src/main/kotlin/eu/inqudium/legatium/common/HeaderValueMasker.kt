@@ -12,7 +12,7 @@ import javax.crypto.spec.SecretKeySpec
  * rendering is a stable PSEUDONYM, not anonymisation: equal values stay recognisable as equal, which is
  * the point (correlation) and the limit (a keyed masker is what stops a reader from confirming a guess).
  *
- * Injectable for the same reason as [NanoTimeSource] and [CorrelationIdGenerator]: the
+ * Injectable not for testability, as [NanoTimeSource] and [CorrelationIdGenerator] are, but because the
  * fingerprint's shape is a policy the host may own - a keyed HMAC for a compliance regime that forbids
  * unkeyed hashes, a fixed `***` for a host that wants no correlation at all - and both twins take the
  * bean through their auto-configuration (`@ConditionalOnMissingBean`), so one host bean masks the
@@ -34,10 +34,10 @@ fun interface HeaderValueMasker {
     companion object {
         /**
          * The production default: the value's character length followed by the first 64 bits of its
-         * SHA-256 digest (UTF-8) in lowercase hex: `secret-token` renders as `12:930bbdc51b6aed5c`. The
-         * same fingerprint in both twin modules and in the sibling project limesium's inbound line - both
-         * repositories pin that very literal in their `HeaderValueMasker` tests - so a masked token
-         * correlates across the server line and the client line. STABLE: identical values render
+         * SHA-256 digest (UTF-8) in lowercase hex: `secret-token` renders as `12:930bbdc51b6aed5c`.
+         * Compatibility: the same fingerprint in both twin modules and in the sibling project limesium's
+         * inbound line - both repositories pin that very literal in their `HeaderValueMasker` tests - so
+         * a masked token correlates across the server line and the client line. STABLE: identical values render
          * identically; a 64-bit cryptographic prefix makes accidental collisions negligible.
          *
          * Privacy model: the fingerprint is unsalted and unkeyed - it prevents PLAINTEXT exposure, not

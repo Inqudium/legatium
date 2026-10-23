@@ -8,9 +8,9 @@ import java.net.http.HttpClient
 import java.time.Duration
 
 /**
- * [RequestFactoryContract] on the JDK's `java.net.http.HttpClient`. Both timeouts are
+ * [RequestFactoryContract] on the JDK's `java.net.http.HttpClient`. Assumption: both timeouts are
  * `java.net.http.HttpTimeoutException` (the connect one its `HttpConnectTimeoutException` subtype),
- * matched as JDK types. DECOMPRESSES transparently: `java.net.http.HttpClient` itself knows no content
+ * matched as JDK types (probed on JDK 26.0.1). DECOMPRESSES transparently: `java.net.http.HttpClient` itself knows no content
  * coding, but Spring's `JdkClientHttpRequestFactory` enables compression support by default (Spring
  * Framework 7, `enableCompression`) and decodes a gzip answer in its response wrapper - which sits
  * BELOW the interceptor, so the tee sees the plaintext too.
