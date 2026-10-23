@@ -43,24 +43,5 @@ internal object Timeouts {
      * on this object - Reactor's composite errors (`Exceptions.multiple` from `zip`/`merge`/`when`) carry
      * their components as suppressed, not as the cause. Null is never a timeout.
      */
-    fun isTimeout(throwable: Throwable?): Boolean {
-        // A cause graph is finite in practice, but a cycle is legal; the visited set bounds the walk.
-        val visited = HashSet<Throwable>()
-        val pending = ArrayDeque<Throwable>()
-        throwable?.let(pending::add)
-        while (pending.isNotEmpty()) {
-            val current = pending.removeFirst()
-            if (!visited.add(current)) {
-                continue
-            }
-            if (isTimeoutType(current.javaClass)) {
-                return true
-            }
-            current.cause?.let(pending::add)
-            current.suppressed.forEach(pending::add)
-        }
-        return false
-    }
-
-    private fun isTimeoutType(type: Class<*>): Boolean = generateSequence(type) { it.superclass }.any { it.name in TIMEOUT_CLASS_NAMES }
+    fun isTimeout(throwable: Throwable?): Boolean = CauseGraph.any(throwable) { CauseGraph.hasTypeNamed(it.javaClass, TIMEOUT_CLASS_NAMES) }
 }
