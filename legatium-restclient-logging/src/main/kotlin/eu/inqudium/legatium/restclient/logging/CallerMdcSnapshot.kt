@@ -27,7 +27,7 @@ import org.slf4j.MDC
 internal class CallerMdcSnapshot private constructor(
     /** The thread the snapshot was taken on - the thread on which restoring it would be a no-op. */
     private val thread: Thread?,
-    /** The caller's entries, the module's own and the trace keys excluded. */
+    /** The caller's entries, the module's own and the trace keys excluded - exposed for the tests. */
     internal val entries: Map<String, String>,
 ) {
     /**

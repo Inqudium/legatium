@@ -12,7 +12,7 @@ import java.net.SocketTimeoutException
 import java.nio.channels.ClosedByInterruptException
 
 /**
- * The cause-chain fallback of the blocking twin's cancellation classification (ADR-0015): which failures
+ * The cause-graph fallback of the blocking twin's cancellation classification (ADR-0015): which failures
  * report a caller that stopped waiting even when the interrupt flag is gone.
  */
 class CancellationsTest {
@@ -78,19 +78,5 @@ class CancellationsTest {
         // When/Then
         failures.forEach { assertThat(Cancellations.isCancellation(it)).describedAs("%s", it).isFalse() }
         assertThat(Cancellations.isCancellation(null)).isFalse()
-    }
-
-    @Test
-    fun `should terminate on a cyclic cause graph`() {
-        // What is tested: the visited-set bound of the walk.
-        // Success criteria: a self-suppressing exception returns false instead of looping.
-        // Why it matters: a cycle is legal in a cause graph, and the walk runs on the caller's thread.
-        // Given
-        val first = IOException("first")
-        val second = IOException("second", first)
-        first.addSuppressed(second)
-
-        // When/Then
-        assertThat(Cancellations.isCancellation(second)).isFalse()
     }
 }

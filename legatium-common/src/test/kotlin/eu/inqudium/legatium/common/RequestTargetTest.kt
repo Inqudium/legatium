@@ -40,13 +40,14 @@ class RequestTargetTest {
         // Given/When: a URI without a path and a relative URI without an authority
         val bare = RequestTarget.of(URI.create("https://api.example.com"))
         val relative = RequestTarget.of(URI.create("/relative/path"))
+        val relativeHostName = RequestTarget.hostName(URI.create("/relative/path"))
 
         // Then
         assertThat(bare.path).isEqualTo("/")
         assertThat(bare.target).isEqualTo("https://api.example.com/")
         assertThat(relative.host).isNull()
         assertThat(relative.target).isEqualTo("/relative/path")
-        assertThat(RequestTarget.hostName(URI.create("/relative/path"))).isNull()
+        assertThat(relativeHostName).isNull()
     }
 
     @Test
@@ -62,16 +63,19 @@ class RequestTargetTest {
         val withPort = RequestTarget.of(URI.create("http://billing_api:8080/x"))
         val bare = RequestTarget.of(URI.create("http://billing_api/x"))
         val withUserInfo = RequestTarget.of(URI.create("http://user:secret@billing_api:8080/x"))
+        val withPortHostName = RequestTarget.hostName(URI.create("http://billing_api:8080/x"))
+        val bareHostName = RequestTarget.hostName(URI.create("http://billing_api/x"))
+        val withUserInfoHostName = RequestTarget.hostName(URI.create("http://user:secret@billing_api:8080/x"))
 
         // Then
         assertThat(withPort.host).isEqualTo("billing_api:8080")
         assertThat(withPort.target).isEqualTo("http://billing_api:8080/x")
-        assertThat(RequestTarget.hostName(URI.create("http://billing_api:8080/x"))).isEqualTo("billing_api")
+        assertThat(withPortHostName).isEqualTo("billing_api")
         assertThat(bare.host).isEqualTo("billing_api")
-        assertThat(RequestTarget.hostName(URI.create("http://billing_api/x"))).isEqualTo("billing_api")
+        assertThat(bareHostName).isEqualTo("billing_api")
         assertThat(withUserInfo.host).isEqualTo("billing_api:8080")
         assertThat(withUserInfo.target).doesNotContain("secret")
-        assertThat(RequestTarget.hostName(URI.create("http://user:secret@billing_api:8080/x"))).isEqualTo("billing_api")
+        assertThat(withUserInfoHostName).isEqualTo("billing_api")
     }
 
     @Test

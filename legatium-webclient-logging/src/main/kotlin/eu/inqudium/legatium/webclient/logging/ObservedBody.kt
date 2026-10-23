@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * The response body as the caller receives it: every buffer teed into [capture] (when one exists) on
  * its way through, the read state marked, and the body's TERMINAL signal - complete, error, or cancel -
- * turned into the exchange's completion ([onTerminal], the filter's exactly-once [ClientRequestLoggingFilter.complete]).
+ * turned into the exchange's completion ([onTerminal], the exactly-once `complete` of [ClientRequestLoggingFilter]).
  *
  * ## Why an operator of its own, not `doOnCancel`/`doFinally`
  *
@@ -55,10 +55,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * occupancy, whose close comes after the converter's read. A `retry` that resubscribes synchronously
  * from `onError` runs the next attempt's wiring (and, with a connector that answers synchronously,
  * the whole attempt) before this attempt's line is written - the lines then appear in reverse order.
- * The completion runs in a `finally` around the handover: a downstream whose terminal callback THROWS
- * (a contract violation - Reactor's own subscribers confine their hooks) still gets the exchange
- * completed and the gauge closed, as the former `doFinally` shape guaranteed. Pinned by the filter's
- * unit test with a subscriber that throws from `onComplete`.
+ * Safety: the completion runs in a `finally` around the handover - a downstream whose terminal
+ * callback THROWS (a contract violation - Reactor's own subscribers confine their hooks) still gets the
+ * exchange completed and the gauge closed. Pinned by the filter's unit test with a subscriber that
+ * throws from `onComplete`.
  *
  * ## Only the first subscription is observed
  *
@@ -93,6 +93,11 @@ internal class ObservedBody(
         source.subscribe(Observer(actual))
     }
 
+    /**
+     * Shares its `upstream`/`deliveringOn` scaffolding and the same-thread cancel rule with
+     * [ObservedResponse]'s subscriber on purpose: the two differ in what a cancel and the end of a
+     * delivery decide, which is the part a reader must see in one place.
+     */
     private inner class Observer(
         private val actual: CoreSubscriber<in DataBuffer>,
     ) : CoreSubscriber<DataBuffer>,

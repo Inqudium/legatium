@@ -204,15 +204,28 @@ internal class BoundedByteBuffer(
         /** No trustworthy declared length. */
         const val UNKNOWN_LENGTH = -1L
 
-        /** The least a first array without a sizing hint has: a byte-wise reader skips the eight doublings below it. */
+        /**
+         * The least a first array without a sizing hint has: a byte-wise reader skips the eight doublings
+         * below it. Exposed for the tests.
+         */
         internal const val MIN_CAPACITY = 256
 
         /**
          * The most a sizing hint allocates in one go - four times the default capture limit, so a hint
          * sizes the array exactly for every cap up to here; a larger cap costs a truthful body the
          * doublings from here (a copy of about the cap in total), a lying declaration at most this much.
+         * Exposed for the tests.
          */
         internal const val MAX_HINTED_CAPACITY = 64 * 1024
+
+        /** Room for what at most three tail bytes decode to: three replacement characters. */
+        private const val TAIL_CHARS = 4
+
+        /**
+         * Default scratch capacity of [renderTruncated]: at most 2 KiB of character storage, unless a
+         * decoder requires a larger output buffer to make progress. Exposed for the tests.
+         */
+        internal const val SCRATCH_CHARS = 1024
 
         /**
          * The length of the next array: the need, the hint or the doubled current length, whichever is
@@ -257,14 +270,5 @@ internal class BoundedByteBuffer(
                 .decode(tail, CharBuffer.allocate(TAIL_CHARS), false)
             return tail.position()
         }
-
-        /** Room for what at most three tail bytes decode to: three replacement characters. */
-        private const val TAIL_CHARS = 4
-
-        /**
-         * Default scratch capacity of [renderTruncated]: at most 2 KiB of character storage, unless a
-         * decoder requires a larger output buffer to make progress. Exposed for the tests.
-         */
-        internal const val SCRATCH_CHARS = 1024
     }
 }

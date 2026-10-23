@@ -76,14 +76,16 @@ class CapturingClientHttpResponseTest {
         val capture = BoundedBodyCapture(16)
         val body = wrapping(ByteArrayInputStream("hello".toByteArray()), capture).body
 
-        // When/Then: the peek-and-rewind of IntrospectingClientHttpResponse, then the full read
-        assertThat(body.markSupported()).isTrue()
+        // When: the peek-and-rewind of IntrospectingClientHttpResponse, then the full read
+        val markSupported = body.markSupported()
         body.mark(1)
-        assertThat(body.read()).isEqualTo('h'.code)
+        val peeked = body.read()
         body.reset()
         val text = body.readAllBytes().toString(StandardCharsets.UTF_8)
 
         // Then
+        assertThat(markSupported).isTrue()
+        assertThat(peeked).isEqualTo('h'.code)
         assertThat(text).isEqualTo("hello")
         assertThat(capture.totalBytes).isEqualTo(5L)
         assertThat(capture.loggedValue(StandardCharsets.UTF_8)).isEqualTo("hello")
@@ -107,13 +109,15 @@ class CapturingClientHttpResponseTest {
         val body = wrapping(ByteArrayInputStream("hello".toByteArray()), capture).body
 
         // When: two bytes consumed, a mark, two more, a rewind to the mark, the rest
-        assertThat(body.readNBytes(2).toString(StandardCharsets.UTF_8)).isEqualTo("he")
+        val beforeMark = body.readNBytes(2).toString(StandardCharsets.UTF_8)
         body.mark(8)
-        assertThat(body.readNBytes(2).toString(StandardCharsets.UTF_8)).isEqualTo("ll")
+        val afterMark = body.readNBytes(2).toString(StandardCharsets.UTF_8)
         body.reset()
         val rest = body.readAllBytes().toString(StandardCharsets.UTF_8)
 
         // Then
+        assertThat(beforeMark).isEqualTo("he")
+        assertThat(afterMark).isEqualTo("ll")
         assertThat(rest).isEqualTo("llo")
         assertThat(capture.totalBytes).isEqualTo(5L)
         assertThat(capture.loggedValue(StandardCharsets.UTF_8)).isEqualTo("hello")
@@ -135,13 +139,15 @@ class CapturingClientHttpResponseTest {
         val capture = BoundedBodyCapture(16)
         val body = wrapping(engineStream("hello"), capture).body
 
-        // When/Then
-        assertThat(body.markSupported()).isFalse()
+        // When
+        val markSupported = body.markSupported()
         body.mark(1)
-        assertThat(body.read()).isEqualTo('h'.code)
+        val first = body.read()
         val thrown = catchThrowable { body.reset() }
 
         // Then
+        assertThat(markSupported).isFalse()
+        assertThat(first).isEqualTo('h'.code)
         assertThat(thrown).isInstanceOf(IOException::class.java).hasMessageContaining("not supported")
         assertThat(failures).containsExactly(thrown)
         assertThat(capture.totalBytes).isEqualTo(1L)

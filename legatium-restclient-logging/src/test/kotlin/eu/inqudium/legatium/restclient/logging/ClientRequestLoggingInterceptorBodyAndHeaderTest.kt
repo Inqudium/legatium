@@ -2,7 +2,6 @@ package eu.inqudium.legatium.restclient.logging
 
 import ch.qos.logback.classic.Level
 import eu.inqudium.legatium.common.BodyLogMode
-import eu.inqudium.legatium.common.BodyReadState
 import eu.inqudium.legatium.common.CapturedLogger
 import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
@@ -11,6 +10,7 @@ import eu.inqudium.legatium.common.HeaderLogProperties
 import eu.inqudium.legatium.common.HeaderValueMasker
 import eu.inqudium.legatium.common.NanoTimeSource
 import eu.inqudium.legatium.common.count
+import eu.inqudium.legatium.common.gaugeValue
 import eu.inqudium.legatium.common.keyValues
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
@@ -151,7 +151,7 @@ class ClientRequestLoggingInterceptorBodyAndHeaderTest {
             assertThat(log.events).isEmpty()
             assertThat(registry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(1.0)
             assertThat(registry.count(ClientLoggingMetrics.CORRELATION_METER, "source", "generated")).isZero()
-            assertThat(registry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+            assertThat(registry.gaugeValue(ClientLoggingMetrics.OPEN_EXCHANGES_METER)).isZero()
         }
 
         @Test

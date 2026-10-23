@@ -7,46 +7,14 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.slf4j.MDC
 import org.slf4j.spi.MDCAdapter
-import java.util.Deque
 
 /**
- * Partial-install rollback and best-effort restoration of [MdcScope] against a FAILING MDC adapter,
- * swapped in through [installMdcAdapter] and restored after every test; the failing adapter delegates
- * everything else to the original, so MDC state stays real.
+ * Partial-install rollback and best-effort restoration of [MdcScope] against a FAILING MDC adapter
+ * ([FailingMdcAdapter]), swapped in through [installMdcAdapter] and restored after every test; the
+ * failing adapter delegates everything else to the original, so MDC state stays real.
  */
 class MdcScopeTest {
     private val original: MDCAdapter = MDC.getMDCAdapter()
-
-    /** Delegates to [delegate]; throws on `put` of the keys in [failPut] and on `remove` of those in [failRemove]. */
-    private class FailingAdapter(
-        private val delegate: MDCAdapter,
-        private val failPut: Set<String> = emptySet(),
-        private val failRemove: Set<String> = emptySet(),
-    ) : MDCAdapter by delegate {
-        override fun put(
-            key: String,
-            value: String?,
-        ) {
-            if (key in failPut) error("adapter put failed for $key")
-            delegate.put(key, value)
-        }
-
-        override fun remove(key: String) {
-            if (key in failRemove) error("adapter remove failed for $key")
-            delegate.remove(key)
-        }
-
-        override fun pushByKey(
-            key: String,
-            value: String,
-        ) = delegate.pushByKey(key, value)
-
-        override fun popByKey(key: String): String? = delegate.popByKey(key)
-
-        override fun getCopyOfDequeByKey(key: String): Deque<String>? = delegate.getCopyOfDequeByKey(key)
-
-        override fun clearDequeByKey(key: String) = delegate.clearDequeByKey(key)
-    }
 
     @BeforeEach
     fun setUp() {
@@ -66,7 +34,7 @@ class MdcScopeTest {
         //   are gone from the MDC (pooled-thread hygiene).
         // Why it matters: half an identity on a pooled thread contaminates the next request's logs.
         // Given: an adapter failing on adapter_route
-        installMdcAdapter(FailingAdapter(original, failPut = setOf(MdcKeys.ROUTE)))
+        installMdcAdapter(FailingMdcAdapter(original, failPut = setOf(MdcKeys.ROUTE)))
 
         // When: the scope is opened
         val thrown = catchThrowable { MdcScope("corr-1", "GET", "https://api.example.com/things") }
@@ -90,7 +58,7 @@ class MdcScopeTest {
         //   reaches the twin's fail-open guard - the half identity the rollback exists for.
         // Given: a bridge span id on the thread, an adapter refusing its removal
         MDC.put(TraceMdcKeys.SPAN_ID, "bridge-span")
-        installMdcAdapter(FailingAdapter(original, failRemove = setOf(TraceMdcKeys.SPAN_ID)))
+        installMdcAdapter(FailingMdcAdapter(original, failRemove = setOf(TraceMdcKeys.SPAN_ID)))
 
         // When: a scope owning the trace keys, with a parsed trace id and no span id
         val thrown = catchThrowable { MdcScope("corr-1", "GET", "https://api.example.com/things", traceId = "4bf92f3577b34da6a3ce929d0e0e4736", ownsTraceKeys = true) }
@@ -114,7 +82,7 @@ class MdcScopeTest {
         // Given: a scope opened against a healthy adapter, then an adapter failing on the removes of
         //   adapter_request_id AND adapter_method
         val scope = MdcScope("corr-1", "GET", "https://api.example.com/things")
-        installMdcAdapter(FailingAdapter(original, failRemove = setOf(MdcKeys.REQUEST_ID, MdcKeys.REQUEST_METHOD)))
+        installMdcAdapter(FailingMdcAdapter(original, failRemove = setOf(MdcKeys.REQUEST_ID, MdcKeys.REQUEST_METHOD)))
 
         // When: the scope closes
         val thrown = catchThrowable { scope.close() }
@@ -170,7 +138,7 @@ class MdcScopeTest {
         // Why it matters: a rollback exception replacing the original would hide the actual cause of the
         //   broken adapter behind its own follow-up failure.
         // Given: an adapter whose put of adapter_route fails AND whose remove of adapter_request_id fails
-        installMdcAdapter(FailingAdapter(original, failPut = setOf(MdcKeys.ROUTE), failRemove = setOf(MdcKeys.REQUEST_ID)))
+        installMdcAdapter(FailingMdcAdapter(original, failPut = setOf(MdcKeys.ROUTE), failRemove = setOf(MdcKeys.REQUEST_ID)))
 
         // When: the scope is opened (install fails, rollback partially fails)
         val thrown = catchThrowable { MdcScope("corr-1", "GET", "https://api.example.com/things") }

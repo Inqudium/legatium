@@ -33,6 +33,7 @@ class CapturingDecoratorsTest {
     /** A mock connector request that records the publisher SPECIALISATION handed to its buffered write path. */
     private class RecordingConnectorRequest : MockClientHttpRequest(HttpMethod.POST, URI.create("https://api.example.com/things")) {
         var written: Publisher<out DataBuffer>? = null
+            private set
 
         override fun writeWith(body: Publisher<out DataBuffer>): Mono<Void> {
             written = body
@@ -100,8 +101,9 @@ class CapturingDecoratorsTest {
         // Success criteria: the connector receives "hello world", the capture counted all 11 bytes
         //   and logs the concatenation; the publisher the connector received is a Flux, not a Mono.
         // Why it matters: a chunked request body (a streamed upload, a large JSON) arrives in pieces;
-        //   the capture must see every piece in order - and the Mono specialisation of the previous
-        //   test must be a specialisation, not a wrap of every body into Mono.
+        //   the capture must see every piece in order - and the Mono specialisation of
+        //   `should tee a single-buffer Mono body and hand the connector the identical content` must be
+        //   a specialisation, not a wrap of every body into Mono.
         // Given
         val capture = BoundedBodyCapture(64)
         val connector = RecordingConnectorRequest()
@@ -240,7 +242,9 @@ class CapturingDecoratorsTest {
         MockClientHttpRequest(HttpMethod.PUT, URI.create("https://api.example.com/upload")),
         ZeroCopyHttpOutputMessage {
         var zeroCopied: Triple<Path, Long, Long>? = null
+            private set
         var bufferedWrites = 0
+            private set
         var transferFailure: Throwable? = null
 
         override fun writeWith(

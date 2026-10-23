@@ -73,12 +73,16 @@ public class BodyBufferRenderBenchmark {
     @Setup
     public void setup() throws IOException {
         int length = bodyKb * 1024;
-        body = content == Content.ASCII ? Bodies.ascii(length) : Bodies.cycling("aä", length);
+        body =
+                switch (content) {
+                    case ASCII -> Bodies.ascii(length);
+                    case UMLAUT -> Bodies.cycling("aä", length);
+                };
         if (content == Content.UMLAUT && (body[body.length - 1] & 0xC0) != 0xC0) {
             throw new IllegalStateException(
-                    "UMLAUT body of " + length + " bytes ends on a complete character - the truncated"
-                            + " renderings would measure no UTF-8 boundary; choose a bodyKb whose byte"
-                            + " count is not a multiple of 3");
+                    "UMLAUT body of " + length + " bytes ends on a complete character - the"
+                            + " truncated renderings would measure no UTF-8 boundary; choose a"
+                            + " bodyKb whose byte count is not a multiple of 3");
         }
         // Mirrors the truncation note BoundedByteBuffer.render appends, so the naive rendering
         // stays byte-comparable with the buffer's; the literal is private there and cannot be

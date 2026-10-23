@@ -19,7 +19,7 @@ import reactor.util.context.ContextView
  * The RestClient twin restores from a thread snapshot instead (its `CallerMdcSnapshot`, ADR-0011): the
  * same layering - the caller's context outside, the module's own scope inside - with a different
  * source, because on the blocking stack the thread IS the caller's context and a Reactor Context does
- * not exist. A deliberate stack difference, like `cancelled` (ADR-0010).
+ * not exist. A deliberate stack difference (ADR-0010).
  *
  * Purely ADDITIVE, like the [eu.inqudium.legatium.common.MdcScope] that follows it: only values the
  * context holds are installed, a thread-local the context does not mention stays as the emitting thread

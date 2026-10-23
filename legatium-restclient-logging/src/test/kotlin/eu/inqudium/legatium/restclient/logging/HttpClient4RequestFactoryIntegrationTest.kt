@@ -16,8 +16,6 @@ import org.springframework.web.client.RestClient
 import java.net.URI
 import java.time.Duration
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 
 /**
  * [RequestFactoryContract] on Apache HttpClient 4 - which Spring Framework 7 ships no request factory
@@ -71,7 +69,7 @@ class HttpClient4RequestFactoryIntegrationTest : RequestFactoryContract() {
         connections.defaultMaxPerRoute = 1
         val factory = requestFactory(connections, RequestConfig.custom().setConnectionRequestTimeout(leaseTimeout.toMillis().toInt()).build())
         val target = URI.create(peer.baseUrl)
-        val held = connections.requestConnection(HttpRoute(HttpHost(target.host, target.port)), null).get(10, TimeUnit.SECONDS)
+        val held = connections.requestConnection(HttpRoute(HttpHost(target.host, target.port)), null).get(GENEROUS.toMillis(), TimeUnit.MILLISECONDS)
         closing(AutoCloseable { connections.releaseConnection(held, null, 0, TimeUnit.MILLISECONDS) })
         return restClientBuilder.baseUrl(peer.baseUrl).requestFactory(factory).build()
     }
@@ -115,37 +113,27 @@ class HttpClient4RequestFactoryIntegrationTest : RequestFactoryContract() {
         //   expires there, they left (ADR-0015).
         // Given: a lease timeout far beyond the test
         val client = clientOnExhaustedPool(Duration.ofSeconds(30))
-        val thrown = AtomicReference<Throwable?>()
-        val interruptedAfter = AtomicBoolean()
-        val worker =
-            Thread.ofPlatform().start {
-                thrown.set(
-                    catchThrowable {
-                        client
-                            .get()
-                            .uri("/things/1")
-                            .retrieve()
-                            .body(String::class.java)
-                    },
-                )
-                interruptedAfter.set(Thread.currentThread().isInterrupted)
+        val call =
+            ThreadedCall {
+                client
+                    .get()
+                    .uri("/things/1")
+                    .retrieve()
+                    .body(String::class.java)
             }
-        val deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos()
-        while (worker.state != Thread.State.TIMED_WAITING) {
-            check(System.nanoTime() < deadline) { "the call never parked on the pool" }
-            Thread.sleep(5)
-        }
+        val worker = call.startOn(Thread.ofPlatform())
+        awaitUntil("the call parked on the pool") { worker.state == Thread.State.TIMED_WAITING }
 
         // When
         worker.interrupt()
-        assertThat(worker.join(Duration.ofSeconds(10))).describedAs("the call returned").isTrue()
+        val result = call.result()
 
         // Then
-        assertThat(thrown.get()).isInstanceOf(ResourceAccessException::class.java)
-        assertThat(interruptedAfter.get()).describedAs("interrupt flag after the emission").isTrue()
+        assertThat(result.thrown).isInstanceOf(ResourceAccessException::class.java)
+        assertThat(result.interruptedAfter).describedAs("interrupt flag after the emission").isTrue()
         assertThat(peer.received).isEmpty()
         val event = log.events.single()
-        assertThat(event.level).describedAs("event for %s", thrown.get()).isEqualTo(Level.WARN)
+        assertThat(event.level).describedAs("event for %s", result.thrown).isEqualTo(Level.WARN)
         assertThat(event.formattedMessage).startsWith("Adapter http exchange GET ${peer.baseUrl}/things/1 -> - [")
         assertThat(keyValues(event)).containsEntry("adapter_outcome", "cancelled").doesNotContainKey("adapter_response_status_code")
         assertThat(event.throwableProxy).isNull()

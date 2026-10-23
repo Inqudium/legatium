@@ -22,7 +22,7 @@ internal object CorrelationHeader {
 
     /** [value] when it satisfies the rule, null when absent or unacceptable. */
     fun accept(value: String?): String? {
-        if (value == null || value.isEmpty() || value.length > MAX_LENGTH) {
+        if (value.isNullOrEmpty() || value.length > MAX_LENGTH) {
             return null
         }
         return if (value.all { it in '\u0021'..'\u007e' }) value else null

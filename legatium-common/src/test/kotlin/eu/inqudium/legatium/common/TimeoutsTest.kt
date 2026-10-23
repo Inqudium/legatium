@@ -104,36 +104,19 @@ class TimeoutsTest {
     }
 
     @Test
-    fun `should terminate on a cyclic cause chain`() {
-        // What is tested: the visited-set guard of the cause walk - Throwable permits a cycle.
-        // Success criteria: the call returns (false) instead of looping.
-        // Why it matters: an unbounded walk on a pooled thread is a hang, not a log line.
-        // Given: a two-element cause cycle
-        val a = RuntimeException("a")
-        val b = RuntimeException("b", a)
-        a.initCause(b)
-
-        // When/Then
-        assertThat(Timeouts.isTimeout(a)).isFalse()
-    }
-
-    @Test
     fun `should recognise a timeout carried as a suppressed exception of a composite error`() {
         // What is tested: the walk over SUPPRESSED exceptions - Reactor's composite errors (zip/merge/when)
         //   carry their components as suppressed, not as the cause.
-        // Success criteria: a composite whose only timeout is suppressed classifies as a timeout; a
-        //   suppressed cycle terminates.
+        // Success criteria: a composite whose only timeout is suppressed classifies as a timeout.
         // Why it matters: a timeout hidden in a composite would log as a plain failure on the WebClient twin.
-        // Given: a composite with a timeout among its suppressed components, and a self-referencing one
+        // Given: a composite with a timeout among its suppressed components
         val composite =
             RuntimeException("Multiple exceptions").apply {
                 addSuppressed(IOException("reset"))
                 addSuppressed(TimeoutException("late"))
             }
-        val cyclic = RuntimeException("cycle").also { it.addSuppressed(it) }
 
         // When/Then
         assertThat(Timeouts.isTimeout(composite)).isTrue()
-        assertThat(Timeouts.isTimeout(cyclic)).isFalse()
     }
 }

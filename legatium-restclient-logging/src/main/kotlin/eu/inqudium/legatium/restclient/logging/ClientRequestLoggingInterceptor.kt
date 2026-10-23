@@ -111,7 +111,7 @@ class ClientRequestLoggingInterceptor
     ) : ClientHttpRequestInterceptor {
         private val metrics = ClientLoggingMetrics.forRegistry(meterRegistry, ClientStack.RESTCLIENT)
 
-        /** Exposed for the tests, which swap the emitter's caller-MDC restorer to drive its fail-open path. */
+        /** Renders and emits the exchange's log line and records its outcome on [metrics]. */
         private val emitter = ExchangeLogEmitter(properties, nanoTime, metrics, masker)
 
         // Activation is the shared implementation (ADR-0003): identical semantics on both stacks by construction.

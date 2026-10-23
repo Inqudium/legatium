@@ -12,6 +12,7 @@ import eu.inqudium.legatium.common.ClientOutcome
 import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.NanoTimeSource
 import eu.inqudium.legatium.common.count
+import eu.inqudium.legatium.common.gaugeValue
 import eu.inqudium.legatium.common.keyValues
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.Meter
@@ -26,11 +27,9 @@ import org.slf4j.LoggerFactory
 import org.slf4j.Marker
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
-import org.springframework.mock.http.client.reactive.MockClientHttpRequest
 import org.springframework.web.reactive.function.BodyInserters
 import org.springframework.web.reactive.function.client.ClientResponse
 import org.springframework.web.reactive.function.client.ExchangeFunction
-import org.springframework.web.reactive.function.client.ExchangeStrategies
 import reactor.core.Exceptions
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
@@ -41,7 +40,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The six meters of [ClientLoggingMetrics] as driven by the filter - the lifecycle facts only this entry
- * point can show: pre-registration with the reactive outcome vocabulary, the events counter per outcome,
+ * point can show: pre-registration with the outcome vocabulary, the events counter per outcome,
  * the open-exchanges gauge across the body's lifetime, the request-id source counter, the body meters
  * and the fail-open stages inside Reactor's signal propagation. The registration behaviour of the shared
  * owner itself (fallback registry, gauge collision, guarded updates, tag folding) is tested once, in
@@ -62,15 +61,14 @@ class ClientRequestLoggingMetricsTest {
         log.detach()
     }
 
-    private fun gauge(): Double = registry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()
+    private fun gauge(): Double = registry.gaugeValue(ClientLoggingMetrics.OPEN_EXCHANGES_METER)
 
     @Nested
     inner class `Counters and gauge` {
         @Test
-        fun `should pre-register the reactive outcome vocabulary and count emitted events per outcome`() {
+        fun `should pre-register the outcome vocabulary and count emitted events per outcome`() {
             // What is tested: every fixed-tag meter exists at zero before the first call - including the
-            //   cancelled outcome the blocking twin does not have - and the events counter counts by
-            //   outcome.
+            //   cancelled outcome both twins share (ADR-0015) - and the events counter counts by outcome.
             // Success criteria: five outcomes at zero, the gauge under client=webclient; one call each
             //   moves its side.
             // Why it matters: a rate() alert must see the zero before the first occurrence; the client
@@ -79,13 +77,7 @@ class ClientRequestLoggingMetricsTest {
             outcomes.forEach {
                 assertThat(registry.count(ClientLoggingMetrics.EVENTS_METER, "outcome", it)).describedAs(it).isZero()
             }
-            assertThat(
-                registry
-                    .get(ClientLoggingMetrics.OPEN_EXCHANGES_METER)
-                    .tag(ClientLoggingMetrics.CLIENT_TAG, "webclient")
-                    .gauge()
-                    .value(),
-            ).isZero()
+            assertThat(registry.gaugeValue(ClientLoggingMetrics.OPEN_EXCHANGES_METER, ClientLoggingMetrics.CLIENT_TAG, "webclient")).isZero()
 
             // And: one call per outcome moves exactly its side
             filter.call(request(), answering())
@@ -457,24 +449,14 @@ class ClientRequestLoggingMetricsTest {
             context.addTurboFilter(dying)
             try {
                 val announcing = filterWith(properties.copy(logRequestStart = true), ticker, registry)
-                var connectorCalled = false
+                val connector = RecordingExchange()
 
                 // When
-                val thrown =
-                    catchThrowable {
-                        announcing
-                            .filter(
-                                request(),
-                                ExchangeFunction {
-                                    connectorCalled = true
-                                    answering().exchange(it)
-                                },
-                            ).block()
-                    }
+                val thrown = catchThrowable { announcing.filter(request(), connector).block() }
 
                 // Then
                 assertThat(Exceptions.unwrap(thrown)).isInstanceOf(LinkageError::class.java)
-                assertThat(connectorCalled).isFalse()
+                assertThat(connector.sent).isNull()
                 assertThat(gauge()).isZero()
                 assertThat(log.events).isEmpty()
                 assertThat(registry.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "arrival")).isZero()

@@ -44,15 +44,16 @@ internal object Cancellations {
         )
 
     /**
-     * True when [throwable], any cause, or any SUPPRESSED exception (recursively) reports a cancellation
-     * as defined on this object. Null is never one.
+     * True when any throwable of [throwable]'s cause graph (the [CauseGraph] walk: causes, suppressed
+     * exceptions, cycles) reports a cancellation as defined on this object. Null is never one.
      */
-    fun isCancellation(throwable: Throwable?): Boolean = CauseGraph.any(throwable) { isCancellation(it.javaClass, it.message) }
+    fun isCancellation(throwable: Throwable?): Boolean = CauseGraph.any(throwable) { reportsCancellation(it.javaClass, it.message) }
 
-    private fun isCancellation(
+    /** The per-link rule: a cancellation type, or a class that reports a cancellation under [message]. */
+    private fun reportsCancellation(
         type: Class<*>,
         message: String?,
     ): Boolean =
         CauseGraph.hasTypeNamed(type, CANCELLATION_CLASS_NAMES) ||
-            (message != null && generateSequence(type) { it.superclass }.any { CANCELLATION_MESSAGES[it.name] == message })
+            (message != null && CauseGraph.hasType(type) { CANCELLATION_MESSAGES[it.name] == message })
 }

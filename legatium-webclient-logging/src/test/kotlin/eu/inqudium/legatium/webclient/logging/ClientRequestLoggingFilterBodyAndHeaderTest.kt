@@ -24,11 +24,9 @@ import org.springframework.core.io.buffer.DefaultDataBufferFactory
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
-import org.springframework.mock.http.client.reactive.MockClientHttpRequest
 import org.springframework.web.reactive.function.BodyInserters
 import org.springframework.web.reactive.function.client.ClientResponse
 import org.springframework.web.reactive.function.client.ExchangeFunction
-import org.springframework.web.reactive.function.client.ExchangeStrategies
 import org.springframework.web.reactive.function.client.WebClient
 import reactor.core.Exceptions
 import reactor.core.publisher.BaseSubscriber
@@ -223,7 +221,7 @@ class ClientRequestLoggingFilterBodyAndHeaderTest {
             filter.call(request, connector)
 
             // Then
-            assertThat(checkNotNull(connector.received).bodyAsString.block()).isEqualTo("""{"name":"thing"}""")
+            assertThat(requireNotNull(connector.received).bodyAsString.block()).isEqualTo("""{"name":"thing"}""")
             assertThat(keyValues(log.events.single())).containsEntry("adapter_request_body", """{"name":"thing"}""")
         }
 

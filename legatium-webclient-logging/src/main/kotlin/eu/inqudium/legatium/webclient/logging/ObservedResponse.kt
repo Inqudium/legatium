@@ -54,7 +54,7 @@ internal class ObservedResponse(
     private val onCancelled: (Exchange) -> Unit,
     /**
      * The Mono's own terminal end of an exchange without a delivered response: the filter's
-     * exactly-once [ClientRequestLoggingFilter.complete].
+     * exactly-once `complete` of [ClientRequestLoggingFilter].
      */
     private val onTerminal: (Exchange) -> Unit,
 ) : MonoOperator<ClientResponse, ClientResponse>(source) {
@@ -62,6 +62,11 @@ internal class ObservedResponse(
         source.subscribe(Handover(actual))
     }
 
+    /**
+     * Shares its `upstream`/`deliveringOn` scaffolding and the same-thread cancel rule with
+     * [ObservedBody]'s subscriber on purpose: the two differ in what a cancel and the end of a delivery
+     * decide, which is the part a reader must see in one place.
+     */
     private inner class Handover(
         private val actual: CoreSubscriber<in ClientResponse>,
     ) : CoreSubscriber<ClientResponse>,
@@ -107,8 +112,8 @@ internal class ObservedResponse(
             }
         }
 
-        // Both terminal signals hand on first and complete the exchange in a finally: a downstream that
-        // throws from its terminal callback (a contract violation) still leaves the gauge closed.
+        // Safety: both terminal signals hand on first and complete the exchange in a finally - a downstream
+        // that throws from its terminal callback (a contract violation) still leaves the gauge closed.
 
         override fun onError(t: Throwable) {
             exchange.failure = t

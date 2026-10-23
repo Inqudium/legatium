@@ -7,6 +7,7 @@ import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.RequestIdSource
 import eu.inqudium.legatium.common.count
+import eu.inqudium.legatium.common.gaugeValue
 import eu.inqudium.legatium.common.keyValues
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
@@ -909,7 +910,7 @@ class ClientRequestLoggingInterceptorTest {
             // Then
             assertThat(thrown).isInstanceOf(AssertionError::class.java)
             assertThat(log.events).isEmpty()
-            assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+            assertThat(meterRegistry.gaugeValue(ClientLoggingMetrics.OPEN_EXCHANGES_METER)).isZero()
         }
 
         @Test
