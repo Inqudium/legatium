@@ -1,10 +1,6 @@
 package eu.inqudium.legatium.webclient.logging
 
-import ch.qos.logback.classic.Level
-import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
-import ch.qos.logback.core.Appender
-import ch.qos.logback.core.read.ListAppender
 import eu.inqudium.legatium.common.AttachedLogger
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
@@ -16,7 +12,6 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.reactivestreams.Publisher
 import org.reactivestreams.Subscriber
 import org.reactivestreams.Subscription
-import org.slf4j.LoggerFactory
 import org.slf4j.MDC
 import org.springframework.core.io.buffer.DataBuffer
 import org.springframework.core.io.buffer.DefaultDataBufferFactory

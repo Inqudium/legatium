@@ -1,10 +1,7 @@
 package eu.inqudium.legatium.restclient.logging
 
-import ch.qos.logback.classic.Level
-import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.AppenderBase
-import ch.qos.logback.core.read.ListAppender
 import eu.inqudium.legatium.common.CapturedLogger
 import eu.inqudium.legatium.common.ClientLoggingProperties
 import eu.inqudium.legatium.common.CorrelationIdGenerator
@@ -18,7 +15,6 @@ import org.junit.jupiter.api.extension.BeforeAllCallback
 import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.extension.ExtensionContext
 import org.junit.jupiter.api.extension.TestInstancePostProcessor
-import org.slf4j.LoggerFactory
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpRequest
 import org.springframework.http.HttpStatus
@@ -35,7 +31,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
-/** The read timeout that IS the subject of the Spring suites' timeout scenarios: well below the peer's `/slow` delay. */
+/** The connect, read and pool-lease timeout that IS the subject of the Spring suites' timeout scenarios: well below the peer's `/slow` delay. */
 internal val SHORT: Duration = Duration.ofMillis(200)
 
 /** The bound on releasing a JDK client after a test ([PeerIntegrationSuite.closingJdkClient]): generous, since it only matters when the JDK hangs. */

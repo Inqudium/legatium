@@ -13,6 +13,7 @@ import eu.inqudium.legatium.common.CorrelationIdGenerator
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.NanoTimeSource
 import eu.inqudium.legatium.common.count
+import eu.inqudium.legatium.common.gaugeValue
 import eu.inqudium.legatium.common.keyValues
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
@@ -55,7 +56,7 @@ class ClientRequestLoggingMetricsTest {
         log.detach()
     }
 
-    private fun gauge(): Double = registry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()
+    private fun gauge(): Double = registry.gaugeValue(ClientLoggingMetrics.OPEN_EXCHANGES_METER)
 
     /**
      * A turbo filter that makes the level check of [loggerName] at [atLevel] throw whatever [failure]

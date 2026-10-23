@@ -4,8 +4,10 @@ import ch.qos.logback.classic.Level
 import eu.inqudium.legatium.common.CapturedLogger
 import eu.inqudium.legatium.common.ClientLoggingMetrics
 import eu.inqudium.legatium.common.ClientLoggingProperties
+import eu.inqudium.legatium.common.FailingMdcAdapter
 import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.count
+import eu.inqudium.legatium.common.gaugeValue
 import eu.inqudium.legatium.common.installMdcAdapter
 import eu.inqudium.legatium.common.keyValues
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
@@ -21,14 +23,13 @@ import org.springframework.http.client.ClientHttpRequestExecution
 import org.springframework.http.client.ClientHttpResponse
 import org.springframework.mock.http.client.MockClientHttpResponse
 import java.io.IOException
-import java.util.Deque
 import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The fail-open guards of [ClientRequestLoggingInterceptor] around the host's MDC adapter, driven with
- * a FAILING adapter swapped in through [installMdcAdapter] and restored after every test: the call-wide
- * scope's open and close, the caller's snapshot (ADR-0011) - its capture, its install and its teardown
- * around the emission on another thread - and the snapshot's own rollback. The adapter
+ * a FAILING adapter ([FailingMdcAdapter]) swapped in through [installMdcAdapter] and restored after
+ * every test: the call-wide scope's open and close, the caller's snapshot (ADR-0011) - its capture, its
+ * install and its teardown around the emission on another thread - and the snapshot's own rollback. The adapter
  * delegates everything else to the original, so MDC state stays real, and it fails only while ARMED -
  * from the point of the call the test targets to the point after it - so the emission at close runs
  * against a working adapter and the guard under test is the only one that fires. Each guard costs its
@@ -45,52 +46,7 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
     private val moduleLog = CapturedLogger(ClientRequestLoggingInterceptor::class.java.name, Level.WARN)
     private val emitterLog = CapturedLogger(ExchangeLogEmitter::class.java.name, Level.WARN)
     private val pinned = PinnedMdcAppender().apply { start() }
-    private val adapter = ArmedFailingAdapter(original)
-
-    /**
-     * Delegates to [delegate]; while [armed], `put` of a key in [failPut] throws what [putFailure]
-     * builds (an `IllegalStateException` unless a test wants an `Error`), `remove` of one in
-     * [failRemove] throws, and `getCopyOfContextMap` throws when [failCopy] is set.
-     */
-    private class ArmedFailingAdapter(
-        private val delegate: MDCAdapter,
-    ) : MDCAdapter by delegate {
-        @Volatile
-        var armed = false
-        var failPut: Set<String> = emptySet()
-        var putFailure: (String) -> Throwable = { key -> IllegalStateException("adapter put refused $key") }
-        var failRemove: Set<String> = emptySet()
-        var failCopy = false
-
-        override fun put(
-            key: String,
-            value: String?,
-        ) {
-            if (armed && key in failPut) throw putFailure(key)
-            delegate.put(key, value)
-        }
-
-        override fun remove(key: String) {
-            if (armed && key in failRemove) error("adapter remove refused $key")
-            delegate.remove(key)
-        }
-
-        override fun getCopyOfContextMap(): MutableMap<String, String>? {
-            if (armed && failCopy) error("adapter copy refused")
-            return delegate.copyOfContextMap
-        }
-
-        override fun pushByKey(
-            key: String,
-            value: String,
-        ) = delegate.pushByKey(key, value)
-
-        override fun popByKey(key: String): String? = delegate.popByKey(key)
-
-        override fun getCopyOfDequeByKey(key: String): Deque<String>? = delegate.getCopyOfDequeByKey(key)
-
-        override fun clearDequeByKey(key: String) = delegate.clearDequeByKey(key)
-    }
+    private val adapter = FailingMdcAdapter(original, armed = false)
 
     @BeforeEach
     fun installFailingAdapter() {
@@ -178,7 +134,7 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
         // Then
         assertThat(thrown).isInstanceOf(LinkageError::class.java).hasMessage("adapter died on ${MdcKeys.REQUEST_ID}")
         assertThat(wire.called).isFalse()
-        assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+        assertThat(meterRegistry.gaugeValue(ClientLoggingMetrics.OPEN_EXCHANGES_METER)).isZero()
         assertThat(MDC.getCopyOfContextMap().orEmpty()).isEmpty()
         assertThat(log.events).isEmpty()
     }
@@ -250,14 +206,14 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
         //   own identity and WITHOUT the caller's key; stage=wiring at 1 with the WARN breadcrumb.
         // Why it matters: the snapshot is an extra; a failing extra must cost the caller's keys on the
         //   other thread, never the wiring.
-        // Given: a caller key on this thread, and the adapter's copy refused while the call is wired
+        // Given: a caller key on this thread, and the adapter's copy to be refused
         MDC.put("endpoint_request_id", "inbound-7")
         adapter.failCopy = true
+
+        // When: the call is wired with the copy refused, then closed on another thread
         adapter.armed = true
         val response = interceptor.intercept(request(), ByteArray(0), answering(body = "ok"))
         adapter.armed = false
-
-        // When
         onAnotherThread { response.consumeAndClose() }
 
         // Then
@@ -329,6 +285,12 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
         }
     }
 
+    /** What the other thread ended with: the exception the snapshot call threw, and the thread's MDC right after. */
+    private class OtherThreadOutcome(
+        val thrown: Throwable?,
+        val mdc: Map<String, String>,
+    )
+
     @Test
     fun `should roll back a partial install of the caller's snapshot and propagate the failure`() {
         // What is tested: CallerMdcSnapshot.restore's rollback - the adapter refuses one of two keys
@@ -350,13 +312,13 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
                 adapter.armed = true
                 val thrown = catchThrowable { snapshot.restore() }
                 adapter.armed = false
-                Triple(thrown, MDC.get("a_key"), MDC.get("b_key"))
+                OtherThreadOutcome(thrown, MDC.getCopyOfContextMap().orEmpty())
             }
 
         // Then
-        assertThat(seen.first).isInstanceOf(IllegalStateException::class.java).hasMessageContaining("b_key")
-        assertThat(seen.second).isEqualTo("foreign")
-        assertThat(seen.third).isNull()
+        assertThat(seen.thrown).isInstanceOf(IllegalStateException::class.java).hasMessageContaining("b_key")
+        assertThat(seen.mdc["a_key"]).isEqualTo("foreign")
+        assertThat(seen.mdc["b_key"]).isNull()
     }
 
     @Test
@@ -379,13 +341,13 @@ class ClientRequestLoggingInterceptorMdcFaultTest {
                 adapter.armed = true
                 val thrown = catchThrowable { scope.close() }
                 adapter.armed = false
-                Triple(thrown, MDC.get("c_key"), MDC.getCopyOfContextMap().orEmpty().keys)
+                OtherThreadOutcome(thrown, MDC.getCopyOfContextMap().orEmpty())
             }
 
         // Then
-        assertThat(seen.first).isInstanceOf(IllegalStateException::class.java)
-        assertThat(requireNotNull(seen.first).suppressed).hasSize(1)
-        assertThat(seen.second).isNull()
-        assertThat(seen.third).containsExactlyInAnyOrder("a_key", "b_key")
+        assertThat(seen.thrown).isInstanceOf(IllegalStateException::class.java)
+        assertThat(requireNotNull(seen.thrown).suppressed).hasSize(1)
+        assertThat(seen.mdc["c_key"]).isNull()
+        assertThat(seen.mdc.keys).containsExactlyInAnyOrder("a_key", "b_key")
     }
 }

@@ -19,9 +19,9 @@ import org.slf4j.event.Level
  * The guards around a scope TEARDOWN - the interceptor's call-wide MDC scope, both emitters' emission
  * scope and caller-context scope (ADR-0010, ADR-0011) - follow one rule in both twins: once the line is
  * on the logger, a failure on the way OUT is bookkeeping, counted `stage=wiring` and reported through
- * this function - never a lost line (the emission counter does not see it), and never a masked
- * exception: the teardown runs in a `finally` with its own catch, so an emission failure or the
- * client's own exception keeps propagating past it.
+ * [reportWiringFailure] with `WiringCost.DIRTY_TEARDOWN` - never a lost line (the emission counter does
+ * not see it), and never a masked exception: the teardown runs in a `finally` with its own catch, so an
+ * emission failure or the client's own exception keeps propagating past it.
  */
 internal inline fun reportQuietly(report: () -> Unit) {
     try {

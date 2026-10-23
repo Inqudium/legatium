@@ -13,6 +13,7 @@ import org.junit.jupiter.params.provider.EnumSource
 import org.slf4j.LoggerFactory
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import org.slf4j.event.Level as Slf4jLevel
 
 /**
  * The shared fail-open guard shape: interrupt-flag restoration, the confined diagnostics channel, and
@@ -69,11 +70,11 @@ class FailOpenDiagnosticsTest {
         //   changed flag would silently change every breadcrumb of that cost in both twins.
         // Given/When/Then
         assertThat(WiringCost.entries).containsExactly(WiringCost.LOST_FEATURE, WiringCost.DIRTY_TEARDOWN, WiringCost.DEGRADED_EVENT)
-        assertThat(WiringCost.LOST_FEATURE.level).isEqualTo(org.slf4j.event.Level.ERROR)
+        assertThat(WiringCost.LOST_FEATURE.level).isEqualTo(Slf4jLevel.ERROR)
         assertThat(WiringCost.LOST_FEATURE.withStackTrace).isTrue()
-        assertThat(WiringCost.DIRTY_TEARDOWN.level).isEqualTo(org.slf4j.event.Level.WARN)
+        assertThat(WiringCost.DIRTY_TEARDOWN.level).isEqualTo(Slf4jLevel.WARN)
         assertThat(WiringCost.DIRTY_TEARDOWN.withStackTrace).isTrue()
-        assertThat(WiringCost.DEGRADED_EVENT.level).isEqualTo(org.slf4j.event.Level.WARN)
+        assertThat(WiringCost.DEGRADED_EVENT.level).isEqualTo(Slf4jLevel.WARN)
         assertThat(WiringCost.DEGRADED_EVENT.withStackTrace).isFalse()
     }
 

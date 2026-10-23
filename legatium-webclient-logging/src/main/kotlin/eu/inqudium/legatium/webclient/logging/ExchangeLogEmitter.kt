@@ -30,8 +30,8 @@ import java.time.Duration
  * Builds and emits the log events of an exchange - the arrival line and the completion event - with the
  * IDENTICAL message and field format of the legatium-restclient-logging emitter (the field family is
  * locked once, by legatium-common's `ClientLogFieldTest` - ADR-0003; the message text by each twin's
- * `TwinContractTest`); only the disposition vocabulary is wider where the stack is (`cancelled`, which
- * a blocking call cannot be).
+ * `TwinContractTest`). Both twins share the whole outcome vocabulary, `cancelled` included (ADR-0015);
+ * only what triggers it is stack-specific.
  *
  * ## Levels
  *
@@ -113,8 +113,8 @@ internal class ExchangeLogEmitter(
 
     /**
      * The single emission point, called once per exchange by the filter AFTER it won the
-     * [Exchange.state] transition to [ExchangeState.COMPLETED] - through
-     * [ClientRequestLoggingFilter.complete] (the body's terminal signal, or the response `Mono`'s
+     * [Exchange.state] transition to [ExchangeState.COMPLETED] - through the
+     * [ClientRequestLoggingFilter]'s `complete` (the body's terminal signal, or the response `Mono`'s
      * error/empty signal without a response) or through its cancel path (the caller abandoning the
      * response `Mono`); the transition is the one exactly-once guard.
      */
@@ -236,10 +236,11 @@ internal class ExchangeLogEmitter(
 
     /**
      * The SLF4J level carries the severity, adapter_outcome the semantic - decoupled on purpose
-     * ([ClientLogField.OUTCOME]), with `cancelled` on top of the RestClient twin's matrix: a timeout in
-     * the error's cause chain is WARN with its own outcome (the peer is slow, not broken), any other
-     * error signal is ERROR with `failure`, a subscription the caller abandoned (a downstream timeout
-     * operator, a disposed caller) is WARN with `cancelled`; an answered exchange classifies by its
+     * ([ClientLogField.OUTCOME]): a timeout in the error's cause chain is WARN with its own outcome (the
+     * peer is slow, not broken), any other error signal is ERROR with `failure`, a subscription the
+     * caller abandoned (a downstream timeout operator, a disposed caller) is WARN with `cancelled` - the
+     * disposition the RestClient twin shares for a call its caller abandoned, here with the reactive
+     * trigger (ADR-0015); an answered exchange classifies by its
      * status alone ([Classification.ofStatus], shared with the RestClient twin): a 5xx is WARN `failure`,
      * a 4xx is `rejected` at INFO - WARN for the [Classification.ESCALATED_REJECTIONS] (ADR-0012) - and
      * INFO `success` otherwise.

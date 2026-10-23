@@ -170,7 +170,7 @@ class ClientRequestLoggingInterceptorCancellationTest {
         // When
         catchThrowable { response.body.read() }
         Thread.interrupted()
-        Thread.ofPlatform().start { response.close() }.join()
+        onAnotherThread { response.close() }
 
         // Then
         val event = log.events.single()

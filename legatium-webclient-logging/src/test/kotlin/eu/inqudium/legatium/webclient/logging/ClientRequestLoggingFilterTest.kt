@@ -9,6 +9,7 @@ import eu.inqudium.legatium.common.MdcKeys
 import eu.inqudium.legatium.common.NanoTimeSource
 import eu.inqudium.legatium.common.TraceMdcKeys
 import eu.inqudium.legatium.common.count
+import eu.inqudium.legatium.common.gaugeValue
 import eu.inqudium.legatium.common.keyValues
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
@@ -45,7 +46,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Core behavior of [ClientRequestLoggingFilter]: the exchange line (IDENTICAL in format to the
- * RestClient twin's), the level/outcome matrix with the reactive `cancelled` disposition beside
+ * RestClient twin's), the level/outcome matrix with the shared `cancelled` disposition (ADR-0015) beside
  * `timeout`, the emission at the body's terminal signal, identity handling (ADR-0002 on the outbound
  * side) and activation. Deterministic: injected `AtomicLong` time, pinned id generator, hand-built
  * `ClientRequest`/`ClientResponse`, every signal driven synchronously.
@@ -481,8 +482,8 @@ class ClientRequestLoggingFilterTest {
 
         @Test
         fun `should log outcome cancelled with a dash status when the caller cancels before the response`() {
-            // What is tested: the reactive disposition the blocking twin cannot have - a cancelled
-            //   subscription before any response (a downstream timeout operator, a disposed caller).
+            // What is tested: the shared cancelled disposition (ADR-0015) on its reactive trigger - a
+            //   cancelled subscription before any response (a downstream timeout operator, a disposed caller).
             // Success criteria: one WARN event, outcome cancelled, `-> -`, no status field - and the
             //   cancel reached the connector's Mono.
             // Why it matters: a torn-down call must neither log as a success nor invent a status; and
@@ -674,7 +675,7 @@ class ClientRequestLoggingFilterTest {
 
             // Then
             assertThat(keyValues(log.events.single())).containsEntry("adapter_outcome", "failure")
-            assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+            assertThat(meterRegistry.gaugeValue(ClientLoggingMetrics.OPEN_EXCHANGES_METER)).isZero()
         }
     }
 
@@ -879,10 +880,10 @@ class ClientRequestLoggingFilterTest {
             // Why it matters: two lines of one logical call must join the same server line; the
             //   property is order-independent, and an index assertion raced the two threads.
             // Given: a connector failing once, then answering elsewhere
-            var attempts = 0
+            val attempts = AtomicInteger()
             val flaky =
                 ExchangeFunction { req ->
-                    if (attempts++ == 0) Mono.error(IOException("connection reset")) else answeringElsewhere().exchange(req)
+                    if (attempts.getAndIncrement() == 0) Mono.error(IOException("connection reset")) else answeringElsewhere().exchange(req)
                 }
 
             // When
@@ -1028,7 +1029,7 @@ class ClientRequestLoggingFilterTest {
             // Then
             assertThat(log.events).hasSize(2)
             assertThat(log.events.map { keyValues(it)["adapter_outcome"] }).containsExactly("success", "success")
-            assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+            assertThat(meterRegistry.gaugeValue(ClientLoggingMetrics.OPEN_EXCHANGES_METER)).isZero()
         }
 
         @Test
@@ -1150,7 +1151,7 @@ class ClientRequestLoggingFilterTest {
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.WARN)
             assertThat(keyValues(event)).containsEntry("adapter_outcome", "cancelled").containsEntry("adapter_response_status_code", 200)
-            assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+            assertThat(meterRegistry.gaugeValue(ClientLoggingMetrics.OPEN_EXCHANGES_METER)).isZero()
         }
 
         @Test
@@ -1194,7 +1195,7 @@ class ClientRequestLoggingFilterTest {
             // Then: passed through untouched, nothing logged twice, nothing left open
             assertThat(received.get()).isSameAs(response)
             assertThat(log.events).hasSize(1)
-            assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+            assertThat(meterRegistry.gaugeValue(ClientLoggingMetrics.OPEN_EXCHANGES_METER)).isZero()
         }
 
         @Test
@@ -1217,7 +1218,7 @@ class ClientRequestLoggingFilterTest {
             // Then
             assertThat(thrown).isInstanceOf(IllegalStateException::class.java).hasMessage("subscriber broke on the terminal signal")
             assertThat(keyValues(log.events.single())).containsEntry("adapter_outcome", "success").containsEntry("adapter_response_status_code", 200)
-            assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+            assertThat(meterRegistry.gaugeValue(ClientLoggingMetrics.OPEN_EXCHANGES_METER)).isZero()
         }
 
         @Test
@@ -1240,7 +1241,7 @@ class ClientRequestLoggingFilterTest {
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.ERROR)
             assertThat(keyValues(event)).containsEntry("adapter_outcome", "failure").doesNotContainKey("adapter_response_status_code")
-            assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+            assertThat(meterRegistry.gaugeValue(ClientLoggingMetrics.OPEN_EXCHANGES_METER)).isZero()
         }
 
         @Test
@@ -1260,7 +1261,7 @@ class ClientRequestLoggingFilterTest {
             val event = log.events.single()
             assertThat(event.level).isEqualTo(Level.ERROR)
             assertThat(event.throwableProxy?.message).isEqualTo(ClientRequestLoggingFilter.NO_RESPONSE_MESSAGE)
-            assertThat(meterRegistry.get(ClientLoggingMetrics.OPEN_EXCHANGES_METER).gauge().value()).isZero()
+            assertThat(meterRegistry.gaugeValue(ClientLoggingMetrics.OPEN_EXCHANGES_METER)).isZero()
         }
 
         @Test
@@ -1361,7 +1362,7 @@ private class TerminalThrowingSubscriber<T : Any> : CoreSubscriber<T> {
 
     override fun onNext(t: T) = Unit
 
-    override fun onError(t: Throwable): Unit = throw IllegalStateException("subscriber broke on the terminal signal")
+    override fun onError(t: Throwable): Unit = error("subscriber broke on the terminal signal")
 
-    override fun onComplete(): Unit = throw IllegalStateException("subscriber broke on the terminal signal")
+    override fun onComplete(): Unit = error("subscriber broke on the terminal signal")
 }

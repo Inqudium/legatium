@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * The cause-graph walk the by-name classifications share: which throwables it visits, and that it ends.
@@ -49,31 +50,39 @@ class CauseGraphTest {
         // Why it matters: null is the "no failure" of every caller, which must never classify.
         // Given
         val root = RuntimeException("root", IOException("io", SocketTimeoutException("Read timed out")))
-        var calls = 0
+        val calls = AtomicInteger()
 
         // When/Then
         assertThat(CauseGraph.any(root) { it is SocketTimeoutException }).isTrue()
         assertThat(
             CauseGraph.any(null) {
-                calls++
+                calls.incrementAndGet()
                 true
             },
         ).isFalse()
-        assertThat(calls).isZero()
+        assertThat(calls.get()).isZero()
     }
 
     @Test
     fun `should terminate on a cyclic cause graph`() {
-        // What is tested: the visited-set bound of the walk.
-        // Success criteria: a graph whose suppressed exception points back to its root returns false.
+        // What is tested: the visited-set bound of the walk, for the three shapes a cycle takes - a cause
+        //   pointing back along the chain, a suppressed exception pointing back to its root, and an
+        //   exception suppressing itself.
+        // Success criteria: each graph returns false instead of looping.
         // Why it matters: a cycle is legal in a cause graph, and the walk runs on the caller's thread.
         // Given
+        val causeA = RuntimeException("a")
+        val causeB = RuntimeException("b", causeA)
+        causeA.initCause(causeB)
         val first = IOException("first")
         val second = IOException("second", first)
         first.addSuppressed(second)
+        val selfSuppressing = RuntimeException("cycle").also { it.addSuppressed(it) }
 
         // When/Then
+        assertThat(CauseGraph.any(causeA) { false }).isFalse()
         assertThat(CauseGraph.any(second) { false }).isFalse()
+        assertThat(CauseGraph.any(selfSuppressing) { false }).isFalse()
     }
 
     @Test
@@ -90,5 +99,21 @@ class CauseGraphTest {
         assertThat(CauseGraph.hasTypeNamed(InterruptedIOException::class.java, names)).isTrue()
         assertThat(CauseGraph.hasTypeNamed(SocketTimeoutException::class.java, names)).isTrue()
         assertThat(CauseGraph.hasTypeNamed(IOException::class.java, names)).isFalse()
+    }
+
+    @Test
+    fun `should apply a class predicate to a type and each of its superclasses`() {
+        // What is tested: the hierarchy primitive under the by-name match - a predicate on a superclass,
+        //   on the type itself, and one no class of the hierarchy satisfies.
+        // Success criteria: true, true, false.
+        // Why it matters: a per-class rule (the blocking twin's message match) must see the same
+        //   hierarchy as the by-name match, or a subclass of a matched engine type slips through.
+        // Given
+        val type = SocketTimeoutException::class.java
+
+        // When/Then
+        assertThat(CauseGraph.hasType(type) { it == InterruptedIOException::class.java }).isTrue()
+        assertThat(CauseGraph.hasType(type) { it == type }).isTrue()
+        assertThat(CauseGraph.hasType(type) { it == IllegalStateException::class.java }).isFalse()
     }
 }

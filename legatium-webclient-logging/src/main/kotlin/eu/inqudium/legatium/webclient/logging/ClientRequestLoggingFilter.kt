@@ -32,14 +32,16 @@ import reactor.util.context.ContextView
  * RestClient twin - this list is the canonical one; the module README's table mirrors it and adds the
  * tee's concurrency model, an internal matter:
  *
- * - **Disposition vocabulary:** `cancelled` in addition to `success`/`failure`/`timeout` - a subscription
- *   the CALLER abandoned (a downstream `timeout()` operator, a disposed caller, a client that
- *   disconnected mid-stream) is the reactive reality a blocking call cannot have. A consumer that
- *   cancels the body from within its own delivery because it has read enough - Spring's body skip for
- *   `bodyToMono(Void.class)`, a `take(n)` - is NOT that: the exchange completes as `success` with the
- *   body partially read (see [ObservedBody]). Note the consequence: a `Mono.timeout()` the CALLER
- *   applies reaches this filter as a CANCEL and logs `cancelled`; a timeout the CONNECTOR raises
- *   (Reactor Netty's response timeout) arrives as an error signal and logs `timeout`.
+ * - **What `cancelled` means:** both stacks share the whole outcome vocabulary (ADR-0015); only the
+ *   trigger of `cancelled` is stack-specific. Here it is a subscription the CALLER abandoned (a
+ *   downstream `timeout()` operator, a disposed caller, a client that disconnected mid-stream); the
+ *   blocking twin logs it for a call that threw while its caller had abandoned it - an interrupted
+ *   thread, a worker cancelled with `Future.cancel(true)`. A consumer that cancels the body from within
+ *   its own delivery because it has read enough - Spring's body skip for `bodyToMono(Void.class)`, a
+ *   `take(n)` - is NOT that: the exchange completes as `success` with the body partially read (see
+ *   [ObservedBody]). Note the consequence: a `Mono.timeout()` the CALLER applies reaches this filter as
+ *   a CANCEL and logs `cancelled`; a timeout the CONNECTOR raises (Reactor Netty's response timeout)
+ *   arrives as an error signal and logs `timeout`.
  * - **No call-wide THREAD-LOCAL MDC:** the call hops event-loop threads; the exchange identity rides
  *   the emission's [eu.inqudium.legatium.common.MdcScope] (and the message inline). Handler-side
  *   propagation of the identity into reactive operators is the host's context-propagation business, not
@@ -134,7 +136,11 @@ class ClientRequestLoggingFilter
         /** Shared with the emitter; one owner per registry (section "Manual wiring" of the class KDoc). */
         private val metrics = ClientLoggingMetrics.forRegistry(meterRegistry, ClientStack.WEBCLIENT)
 
-        /** Exposed for the tests, which swap the emitter's ambient restorer to drive its fail-open path. */
+        /**
+         * Internal for two users: the auto-configuration, which re-detects the emitter's ambient restorer
+         * against the context's class loader, and the tests, which swap in a throwing restorer to drive its
+         * fail-open path.
+         */
         internal val emitter = ExchangeLogEmitter(properties, nanoTime, metrics, masker)
 
         // Activation is the shared implementation (ADR-0003): identical semantics on both stacks by construction.
@@ -189,6 +195,29 @@ class ClientRequestLoggingFilter
         }
 
         /**
+         * The fail-open wiring: an exception degrades the filter to a plain pass-through (the caller sees
+         * null), counted `stage=wiring` - a logging component must never fail the call it describes.
+         */
+        private fun wireOrNull(
+            request: ClientRequest,
+            ambient: ContextView,
+        ): Wiring? =
+            try {
+                wireExchange(request, ambient)
+            } catch (e: Exception) {
+                reportWiringFailure(
+                    metrics,
+                    internalLog,
+                    WiringCost.LOST_FEATURE,
+                    e,
+                    "Client logging could not be wired for {} {} - continuing without logging",
+                    request.method(),
+                    request.url(),
+                )
+                null
+            }
+
+        /**
          * The response arrived: records it on the exchange and returns the response with its body wrapped -
          * the tee (when a capture exists) and the terminal hooks that complete the exchange. `mutate()`
          * copies status, headers, cookies and request; the body flux is transformed lazily, so nothing is
@@ -218,96 +247,6 @@ class ClientRequestLoggingFilter
                 e,
                 "Response body tee failed - the logged body may be incomplete",
             )
-        }
-
-        /**
-         * The exactly-once end of an exchange whose connector call left with an [Error]: the gauge closes,
-         * no event is attempted, one WARN breadcrumb on the module's logger, quietly.
-         */
-        private fun abandonExchange(
-            exchange: Exchange,
-            error: Throwable,
-        ) {
-            if (exchange.state.getAndSet(ExchangeState.COMPLETED) == ExchangeState.COMPLETED) {
-                return
-            }
-            reportQuietly {
-                metrics.exchangeCompleted()
-                internalLog.warn(
-                    "Adapter http exchange abandoned: {} {} - {} [{}={}]",
-                    exchange.method,
-                    exchange.target,
-                    error.toString(),
-                    MdcKeys.REQUEST_ID,
-                    exchange.requestId,
-                )
-            }
-        }
-
-        /**
-         * The fail-open wiring: an exception degrades the filter to a plain pass-through (the caller sees
-         * null), counted `stage=wiring` - a logging component must never fail the call it describes.
-         */
-        private fun wireOrNull(
-            request: ClientRequest,
-            ambient: ContextView,
-        ): Wiring? =
-            try {
-                wireExchange(request, ambient)
-            } catch (e: Exception) {
-                reportWiringFailure(
-                    metrics,
-                    internalLog,
-                    WiringCost.LOST_FEATURE,
-                    e,
-                    "Client logging could not be wired for {} {} - continuing without logging",
-                    request.method(),
-                    request.url(),
-                )
-                null
-            }
-
-        /**
-         * Exactly-once: closes the gauge and emits, whichever terminal callback wins the transition. The
-         * callbacks run inside Reactor's signal propagation, where an escaping exception would be rethrown
-         * into the caller's pipeline: the emission is confined in the emitter (`stage=emission`, its
-         * host-meter updates as `stage=wiring`), and the gauge close is a private counter that cannot
-         * throw.
-         */
-        internal fun complete(exchange: Exchange) {
-            if (exchange.state.getAndSet(ExchangeState.COMPLETED) == ExchangeState.COMPLETED) {
-                return
-            }
-            finish(exchange)
-        }
-
-        /**
-         * The caller cancelled the response Mono. Before a response (`OPEN`) or while the response is being
-         * handed to a downstream that may drop it (`DELIVERING`) this ends the exchange as `cancelled`; once
-         * the downstream has taken the response (`RESPONDED`) the body owns the completion and the cancel
-         * is ignored - a host operator such as `next()` cancels the Mono from within the delivery, before
-         * it hands the value on, and reaches [ObservedResponse] on the delivering thread, which does not
-         * call this at all. The CAS loop makes the decision atomic against the delivering thread's own
-         * transitions.
-         */
-        private fun cancelUnlessResponded(exchange: Exchange) {
-            while (true) {
-                val state = exchange.state.get()
-                if (state == ExchangeState.RESPONDED || state == ExchangeState.COMPLETED) {
-                    return
-                }
-                if (exchange.state.compareAndSet(state, ExchangeState.COMPLETED)) {
-                    exchange.cancelled = true
-                    finish(exchange)
-                    return
-                }
-            }
-        }
-
-        /** Gauge close and emission, after the exactly-once transition was won. */
-        private fun finish(exchange: Exchange) {
-            metrics.exchangeCompleted()
-            emitter.logExchange(exchange)
         }
 
         /**
@@ -361,6 +300,73 @@ class ClientRequestLoggingFilter
             metrics.requestId(identity.source)
             metrics.exchangeOpened()
             return Wiring(exchange, outgoing)
+        }
+
+        /**
+         * Exactly-once: closes the gauge and emits, whichever terminal callback wins the transition. The
+         * callbacks run inside Reactor's signal propagation, where an escaping exception would be rethrown
+         * into the caller's pipeline: the emission is confined in the emitter (`stage=emission`, its
+         * host-meter updates as `stage=wiring`), and the gauge close is a private counter that cannot
+         * throw.
+         */
+        private fun complete(exchange: Exchange) {
+            if (exchange.state.getAndSet(ExchangeState.COMPLETED) == ExchangeState.COMPLETED) {
+                return
+            }
+            finish(exchange)
+        }
+
+        /**
+         * The caller cancelled the response Mono. Before a response (`OPEN`) or while the response is being
+         * handed to a downstream that may drop it (`DELIVERING`) this ends the exchange as `cancelled`; once
+         * the downstream has taken the response (`RESPONDED`) the body owns the completion and the cancel
+         * is ignored - a host operator such as `next()` cancels the Mono from within the delivery, before
+         * it hands the value on, and reaches [ObservedResponse] on the delivering thread, which does not
+         * call this at all. The CAS loop makes the decision atomic against the delivering thread's own
+         * transitions.
+         */
+        private fun cancelUnlessResponded(exchange: Exchange) {
+            while (true) {
+                val state = exchange.state.get()
+                if (state == ExchangeState.RESPONDED || state == ExchangeState.COMPLETED) {
+                    return
+                }
+                if (exchange.state.compareAndSet(state, ExchangeState.COMPLETED)) {
+                    exchange.cancelled = true
+                    finish(exchange)
+                    return
+                }
+            }
+        }
+
+        /** Gauge close and emission, after the exactly-once transition was won. */
+        private fun finish(exchange: Exchange) {
+            metrics.exchangeCompleted()
+            emitter.logExchange(exchange)
+        }
+
+        /**
+         * The exactly-once end of an exchange whose connector call left with an [Error]: the gauge closes,
+         * no event is attempted, one WARN breadcrumb on the module's logger, quietly.
+         */
+        private fun abandonExchange(
+            exchange: Exchange,
+            error: Throwable,
+        ) {
+            if (exchange.state.getAndSet(ExchangeState.COMPLETED) == ExchangeState.COMPLETED) {
+                return
+            }
+            reportQuietly {
+                metrics.exchangeCompleted()
+                internalLog.warn(
+                    "Adapter http exchange abandoned: {} {} - {} [{}={}]",
+                    exchange.method,
+                    exchange.target,
+                    error.toString(),
+                    MdcKeys.REQUEST_ID,
+                    exchange.requestId,
+                )
+            }
         }
 
         /** The wired [exchange] plus the (possibly rebuilt) request the connector receives. */

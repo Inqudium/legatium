@@ -107,18 +107,6 @@ class ClientLoggingMetricsTest {
         return generateSequence(0) { it + 1 }.map { "peer-$it.example.com" }.first { bodyMeterBin(meterName, template, it, name) == target }
     }
 
-    /** The response-read count under the one template and host the test records against. */
-    private fun responseReadCount(
-        registry: MeterRegistry,
-        name: String,
-        state: String,
-    ): Double =
-        registry
-            .get(ClientLoggingMetrics.RESPONSE_BODY_READ_METER)
-            .tags("uri", "https://api.example.com/things/{id}", "host", "api.example.com", "name", name, "state", state)
-            .counter()
-            .count()
-
     @ParameterizedTest
     @EnumSource(ClientStack::class)
     internal fun `should pre-register every fixed-tag meter at zero for the stack`(stack: ClientStack) {
@@ -288,13 +276,7 @@ class ClientLoggingMetricsTest {
 
         // Then
         assertThat(thrown).isNull()
-        assertThat(
-            hostile
-                .get(ClientLoggingMetrics.FAIL_OPEN_METER)
-                .tags("stage", "wiring")
-                .counter()
-                .count(),
-        ).isEqualTo(2.0)
+        assertThat(hostile.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(2.0)
     }
 
     @Test
@@ -315,13 +297,7 @@ class ClientLoggingMetricsTest {
             repeat(6) { metrics.requestId(RequestIdSource.TRACE) }
 
             // Then
-            assertThat(
-                hostile
-                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
-                    .tags("stage", "wiring")
-                    .counter()
-                    .count(),
-            ).isEqualTo(6.0)
+            assertThat(hostile.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(6.0)
             assertThat(moduleLog.events.filter { it.level == Level.WARN && it.formattedMessage.contains("could not be updated") }).hasSize(1)
         } finally {
             moduleLog.detach()
@@ -442,13 +418,7 @@ class ClientLoggingMetricsTest {
 
             // Then
             assertThat(thrown).isNull()
-            assertThat(
-                hostile
-                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
-                    .tags("stage", "wiring")
-                    .counter()
-                    .count(),
-            ).isEqualTo(6.0)
+            assertThat(hostile.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(6.0)
             assertThat(moduleLog.events.filter { it.level == Level.WARN && it.formattedMessage.contains("could not be updated") }).hasSize(1)
         } finally {
             moduleLog.detach()
@@ -524,9 +494,9 @@ class ClientLoggingMetricsTest {
         metrics.responseBodyRead("https://api.example.com/things/{id}", "api.example.com", null, BodyReadState.COMPLETE)
 
         // Then
-        assertThat(responseReadCount(registry, "things", "unread")).isEqualTo(2.0)
-        assertThat(responseReadCount(registry, "things", "complete")).isEqualTo(1.0)
-        assertThat(responseReadCount(registry, ClientLoggingMetrics.UNNAMED_ADAPTER, "complete")).isEqualTo(1.0)
+        assertThat(registry.count(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "https://api.example.com/things/{id}", "host", "api.example.com", "name", "things", "state", "unread")).isEqualTo(2.0)
+        assertThat(registry.count(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "https://api.example.com/things/{id}", "host", "api.example.com", "name", "things", "state", "complete")).isEqualTo(1.0)
+        assertThat(registry.count(ClientLoggingMetrics.RESPONSE_BODY_READ_METER, "uri", "https://api.example.com/things/{id}", "host", "api.example.com", "name", ClientLoggingMetrics.UNNAMED_ADAPTER, "state", "complete")).isEqualTo(1.0)
         assertThat(registry.find(ClientLoggingMetrics.RESPONSE_BODY_READ_METER).tag("state", "partial").counter()).isNull()
     }
 
@@ -559,13 +529,7 @@ class ClientLoggingMetricsTest {
             assertThat(thrown).isNull()
             assertThat(metricsLog.events).isEmpty()
             assertThat(empty.registries).isEmpty()
-            assertThat(
-                empty
-                    .get(ClientLoggingMetrics.EVENTS_METER)
-                    .tag("outcome", "success")
-                    .counter()
-                    .count(),
-            ).isZero()
+            assertThat(empty.count(ClientLoggingMetrics.EVENTS_METER, "outcome", "success")).isZero()
         } finally {
             metricsLog.detach()
         }
@@ -786,13 +750,7 @@ class ClientLoggingMetricsTest {
 
             // Then
             assertThat(thrown).isNull()
-            assertThat(
-                hostile
-                    .get(ClientLoggingMetrics.FAIL_OPEN_METER)
-                    .tags("stage", "wiring")
-                    .counter()
-                    .count(),
-            ).isEqualTo(3.0)
+            assertThat(hostile.count(ClientLoggingMetrics.FAIL_OPEN_METER, "stage", "wiring")).isEqualTo(3.0)
             assertThat(moduleLog.events.filter { it.level == Level.WARN && it.formattedMessage.contains("could not be updated") }).hasSize(1)
         } finally {
             moduleLog.detach()

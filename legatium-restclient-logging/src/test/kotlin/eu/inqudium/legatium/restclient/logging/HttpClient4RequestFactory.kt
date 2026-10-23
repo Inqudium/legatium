@@ -21,7 +21,7 @@ import java.net.URI
  * (`HttpComponentsClientHttpRequestFactory` targets HttpClient 5 since), so a host still on HttpClient 4
  * bridges it with an adapter of its own - this is the shape such an adapter takes, modelled on the one
  * Spring 5 shipped: the body buffered, executed in one `execute`, the response's entity consumed and the
- * response closed at `close`. The connector suite runs the contract through it; it is not part of the
+ * response closed at `close`. The request-factory contract runs through it; it is not part of the
  * module.
  *
  * Timeouts are the client's (`RequestConfig` on the builder), not the adapter's.

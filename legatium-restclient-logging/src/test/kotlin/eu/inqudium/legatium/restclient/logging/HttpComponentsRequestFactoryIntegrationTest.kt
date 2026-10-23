@@ -16,9 +16,8 @@ import org.junit.jupiter.api.Test
 import org.springframework.http.client.ClientHttpRequestFactory
 import org.springframework.http.client.HttpComponentsClientHttpRequestFactory
 import org.springframework.web.client.ResourceAccessException
+import org.springframework.web.client.RestClient
 import java.time.Duration
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 
 /**
  * [RequestFactoryContract] on Apache HttpComponents 5's classic client. Its connect timeout is
@@ -55,6 +54,24 @@ class HttpComponentsRequestFactoryIntegrationTest : RequestFactoryContract() {
         return factory
     }
 
+    /**
+     * A client on a pool of ONE connection whose only slot is held for the test - leased directly from
+     * the manager, so no second call, no second thread, no second event, and released before the client
+     * is destroyed - with [leaseTimeout] as the connection request timeout.
+     */
+    private fun clientOnExhaustedPool(leaseTimeout: Duration): RestClient {
+        val connections =
+            PoolingHttpClientConnectionManagerBuilder
+                .create()
+                .setMaxConnTotal(1)
+                .setMaxConnPerRoute(1)
+                .build()
+        val factory = requestFactory(connections).also { it.setConnectionRequestTimeout(leaseTimeout) }
+        val held = connections.lease("held", HttpRoute(HttpHost.create(peer.baseUrl)), Timeout.of(GENEROUS), null).get(Timeout.of(GENEROUS))
+        closing(AutoCloseable { connections.release(held, null, TimeValue.ZERO_MILLISECONDS) })
+        return restClientBuilder.baseUrl(peer.baseUrl).requestFactory(factory).build()
+    }
+
     @Test
     fun `should log this request factory's pool lease timeout as WARN timeout`() {
         // What is tested: the classification against the exception the classic client really raises
@@ -66,18 +83,8 @@ class HttpComponentsRequestFactoryIntegrationTest : RequestFactoryContract() {
         //   outcome timeout, `-> -` and no status, and the peer never saw a request.
         // Why it matters: an exhausted pool is a timeout to an operator like a connect or read timeout
         //   - the pool in front of the peer is slow, not broken - and read as `failure` before.
-        // Given: the pool's one slot leased directly from the manager - no second call, no second
-        //   thread, no second event - and released before the client is destroyed
-        val connections =
-            PoolingHttpClientConnectionManagerBuilder
-                .create()
-                .setMaxConnTotal(1)
-                .setMaxConnPerRoute(1)
-                .build()
-        val factory = requestFactory(connections).also { it.setConnectionRequestTimeout(SHORT) }
-        val held = connections.lease("held", HttpRoute(HttpHost.create(peer.baseUrl)), Timeout.ofSeconds(10), null).get(Timeout.ofSeconds(10))
-        closing(AutoCloseable { connections.release(held, null, TimeValue.ZERO_MILLISECONDS) })
-        val client = restClientBuilder.baseUrl(peer.baseUrl).requestFactory(factory).build()
+        // Given: a pool whose one slot is held, with a 200 ms lease timeout
+        val client = clientOnExhaustedPool(SHORT)
 
         // When
         val thrown =
@@ -108,47 +115,28 @@ class HttpComponentsRequestFactoryIntegrationTest : RequestFactoryContract() {
         // Why it matters: a lease wait is where an exhausted pool parks its callers - when their budget
         //   expires there, they left, and the peer had no part in it (ADR-0015).
         // Given: the pool's one slot held, a lease timeout far beyond the test
-        val connections =
-            PoolingHttpClientConnectionManagerBuilder
-                .create()
-                .setMaxConnTotal(1)
-                .setMaxConnPerRoute(1)
-                .build()
-        val factory = requestFactory(connections).also { it.setConnectionRequestTimeout(Duration.ofSeconds(30)) }
-        val held = connections.lease("held", HttpRoute(HttpHost.create(peer.baseUrl)), Timeout.ofSeconds(10), null).get(Timeout.ofSeconds(10))
-        closing(AutoCloseable { connections.release(held, null, TimeValue.ZERO_MILLISECONDS) })
-        val client = restClientBuilder.baseUrl(peer.baseUrl).requestFactory(factory).build()
-        val thrown = AtomicReference<Throwable?>()
-        val interruptedAfter = AtomicBoolean()
-        val worker =
-            Thread.ofPlatform().start {
-                thrown.set(
-                    catchThrowable {
-                        client
-                            .get()
-                            .uri("/things/1")
-                            .retrieve()
-                            .body(String::class.java)
-                    },
-                )
-                interruptedAfter.set(Thread.currentThread().isInterrupted)
+        val client = clientOnExhaustedPool(Duration.ofSeconds(30))
+        val call =
+            ThreadedCall {
+                client
+                    .get()
+                    .uri("/things/1")
+                    .retrieve()
+                    .body(String::class.java)
             }
-        val deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos()
-        while (worker.state != Thread.State.TIMED_WAITING) {
-            check(System.nanoTime() < deadline) { "the call never parked on the pool" }
-            Thread.sleep(5)
-        }
+        val worker = call.startOn(Thread.ofPlatform())
+        awaitUntil("the call parked on the pool") { worker.state == Thread.State.TIMED_WAITING }
 
         // When
         worker.interrupt()
-        assertThat(worker.join(Duration.ofSeconds(10))).describedAs("the call returned").isTrue()
+        val result = call.result()
 
         // Then
-        assertThat(thrown.get()).isInstanceOf(ResourceAccessException::class.java)
-        assertThat(interruptedAfter.get()).describedAs("interrupt flag after the emission").isTrue()
+        assertThat(result.thrown).isInstanceOf(ResourceAccessException::class.java)
+        assertThat(result.interruptedAfter).describedAs("interrupt flag after the emission").isTrue()
         assertThat(peer.received).isEmpty()
         val event = log.events.single()
-        assertThat(event.level).describedAs("event for %s", thrown.get()).isEqualTo(Level.WARN)
+        assertThat(event.level).describedAs("event for %s", result.thrown).isEqualTo(Level.WARN)
         assertThat(event.formattedMessage).startsWith("Adapter http exchange GET ${peer.baseUrl}/things/1 -> - [")
         assertThat(keyValues(event)).containsEntry("adapter_outcome", "cancelled").doesNotContainKey("adapter_response_status_code")
         assertThat(event.throwableProxy).isNull()
