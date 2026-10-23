@@ -16,9 +16,10 @@ what each reactive connector does with its connection on a cancel is not covered
 The classification rule itself is
 [ADR-0015](adr/ADR-0015-an-abandoned-blocking-call-is-cancelled.md). The short version is in the
 [RestClient guide §4.8](https://github.com/Inqudium/legatium/blob/main/legatium-restclient-logging/docs/GUIDE.md#48-a-call-its-caller-abandoned-is-cancelled).
-Everything on this page about the blocking engines is pinned by the connector suites
-(`RequestFactoryContract` and its six subclasses, `HttpComponentsRequestFactoryIntegrationTest`,
-`HttpClient4RequestFactoryIntegrationTest`). It
+Everything on this page about the engines Spring ships is pinned by the connector suites
+(`RequestFactoryContract` and its five subclasses, `HttpComponentsRequestFactoryIntegrationTest`).
+Apache HttpClient 4 (§2.3) was observed once, on 2026-10-21, through a temporary adapter; nothing
+re-checks it. It
 was observed on JDK 26 with Spring Boot 4.1.1 (Spring Framework 7.0.9), Apache HttpClient 5.6.4,
 Apache HttpClient 4.5.14, Jetty 12.1.12 and Reactor Netty 1.3.7.
 
@@ -101,17 +102,20 @@ logged at INFO as `I/O exception (java.net.SocketException) caught … Closed by
 Spring Framework 6 dropped its request factory for Apache HttpClient 4; Spring 7's
 `HttpComponentsClientHttpRequestFactory` targets HttpClient 5 only, and Boot's detection (§6.1) does not
 look for HttpClient 4 at all. A host that still runs it behind `RestClient` or `RestTemplate` bridges
-it with a `ClientHttpRequestFactory` of its own. The connector suite runs the contract through such an
-adapter, the test-scoped `HttpClient4RequestFactory` (modelled on the one Spring 5 shipped), against
-httpclient 4.5.14 / httpcore 4.4.16. The results above hold for an adapter of that shape; one that
-interrupts, retries or wraps differently changes them. HttpClient 4 is end-of-life, 4.5.x gets
+it with a `ClientHttpRequestFactory` of its own. The results above were observed on 2026-10-21 by
+running the connector contract once through such an adapter (modelled on the one Spring 5 shipped:
+the body buffered, executed in one `execute`, the entity consumed and the response closed at
+`close`), against httpclient 4.5.14 / httpcore 4.4.16. The adapter was not kept, so the build does
+not re-check them; they hold for an adapter of that shape, and one that interrupts, retries or wraps
+differently changes them. HttpClient 4 is end-of-life, 4.5.x gets
 maintenance releases only.
 
 Its timeouts classify like HttpClient 5's: the read timeout is the JDK's `SocketTimeoutException`, the
 connect timeout `org.apache.http.conn.ConnectTimeoutException`, and the pool lease timeout its subclass
 `ConnectionPoolTimeoutException` - all `timeout` at WARN. The lease timeout carries no cause, so
 `Timeouts` matches the `ConnectTimeoutException` family by name, as it does HttpClient 5's
-`ConnectionRequestTimeoutException`.
+`ConnectionRequestTimeoutException`. That classification IS pinned: the common module's
+`TimeoutsTest` matches it against the real HttpClient 4 classes.
 
 **The reactive twin.** Outside the scope of this page (see the introduction): a `WebClient` call is
 cancelled by cancelling its subscription, the same way on every connector. The engine differences above
@@ -241,17 +245,18 @@ is every engine suite of this repository: each sets its factory explicitly.
 
 | Behaviour | Engines | Test |
 |---|---|---|
-| virtual thread, interrupted mid-call | all six: JDK `HttpClient`, Jetty, Reactor Netty, `HttpURLConnection`, Apache 5, Apache 4, each expecting `cancelled` | `RequestFactoryContract`: `should log a caller interrupted on a virtual thread as WARN cancelled …` |
-| platform thread, interrupted mid-call | all six: JDK `HttpClient`, Jetty and Reactor Netty expecting `cancelled`; `HttpURLConnection`, Apache 5 and Apache 4 expecting `success` (`interruptibleOnPlatformThreads = false`) | `RequestFactoryContract`: `should log a caller interrupted on a platform thread the way this request factory honours it` |
-| `Future.cancel(true)` on a virtual worker | all six, each expecting `cancelled` | `RequestFactoryContract`: `should log a worker cancelled through its future as WARN cancelled …` |
-| interrupted pool lease | Apache 5, Apache 4 | `HttpComponentsRequestFactoryIntegrationTest`, `HttpClient4RequestFactoryIntegrationTest`: `should log a caller interrupted while waiting for a pooled connection as WARN cancelled` |
-| pool lease timeout (the control: a timeout, not a cancellation) | Apache 5, Apache 4 | `HttpComponentsRequestFactoryIntegrationTest`, `HttpClient4RequestFactoryIntegrationTest`: `should log this request factory's pool lease timeout as WARN timeout` |
+| virtual thread, interrupted mid-call | all five: JDK `HttpClient`, Jetty, Reactor Netty, `HttpURLConnection`, Apache 5, each expecting `cancelled` | `RequestFactoryContract`: `should log a caller interrupted on a virtual thread as WARN cancelled …` |
+| platform thread, interrupted mid-call | all five: JDK `HttpClient`, Jetty and Reactor Netty expecting `cancelled`; `HttpURLConnection` and Apache 5 expecting `success` (`interruptibleOnPlatformThreads = false`) | `RequestFactoryContract`: `should log a caller interrupted on a platform thread the way this request factory honours it` |
+| `Future.cancel(true)` on a virtual worker | all five, each expecting `cancelled` | `RequestFactoryContract`: `should log a worker cancelled through its future as WARN cancelled …` |
+| interrupted pool lease | Apache 5 | `HttpComponentsRequestFactoryIntegrationTest`: `should log a caller interrupted while waiting for a pooled connection as WARN cancelled` |
+| pool lease timeout (the control: a timeout, not a cancellation) | Apache 5 | `HttpComponentsRequestFactoryIntegrationTest`: `should log this request factory's pool lease timeout as WARN timeout` |
+| Apache 4's timeout classes as `timeout` | Apache 4 (by class name, no engine run) | `TimeoutsTest`: `should recognise Apache HttpClient 4's connect and pool lease timeouts by their class name` |
 | classification order, flag never cleared, close on another thread | none: engine-independent, driven by mock executions and hand-built exceptions | `ClientRequestLoggingInterceptorCancellationTest`, `CancellationsTest` |
 
 `RequestFactoryContract` runs once per engine, through its subclasses `JdkClientRequestFactoryIntegrationTest`,
 `JettyRequestFactoryIntegrationTest`, `ReactorNettyRequestFactoryIntegrationTest`,
-`SimpleRequestFactoryIntegrationTest` (`HttpURLConnection`), `HttpComponentsRequestFactoryIntegrationTest` and
-`HttpClient4RequestFactoryIntegrationTest` (through the test-scoped `HttpClient4RequestFactory`).
+`SimpleRequestFactoryIntegrationTest` (`HttpURLConnection`) and `HttpComponentsRequestFactoryIntegrationTest`.
+Apache HttpClient 4's rows in §2 and §5 are the observation of 2026-10-21 (§2.3) and are not re-run.
 
 The exception types in §2.2 are what the engines threw in these runs. They are engine-internal and
 not part of legatium's contract; the suites pin the classification only, so a new engine version that
