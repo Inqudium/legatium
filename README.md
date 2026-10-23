@@ -87,7 +87,7 @@ interceptor and a WebClient filter. No starter, no forced transitives.
    <dependency>
        <groupId>eu.inqudium</groupId>
        <artifactId>legatium-restclient-logging</artifactId>
-       <version>1.2.1</version>
+       <version>1.3.0</version>
    </dependency>
    ```
 
@@ -98,7 +98,7 @@ interceptor and a WebClient filter. No starter, no forced transitives.
    <dependency>
        <groupId>eu.inqudium</groupId>
        <artifactId>legatium-webclient-logging</artifactId>
-       <version>1.2.1</version>
+       <version>1.3.0</version>
    </dependency>
    ```
 
@@ -224,6 +224,7 @@ artifacts run on - the build itself needs JDK 24+.
 
 | Legatium | Spring Boot | Kotlin | Java |
 |---|---|---|---|
+| 1.3.0 | 4.1.x | 2.4.x | 21 |
 | 1.2.1 | 4.1.x | 2.4.x | 21 |
 | 1.2.0 | 4.1.x | 2.4.x | 21 |
 | 1.1.0 | 4.1.x | 2.4.x | 21 |

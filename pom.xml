@@ -81,7 +81,7 @@
 
     <properties>
         <!-- CI-Friendly Version -->
-        <revision>1.2.2-SNAPSHOT</revision>
+        <revision>1.3.0</revision>
 
         <!-- Encoding -->
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -108,7 +108,7 @@
             tag. Bumped in every release commit to the release date - the
             value only has to change per release, never per build.
         -->
-        <project.build.outputTimestamp>2026-10-19T00:00:00Z</project.build.outputTimestamp>
+        <project.build.outputTimestamp>2026-10-23T00:00:00Z</project.build.outputTimestamp>
 
         <!-- Third Party Dependencies -->
         <!-- Fuzzing (test scope): Jazzer's JUnit 5 integration - @FuzzTest
