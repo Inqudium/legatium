@@ -133,10 +133,16 @@ and:
    or the JDK's `SocketException("Closed by interrupt")` or Apache's
    `RequestFailedException("Request aborted")`: the fallback for a flag something already consumed.
 
-The cancellation wins over a timeout the transport reported in the same moment. A call that got its
-answer despite the interrupt is classified by its status: the platform-thread rows above log
-`success` (or `rejected` / `failure` by status) because the answer arrived before anybody stopped
-waiting for it. The WARN breadcrumb on
+The cancellation wins over a timeout the transport reported in the same moment: with the flag set,
+the exception's type does not matter. The type `java.io.InterruptedIOException` on its own is **not**
+a signal. `SocketTimeoutException` and Apache's pool lease timeouts are `InterruptedIOException`s
+too, so without the flag and without one of the causes above a read or lease timeout stays `timeout`
+and a plain `InterruptedIOException` stays `failure` at ERROR. None of the engines in §2.2 reports
+an interrupt that way; each one leaves the flag set or puts one of the causes above in the chain.
+
+A call that got its answer despite the interrupt is classified by its status: the platform-thread
+rows above log `success` (or `rejected` / `failure` by status) because the answer arrived before
+anybody stopped waiting for it. The WARN breadcrumb on
 `eu.inqudium.legatium.restclient.logging.ClientRequestLoggingInterceptor` still names the exception the
 engine threw, which is where the differences of §2.2 remain visible.
 
