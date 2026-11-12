@@ -8,7 +8,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.1</version>
+        <version>4.1.2</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
 
@@ -121,10 +121,10 @@
         <httpclient4.version>4.5.14</httpclient4.version>
 
         <!-- Plugin Versions -->
-        <flatten-maven-plugin.version>1.8.0</flatten-maven-plugin.version>
+        <flatten-maven-plugin.version>1.9.0</flatten-maven-plugin.version>
         <ktlint-maven-plugin.version>3.7.1</ktlint-maven-plugin.version>
-        <dokka-maven-plugin.version>2.2.0</dokka-maven-plugin.version>
-        <jacoco-maven-plugin.version>0.8.15</jacoco-maven-plugin.version>
+        <dokka-maven-plugin.version>2.3.0</dokka-maven-plugin.version>
+        <jacoco-maven-plugin.version>0.8.16</jacoco-maven-plugin.version>
         <maven-gpg-plugin.version>3.2.8</maven-gpg-plugin.version>
         <central-publishing-maven-plugin.version>0.12.0</central-publishing-maven-plugin.version>
         <!-- maven-dependency-plugin and versions-maven-plugin override the Spring Boot BOM's
@@ -132,7 +132,7 @@
              dependency and update reports run at a version Dependabot keeps current, newer than
              Boot's. Remove each once Spring Boot manages >= that version. -->
         <maven-dependency-plugin.version>3.11.0</maven-dependency-plugin.version>
-        <versions-maven-plugin.version>2.23.0</versions-maven-plugin.version>
+        <versions-maven-plugin.version>2.24.0</versions-maven-plugin.version>
 
         <!--
             Default for the late-bound @{argLine} reference in the Surefire
@@ -350,7 +350,7 @@
                     <artifactId>build-helper-maven-plugin</artifactId>
                     <!-- Newer than the 3.6.1 Spring Boot 4.1.1 manages; remove once Spring Boot
                          manages >= this version. -->
-                    <version>3.6.2</version>
+                    <version>3.7.0</version>
                     <executions>
                         <execution>
                             <id>add-java-fuzz-test-sources</id>
@@ -589,7 +589,7 @@
                     <dependency>
                         <groupId>org.cyclonedx</groupId>
                         <artifactId>cyclonedx-core-java</artifactId>
-                        <version>13.3.0</version>
+                        <version>13.4.0</version>
                     </dependency>
                     <!-- The plugin used commons-io transitively via the 9.x core;
                          the 13.x core no longer carries it. -->
