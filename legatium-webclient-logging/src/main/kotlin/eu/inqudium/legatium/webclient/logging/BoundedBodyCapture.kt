@@ -107,7 +107,7 @@ internal class BoundedBodyCapture(
     }
 
     /**
-     * Bytes the buffer can still take before [maxBytes]; 0 in count-only mode, once the cap is reached,
+     * Bytes the buffer can still take before `maxBytes`; 0 in count-only mode, once the cap is reached,
      * or once frozen. The size of [tee]'s bounded prefix copy.
      */
     fun remainingCapacity(): Int = lock.withLock { if (frozen) 0 else buffer.remaining }
